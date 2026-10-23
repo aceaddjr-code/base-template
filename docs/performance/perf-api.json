@@ -1,0 +1,169 @@
+{
+  "generatedAt": "2026-10-23T07:19:45.095Z",
+  "base": "http://localhost:3031/api/v1",
+  "scale": 10000,
+  "runs": 10,
+  "environment": {
+    "node": "v24.19.0",
+    "database": "base_template_b29_1792739896792",
+    "note": "本机隔离库；网络为 localhost 回环"
+  },
+  "indexes": [
+    "PRIMARY(id) [unique]",
+    "IDX_3313f0c18f791c9aa635dc5b47(title)",
+    "IDX_34bc1d9b56357c5f8bf841418b(status)"
+  ],
+  "scenarios": [
+    {
+      "scenario": "列表默认第一页",
+      "path": "/examples/items?page=1&pageSize=10",
+      "runs": 10,
+      "median": 17,
+      "p95": 28,
+      "min": 15,
+      "max": 28
+    },
+    {
+      "scenario": "深分页第1000页",
+      "path": "/examples/items?page=1000&pageSize=10",
+      "runs": 10,
+      "median": 27,
+      "p95": 33,
+      "min": 21,
+      "max": 33
+    },
+    {
+      "scenario": "关键词筛选",
+      "path": "/examples/items?page=1&pageSize=10&keyword=%E5%B7%A1%E6%A3%80",
+      "runs": 10,
+      "median": 32,
+      "p95": 38,
+      "min": 25,
+      "max": 38
+    },
+    {
+      "scenario": "状态筛选",
+      "path": "/examples/items?page=1&pageSize=10&status=pending",
+      "runs": 10,
+      "median": 28,
+      "p95": 33,
+      "min": 19,
+      "max": 33
+    },
+    {
+      "scenario": "组合筛选+排序",
+      "path": "/examples/items?page=1&pageSize=10&status=pending&createdAtFrom=2026-10-01&createdAtTo=2026-10-23",
+      "runs": 10,
+      "median": 21,
+      "p95": 35,
+      "min": 10,
+      "max": 35
+    },
+    {
+      "scenario": "单条详情",
+      "path": "/examples/items/10000",
+      "runs": 10,
+      "median": 15,
+      "p95": 18,
+      "min": 13,
+      "max": 18
+    },
+    {
+      "scenario": "筛选导出(全量匹配行, 单次)",
+      "path": "/examples/items/export",
+      "runs": 1,
+      "median": 222,
+      "p95": 222,
+      "min": 222,
+      "max": 222,
+      "bytes": 756701,
+      "status": 200
+    }
+  ],
+  "plans": [
+    {
+      "label": "默认列表（按更新时间倒序第一页）",
+      "sql": "SELECT * FROM example_items WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT 10 OFFSET 0",
+      "plan": [
+        {
+          "selectType": "SIMPLE",
+          "table": "example_items",
+          "type": "ALL",
+          "key": null,
+          "rows": 10000,
+          "extra": "Using where; Using filesort"
+        }
+      ]
+    },
+    {
+      "label": "深分页（第 1000 页）",
+      "sql": "SELECT * FROM example_items WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT 10 OFFSET 9990",
+      "plan": [
+        {
+          "selectType": "SIMPLE",
+          "table": "example_items",
+          "type": "ALL",
+          "key": null,
+          "rows": 10000,
+          "extra": "Using where; Using filesort"
+        }
+      ]
+    },
+    {
+      "label": "状态筛选",
+      "sql": "SELECT * FROM example_items WHERE deleted_at IS NULL AND status = 'pending' ORDER BY updated_at DESC LIMIT 10",
+      "plan": [
+        {
+          "selectType": "SIMPLE",
+          "table": "example_items",
+          "type": "ref",
+          "key": "IDX_34bc1d9b56357c5f8bf841418b",
+          "rows": 2500,
+          "extra": "Using where; Using filesort"
+        }
+      ]
+    },
+    {
+      "label": "关键词模糊匹配",
+      "sql": "SELECT * FROM example_items WHERE deleted_at IS NULL AND (title LIKE '%巡检%' OR description LIKE '%巡检%') ORDER BY updated_at DESC LIMIT 10",
+      "plan": [
+        {
+          "selectType": "SIMPLE",
+          "table": "example_items",
+          "type": "ALL",
+          "key": null,
+          "rows": 10000,
+          "extra": "Using where; Using filesort"
+        }
+      ]
+    },
+    {
+      "label": "创建时间区间",
+      "sql": "SELECT * FROM example_items WHERE deleted_at IS NULL AND created_at >= '2026-10-01' AND created_at < '2026-10-23' ORDER BY updated_at DESC LIMIT 10",
+      "plan": [
+        {
+          "selectType": "SIMPLE",
+          "table": "example_items",
+          "type": "ALL",
+          "key": null,
+          "rows": 10000,
+          "extra": "Using where; Using filesort"
+        }
+      ]
+    },
+    {
+      "label": "计数",
+      "sql": "SELECT COUNT(*) FROM example_items WHERE deleted_at IS NULL",
+      "plan": [
+        {
+          "selectType": "SIMPLE",
+          "table": "example_items",
+          "type": "ALL",
+          "key": null,
+          "rows": 10000,
+          "extra": "Using where"
+        }
+      ]
+    }
+  ]
+}

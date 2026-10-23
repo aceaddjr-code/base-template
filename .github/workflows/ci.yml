@@ -1,0 +1,141 @@
+name: CI
+
+# F14 自动化与真实库验收：构建、前后端单测、隔离 MySQL e2e 与迁移执行器冒烟。
+# 浏览器流程验收不在 CI 内，仍按实施记录的人工/自动化浏览器口径执行。
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    name: 后端单测与构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+      - name: 安装依赖
+        run: pnpm -C backend install --frozen-lockfile
+      - name: 后端单元测试
+        run: pnpm -C backend test --runInBand
+      - name: 后端构建
+        run: pnpm -C backend build
+
+  frontend:
+    name: 前端单测与构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: 安装依赖
+        run: pnpm -C frontend install --frozen-lockfile
+      - name: 前端测试
+        run: pnpm -C frontend test
+      - name: 前端构建
+        run: pnpm -C frontend build
+
+  integration:
+    name: 隔离 MySQL 验收与迁移执行器
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -proot"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=30
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: '3306'
+      DB_USERNAME: root
+      DB_PASSWORD: root
+      MYSQLDUMP_BIN: mysqldump
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+      - name: 安装 MySQL 客户端（mysqldump）
+        run: sudo apt-get update && sudo apt-get install -y mysql-client
+      - name: 安装依赖
+        run: pnpm -C backend install --frozen-lockfile
+      - name: 隔离 MySQL e2e（删除回滚/通知分页/备份/会话失效/筛选导出/字段错误）
+        working-directory: backend
+        env:
+          TEST_MYSQL_DATABASE: base_template_test_${{ github.run_id }}
+        run: pnpm test:e2e --runInBand
+      - name: 迁移执行器冒烟（账本/记账/up 幂等；空库不执行补丁）
+        run: |
+          node -e "
+          const mysql = require('./backend/node_modules/mysql2/promise');
+          (async () => {
+            const conn = await mysql.createConnection({ host: '127.0.0.1', port: 3306, user: 'root', password: 'root' });
+            await conn.query('CREATE DATABASE IF NOT EXISTS \`base_template_migrate_ci\` CHARACTER SET utf8mb4');
+            await conn.end();
+          })().catch((error) => { console.error(error); process.exit(1); });
+          "
+          DB_DATABASE=base_template_migrate_ci node scripts/migrate.mjs status
+          DB_DATABASE=base_template_migrate_ci node scripts/migrate.mjs mark-applied --yes
+          DB_DATABASE=base_template_migrate_ci node scripts/migrate.mjs up
+          DB_DATABASE=base_template_migrate_ci node scripts/migrate.mjs up
+          node -e "
+          const mysql = require('./backend/node_modules/mysql2/promise');
+          (async () => {
+            const conn = await mysql.createConnection({ host: '127.0.0.1', port: 3306, user: 'root', password: 'root' });
+            await conn.query('DROP DATABASE IF EXISTS \`base_template_migrate_ci\`');
+            await conn.end();
+          })().catch((error) => { console.error(error); process.exit(1); });
+          "
+      - name: 后端构建（OpenAPI 契约检查需要 dist）
+        run: pnpm -C backend build
+      - name: OpenAPI 契约检查（一次性库 + 开发模式启动）
+        run: |
+          node -e "
+          const mysql = require('./backend/node_modules/mysql2/promise');
+          (async () => {
+            const conn = await mysql.createConnection({ host: '127.0.0.1', port: 3306, user: 'root', password: 'root' });
+            await conn.query('CREATE DATABASE IF NOT EXISTS \`base_template_docs_ci\` CHARACTER SET utf8mb4');
+            await conn.end();
+          })().catch((error) => { console.error(error); process.exit(1); });
+          "
+          cd backend
+          NODE_ENV=development DB_HOST=127.0.0.1 DB_PORT=3306 DB_USERNAME=root DB_PASSWORD=root \
+            DB_DATABASE=base_template_docs_ci JWT_SECRET=ci-openapi-check-secret-0123456789abcdef \
+            ADMIN_DEFAULT_PASSWORD=docscheck123 API_DOCS_ENABLED=true PORT=3099 node dist/main.js &
+          BACKEND_PID=$!
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3099/api/v1/health/live || true)
+            [ "$code" = "200" ] && break
+            sleep 2
+          done
+          cd ..
+          OPENAPI_URL=http://localhost:3099/api/docs-json node scripts/check-openapi.mjs
+          STATUS=$?
+          kill $BACKEND_PID 2>/dev/null || true
+          node -e "
+          const mysql = require('./backend/node_modules/mysql2/promise');
+          (async () => {
+            const conn = await mysql.createConnection({ host: '127.0.0.1', port: 3306, user: 'root', password: 'root' });
+            await conn.query('DROP DATABASE IF EXISTS \`base_template_docs_ci\`');
+            await conn.end();
+          })().catch(() => {});
+          "
+          exit $STATUS

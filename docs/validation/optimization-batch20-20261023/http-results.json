@@ -1,0 +1,87 @@
+{
+  "appDb": "base_template_b20_app_1792717128571",
+  "port": 3022,
+  "checks": [
+    {
+      "name": "setup.login-admin",
+      "ok": true,
+      "detail": 201
+    },
+    {
+      "name": "f06.create-carries-version",
+      "ok": true,
+      "detail": 1
+    },
+    {
+      "name": "f06.detail-version",
+      "ok": true,
+      "detail": 1
+    },
+    {
+      "name": "f06.matched-update-passes",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "version": 2
+      }
+    },
+    {
+      "name": "f06.stale-version-409",
+      "ok": true,
+      "detail": {
+        "status": 409,
+        "message": "记录已被他人修改或已删除，请刷新后查看最新内容"
+      }
+    },
+    {
+      "name": "f06.conflict-does-not-overwrite",
+      "ok": true,
+      "detail": {
+        "title": "第一次修改",
+        "version": 2
+      }
+    },
+    {
+      "name": "f06.reload-then-update",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "version": 3
+      }
+    },
+    {
+      "name": "f06.legacy-last-write-wins",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "version": 3
+      }
+    },
+    {
+      "name": "f06.invalid-version-400",
+      "ok": true,
+      "detail": 400
+    },
+    {
+      "name": "f06.anon-401",
+      "ok": true,
+      "detail": 401
+    },
+    {
+      "name": "f06.patch-idempotent-twice",
+      "ok": true,
+      "detail": "ran-twice"
+    },
+    {
+      "name": "f06.patch-column-default-1",
+      "ok": true,
+      "detail": {
+        "COLUMN_DEFAULT": "1"
+      }
+    }
+  ],
+  "startedAt": "2026-10-23T00:58:48.571Z",
+  "cleaned": true,
+  "finishedAt": "2026-10-23T00:58:51.055Z",
+  "allPassed": true
+}

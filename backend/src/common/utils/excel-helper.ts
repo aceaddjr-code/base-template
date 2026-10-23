@@ -1,0 +1,168 @@
+
+
+import * as XLSX from 'xlsx-js-style';
+
+export interface ColumnDef {
+  /** Excel 表头列名 */
+  header: string;
+  /** 对象属性名 */
+  key: string;
+  /** 导出时的列宽（字符数），默认 15 */
+  width?: number;
+}
+
+/**
+ * 将数据数组导出为 Excel Buffer
+ *
+ * @param data      数据数组
+ * @param columns   列定义（header → 列名, key → 字段名）
+ * @param sheetName 工作表名称
+ * @returns Excel 文件的 Buffer
+ */
+export async function dataToExcel(
+  data: Record<string, any>[],
+  columns: ColumnDef[],
+  sheetName: string = 'Sheet1',
+): Promise<Buffer> {
+  // 表头行
+  const headerRow = columns.map((c) => c.header);
+
+  // 数据行
+  const dataRows = data.map((row) =>
+    columns.map((c) => {
+      const val = row[c.key];
+      return val !== null && val !== undefined ? val : '';
+    }),
+  );
+
+  const rows = [headerRow, ...dataRows];
+  const ws = XLSX.utils.aoa_to_sheet(rows, { cellDates: true, dateNF: 'yyyy-mm-dd hh:mm:ss' });
+
+  // 设置列宽
+  ws['!cols'] = columns.map((c) => ({ wch: c.width || 15 }));
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+}
+
+/**
+ * 从 Excel Buffer 解析数据
+ *
+ * @param buffer    Excel 文件 Buffer
+ * @param colMap    { 对象属性名: Excel表头名[] }  —— 用于列名匹配
+ * @param maxRows   数据行数上限（可选）：预检只解析表头 + maxRows 行，
+ *                  超限直接抛错提示分批导入——避免上百万行整表解析卡死/内存溢出
+ * @returns 解析后的数据数组
+ */
+export async function excelToData(
+  buffer: Buffer,
+  colMap: Record<string, string[]>,
+  maxRows?: number,
+  /** 表头所在行（0 起；导入文件常在首行有「单据名」标题行，此时需传 1） */
+  headerRow = 0,
+
+  dateHeaderPattern: RegExp = /日期|时间/,
+): Promise<Record<string, any>[]> {
+  if (maxRows && maxRows > 0) {
+    // 预检：sheetRows 限制解析行数，只读到 表头 + maxRows + 1 行；
+    // 若探测到第 maxRows+1 条数据行（末行非空）→ 行数超限，整表拒绝
+    const probe = XLSX.read(buffer, { type: 'buffer', sheetRows: maxRows + 2 });
+    const probeSheet = probe.Sheets[probe.SheetNames[0]];
+    const probeRows: any[][] = XLSX.utils.sheet_to_json(probeSheet, { header: 1 });
+    const last = probeRows[probeRows.length - 1];
+    const lastHasData = Array.isArray(last) && last.some((c) => c !== undefined && c !== null && c !== '');
+    if (probeRows.length - 1 > maxRows && lastHasData) {
+      throw new Error(`数据行数超过上限 ${maxRows} 行，请分批导入`);
+    }
+  }
+  const workbook = XLSX.read(buffer, { type: 'buffer' });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+
+  if (rows.length < headerRow + 2) return [];
+
+  const header = rows[headerRow] as string[];
+
+  // 匹配列索引（记录匹配到的 Excel 表头名，供日期列识别）
+  const idxMap: Record<string, { idx: number; header: string }> = {};
+  for (const [key, names] of Object.entries(colMap)) {
+    for (const name of names) {
+      const idx = header.findIndex((h) => h?.toString().trim() === name);
+      if (idx >= 0) { idxMap[key] = { idx, header: name }; break; }
+    }
+  }
+
+  if (Object.keys(idxMap).length === 0) {
+    throw new Error('Excel 列名不匹配，请检查表头是否包含正确的列名');
+  }
+
+  // 小数部分直接按秒数算时分秒（不经过 Date 构造——Windows 对 1899 年日期套用历史时区 +8:05:43，
+  // 本地换算会偏移 5 分 43 秒，整数序列号会掉到前一天 23:54）
+  function excelDateToStr(raw: any): string {
+    const num = typeof raw === 'number' ? raw : Number(String(raw).trim());
+    if (!Number.isFinite(num) || num < 1 || num > 100000) return String(raw ?? '').trim();
+    const whole = Math.floor(num);
+    const d = new Date(Date.UTC(1899, 11, 30) + whole * 86400000);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const date = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+    const frac = num - whole;
+    if (frac > 0) {
+      const totalSec = Math.round(frac * 86400);
+      return `${date} ${pad(Math.floor(totalSec / 3600))}:${pad(Math.floor((totalSec % 3600) / 60))}:${pad(totalSec % 60)}`;
+    }
+    return date;
+  }
+
+  // 解析数据行
+  const result: Record<string, any>[] = [];
+  for (let i = headerRow + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.every((c: any) => c === undefined || c === null || c === '')) continue;
+
+    const record: Record<string, any> = {};
+    for (const [key, { idx, header }] of Object.entries(idxMap)) {
+      const raw = row[idx];
+      let val = raw?.toString()?.trim();
+      // 日期类列：数字序列号 → 日期字符串；Date 对象 → 日期字符串
+      // （修复 code-review #4：「交期」等不含"日期/时间"的业务表头由调用方经 dateHeaderPattern 传入——
+      //   否则 日期数字序列号（如 46240）原样入库，DATE 列拒收导致整行丢弃）
+      if (dateHeaderPattern.test(header)) {
+        if (typeof raw === 'number' || /^\d+(\.\d+)?$/.test(String(raw ?? '').trim())) {
+          val = excelDateToStr(raw);
+        } else if (raw instanceof Date && !isNaN(raw.getTime())) {
+          const d = raw;
+          const m = String(d.getMonth() + 1).padStart(2, '0');
+          const day = String(d.getDate()).padStart(2, '0');
+          val = `${d.getFullYear()}-${m}-${day}`;
+        }
+      }
+      record[key] = val !== undefined && val !== '' ? val : null;
+    }
+    result.push(record);
+  }
+
+  return result;
+}
+
+/** Excel 文件上传过滤器 */
+export function excelFileFilter(
+  _req: any,
+  file: Express.Multer.File,
+  cb: (error: Error | null, accept: boolean) => void,
+) {
+  const allowed = /\.(xlsx|xls)$/i;
+  if (allowed.test(file.originalname)) {
+    cb(null, true);
+  } else {
+    cb(new Error('仅支持 .xlsx 或 .xls 格式的 Excel 文件'), false);
+  }
+}
+
+/** 统一发送 Excel 文件响应（避免 8 处重复设置 Content-Type + Content-Disposition） */
+export function sendExcel(res: any, buffer: Buffer, filename: string) {
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+  res.send(buffer);
+}

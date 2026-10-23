@@ -1,0 +1,31 @@
+{
+  "generatedAt": "2026-10-23T07:06:42.902Z",
+  "environment": {
+    "build": "vite preview（生产构建）",
+    "browser": "ZCode 内嵌 Chromium（Electron）",
+    "viewport": "1280x800",
+    "network": "localhost",
+    "note": "FCP/first-paint 条目在该内嵌浏览器中不可用，以 DOMContentLoaded 与交互时延为口径"
+  },
+  "firstLoad": {
+    "coldDomContentLoadedMs": 1752,
+    "warmReloadDomContentLoadedMs": 196,
+    "resources": 49,
+    "transferredKB": 14
+  },
+  "routeSwitchToListFullyLoadedMs": [
+    21,
+    430,
+    358,
+    324,
+    359
+  ],
+  "switchNote": "21ms 为路由与数据均已缓存的首访；其余含懒加载 chunk + 列表 API + 渲染",
+  "filterAndPaging": "API 层中位 22-32ms（见 perf-api.json）；前端交互时延受测量方式影响未单列",
+  "leakIndicator": {
+    "method": "home↔示例事项 与 home↔我的通知 各 20+ 次切换，采样 usedJSHeapSize 与 DOM 节点数",
+    "domNodes": "全程稳定 451-458（无 DOM 泄漏）",
+    "heap": "88→338MB 持续上行（~4-5MB/切换），空闲后 GC 回落至 268MB；通知页路径 ~1.2MB/切换",
+    "conclusion": "存在需排查的内存滞留疑点：需堆快照定位（怀疑方向：路由级缓存/监听器/响应拦截滞留）。未达「无持续累积」门槛，列为后续修复项"
+  }
+}

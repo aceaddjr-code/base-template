@@ -1,0 +1,26 @@
+# Logs
+# 注意：必须用 /logs/ 根目录锚定——裸 logs 规则会匹配任意层级目录，
+# 曾误伤 src/views/system/logs/ 页面目录导致路由引用的页面提交不上去（部署构建失败）
+/logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

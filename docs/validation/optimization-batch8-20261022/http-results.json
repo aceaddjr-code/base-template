@@ -1,0 +1,73 @@
+{
+  "appDb": "base_template_b8_app_1792645299961",
+  "checks": [
+    {
+      "name": "setup.login",
+      "ok": true,
+      "detail": 201
+    },
+    {
+      "name": "f.status-1",
+      "ok": true,
+      "detail": [
+        "admin",
+        "u8a",
+        "u8b"
+      ]
+    },
+    {
+      "name": "f.status-0",
+      "ok": true,
+      "detail": [
+        "u8c"
+      ]
+    },
+    {
+      "name": "f.status-both",
+      "ok": true,
+      "detail": 4
+    },
+    {
+      "name": "f.status-invalid-ignored",
+      "ok": true,
+      "detail": 4
+    },
+    {
+      "name": "f.created-today",
+      "ok": true,
+      "detail": 4
+    },
+    {
+      "name": "f.created-before-yesterday",
+      "ok": true,
+      "detail": 0
+    },
+    {
+      "name": "f.created-tight-range",
+      "ok": true,
+      "detail": 4
+    },
+    {
+      "name": "f.combined-keyword-status",
+      "ok": true,
+      "detail": [
+        "u8a",
+        "u8b"
+      ]
+    },
+    {
+      "name": "f.invalid-date-400",
+      "ok": true,
+      "detail": 400
+    },
+    {
+      "name": "f.reversed-range-400",
+      "ok": true,
+      "detail": 400
+    }
+  ],
+  "startedAt": "2026-10-22T05:01:39.961Z",
+  "cleaned": true,
+  "finishedAt": "2026-10-22T05:01:42.855Z",
+  "allPassed": true
+}

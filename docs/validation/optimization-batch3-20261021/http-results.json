@@ -1,0 +1,95 @@
+{
+  "assertions": [
+    {
+      "name": "真实登录仍接受3位密码",
+      "pass": true
+    },
+    {
+      "name": "新库已初始化通知类型字典",
+      "pass": true
+    },
+    {
+      "name": "真实HTTP未读第三页3条且total23",
+      "pass": true
+    },
+    {
+      "name": "错误响应与响应头请求号一致",
+      "pass": true
+    },
+    {
+      "name": "字典真实创建",
+      "pass": true
+    },
+    {
+      "name": "手工审计真实落库含请求号和前后名称",
+      "pass": true
+    },
+    {
+      "name": "备份期间健康接口可响应且状态running",
+      "pass": true
+    },
+    {
+      "name": "重复备份返回409",
+      "pass": true
+    },
+    {
+      "name": "真实备份完成且状态可回读",
+      "pass": true
+    },
+    {
+      "name": "未登录不能读取备份状态",
+      "pass": true
+    },
+    {
+      "name": "HTTP多选与结束日筛选第二页及总数一致",
+      "pass": true
+    },
+    {
+      "name": "真实HTTP导出与筛选total一致",
+      "pass": true
+    },
+    {
+      "name": "示例接口拒绝反向日期区间",
+      "pass": true
+    },
+    {
+      "name": "操作日志接口拒绝非法页码和日历日期",
+      "pass": true
+    },
+    {
+      "name": "真实表单错误返回字段路径规则及请求号，不回传拒绝值",
+      "pass": true
+    },
+    {
+      "name": "账号重复在真实服务返回loginid字段错误",
+      "pass": true
+    },
+    {
+      "name": "真实用户新增同时返回姓名密码邮箱错误",
+      "pass": true
+    },
+    {
+      "name": "校验失败没有创建用户",
+      "pass": true
+    },
+    {
+      "name": "真实新增仍接受3位密码，账号可登录",
+      "pass": true
+    },
+    {
+      "name": "编辑拒绝后实际记录保持不变",
+      "pass": true
+    },
+    {
+      "name": "编辑成功后API和数据库回读一致",
+      "pass": true
+    }
+  ],
+  "cleanup": {
+    "processesStopped": true,
+    "databaseDropped": true,
+    "tempFilesRemoved": true
+  },
+  "database": "base_template_test_1792596412275",
+  "complete": true
+}

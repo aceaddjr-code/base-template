@@ -1,0 +1,92 @@
+{
+  "appDb": "base_template_b16_app_1792656429443",
+  "checks": [
+    {
+      "name": "setup.login-admin",
+      "ok": true
+    },
+    {
+      "name": "setup.login-user",
+      "ok": true
+    },
+    {
+      "name": "life.upload-temp",
+      "ok": true,
+      "detail": {
+        "status": "temp",
+        "size": 31
+      }
+    },
+    {
+      "name": "life.download",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "disposition": "attachment; filename=\"b16-sample-1792656"
+      }
+    },
+    {
+      "name": "life.no-public-static",
+      "ok": true,
+      "detail": 404
+    },
+    {
+      "name": "life.bad-ext-400",
+      "ok": true,
+      "detail": 400
+    },
+    {
+      "name": "life.other-temp-404",
+      "ok": true,
+      "detail": 404
+    },
+    {
+      "name": "life.admin-temp-ok",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "name": "life.list-own-only",
+      "ok": true,
+      "detail": 0
+    },
+    {
+      "name": "life.list-admin-all",
+      "ok": true,
+      "detail": 1
+    },
+    {
+      "name": "life.bind-unregistered-400",
+      "ok": true,
+      "detail": "未登记的绑定目标类型"
+    },
+    {
+      "name": "life.delete-ok",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "name": "life.download-gone-after-delete",
+      "ok": true,
+      "detail": 404
+    },
+    {
+      "name": "life.cleanup-removed",
+      "ok": true,
+      "detail": 1
+    },
+    {
+      "name": "life.cleanup-file-gone",
+      "ok": true
+    },
+    {
+      "name": "life.rows-after-cleanup",
+      "ok": true,
+      "detail": 0
+    }
+  ],
+  "startedAt": "2026-10-22T08:07:09.443Z",
+  "cleaned": true,
+  "finishedAt": "2026-10-22T08:07:11.649Z",
+  "allPassed": true
+}

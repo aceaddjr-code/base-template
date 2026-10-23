@@ -1,0 +1,36 @@
+{
+  "db": "base_template_b20ui_1792721682160",
+  "record": {
+    "id": 1,
+    "title": "他人窄屏期间再改",
+    "status": "pending",
+    "description": "服务端已更新的说明",
+    "version": 4,
+    "updated_by": 1,
+    "deleted_at": null
+  },
+  "checks": [
+    {
+      "name": "db.final-title-is-last-successful-write",
+      "ok": true,
+      "detail": "他人窄屏期间再改"
+    },
+    {
+      "name": "db.final-version-4",
+      "ok": true,
+      "detail": 4
+    },
+    {
+      "name": "db.rejected-browser-drafts-not-written",
+      "ok": true,
+      "detail": "服务端已更新的说明"
+    },
+    {
+      "name": "db.row-alive",
+      "ok": true,
+      "detail": null
+    }
+  ],
+  "allPassed": true,
+  "checkedAt": "2026-10-23T02:22:54.699Z"
+}

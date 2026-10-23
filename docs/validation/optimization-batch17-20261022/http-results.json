@@ -1,0 +1,6 @@
+{
+  "appDb": "base_template_b16_app_1792660012327",
+  "checks": [],
+  "startedAt": "2026-10-22T09:06:52.327Z",
+  "fatal": "Access denied for user 'root'@'localhost' (using password: NO)"
+}

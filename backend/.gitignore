@@ -1,0 +1,5 @@
+/uploads
+
+# 测试运行产物（本地生成，不入库）
+jest-out.txt
+jest.json

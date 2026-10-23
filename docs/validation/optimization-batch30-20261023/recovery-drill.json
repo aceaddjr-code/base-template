@@ -1,0 +1,160 @@
+{
+  "database": "base_template_b30_1792741344235",
+  "port": 3032,
+  "startedAt": "2026-10-23T07:46:09.345Z",
+  "steps": [
+    {
+      "name": "snapshot-counts",
+      "ms": null,
+      "detail": {
+        "users": 1,
+        "roles": 2,
+        "menus": 23,
+        "departments": 1,
+        "example_items": 3,
+        "attachments": 1,
+        "sys_dict_types": 4,
+        "sys_dict_items": 28
+      }
+    },
+    {
+      "name": "backup-database",
+      "ms": 805,
+      "detail": {
+        "file": "base_template_b30_1792741344235-20261023-154612.sql.gz"
+      }
+    },
+    {
+      "name": "backup-attachment-files",
+      "ms": 3,
+      "detail": {
+        "files": 2
+      }
+    },
+    {
+      "name": "simulate-loss",
+      "ms": 170,
+      "detail": {
+        "dropped": "base_template_b30_1792741344235",
+        "removedFile": "1792741571634-1572c580-ea9a-4c2e-b1c6-d26be025978e.pdf"
+      }
+    },
+    {
+      "name": "restore-database",
+      "ms": 383
+    },
+    {
+      "name": "restore-attachment-files",
+      "ms": 2
+    },
+    {
+      "name": "boot-on-restored-db",
+      "ms": 1548
+    }
+  ],
+  "checks": [
+    {
+      "name": "setup.login",
+      "ok": true,
+      "detail": 201
+    },
+    {
+      "name": "setup.create-item-1",
+      "ok": true,
+      "detail": 201
+    },
+    {
+      "name": "setup.create-item-2",
+      "ok": true,
+      "detail": 201
+    },
+    {
+      "name": "setup.create-item-3",
+      "ok": true,
+      "detail": 201
+    },
+    {
+      "name": "setup.upload-attachment",
+      "ok": true,
+      "detail": 201
+    },
+    {
+      "name": "setup.attachment-file-located",
+      "ok": true,
+      "detail": "1792741571634-1572c580-ea9a-4c2e-b1c6-d26be025978e.pdf"
+    },
+    {
+      "name": "setup.download-roundtrip",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "name": "backup.trigger-accepted",
+      "ok": true,
+      "detail": 201
+    },
+    {
+      "name": "backup.succeeded",
+      "ok": true,
+      "detail": "base_template_b30_1792741344235-20261023-154612.sql.gz"
+    },
+    {
+      "name": "restore.row-counts-match",
+      "ok": true,
+      "detail": {
+        "before": {
+          "users": 1,
+          "roles": 2,
+          "menus": 23,
+          "departments": 1,
+          "example_items": 3,
+          "attachments": 1,
+          "sys_dict_types": 4,
+          "sys_dict_items": 28
+        },
+        "after": {
+          "users": 1,
+          "roles": 2,
+          "menus": 23,
+          "departments": 1,
+          "example_items": 3,
+          "attachments": 1,
+          "sys_dict_types": 4,
+          "sys_dict_items": 28
+        }
+      }
+    },
+    {
+      "name": "restore.attachment-hash-match",
+      "ok": true,
+      "detail": "46d63f412a09d397"
+    },
+    {
+      "name": "verify.login-after-restore",
+      "ok": true,
+      "detail": 201
+    },
+    {
+      "name": "verify.drill-items-restored",
+      "ok": true,
+      "detail": [
+        "DRILL-571580-3",
+        "DRILL-571580-2",
+        "DRILL-571580-1"
+      ]
+    },
+    {
+      "name": "verify.attachment-download-after-restore",
+      "ok": true,
+      "detail": 200
+    }
+  ],
+  "timings": {
+    "backupMs": 805,
+    "restoreDbMs": 383,
+    "restoreFilesMs": 2,
+    "bootMs": 1548
+  },
+  "allPassed": true,
+  "finishedAt": "2026-10-23T07:46:15.356Z"
+}

@@ -1,0 +1,78 @@
+import { Transform, plainToInstance } from 'class-transformer';
+import { ArrayMaxSize, ArrayNotEmpty, IsArray, IsDefined, IsIn, IsInt, IsNotEmpty, IsString, MaxLength, Min, ValidateIf, validateSync } from 'class-validator';
+import { BadRequestException } from '@nestjs/common';
+import { validationException } from '../../common/utils/validation-errors';
+
+export const EXAMPLE_STATUSES = ['pending', 'doing', 'done'] as const;
+const trim = ({ value }: { value: unknown }) => typeof value === 'string' ? value.trim() : value;
+
+export class BatchRemoveExampleDto {
+  @IsArray()
+  @ArrayNotEmpty({ message: '请先勾选记录' })
+  @ArrayMaxSize(500, { message: '一次最多操作 500 条记录' })
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  ids: number[];
+}
+
+export class CreateExampleDto {
+  @Transform(trim)
+  @IsDefined({ message: '请填写标题' })
+  @IsString()
+  @IsNotEmpty({ message: '标题不能为空' })
+  @MaxLength(100, { message: '标题不能超过 100 字' })
+  title: string;
+
+  @IsIn(EXAMPLE_STATUSES, { message: '状态必须为 pending、doing 或 done' })
+  status: string = 'pending';
+
+  @ValidateIf((_, value) => value !== undefined && value !== null)
+  @Transform(trim)
+  @IsString()
+  @MaxLength(50, { message: '类别不能超过 50 字' })
+  category?: string | null;
+
+  @ValidateIf((_, value) => value !== undefined && value !== null)
+  @IsString()
+  @MaxLength(500, { message: '说明不能超过 500 字' })
+  description?: string | null;
+}
+
+export class UpdateExampleDto {
+  @ValidateIf((_, value) => value !== undefined)
+  @Transform(trim)
+  @IsString()
+  @IsNotEmpty({ message: '标题不能为空' })
+  @MaxLength(100, { message: '标题不能超过 100 字' })
+  title?: string;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsIn(EXAMPLE_STATUSES, { message: '状态必须为 pending、doing 或 done' })
+  status?: string;
+
+  @ValidateIf((_, value) => value !== undefined && value !== null)
+  @Transform(trim)
+  @IsString()
+  @MaxLength(50, { message: '类别不能超过 50 字' })
+  category?: string | null;
+
+  @ValidateIf((_, value) => value !== undefined && value !== null)
+  @IsString()
+  @MaxLength(500, { message: '说明不能超过 500 字' })
+  description?: string | null;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsInt({ message: '版本信息无效，请刷新后重试' })
+  @Min(1, { message: '版本信息无效，请刷新后重试' })
+  version?: number;
+}
+
+/** HTTP 写入和 Excel 导入共用业务验证，禁止调用方仅依赖前端校验。 */
+export function validateExample(input: unknown, partial = false): CreateExampleDto | UpdateExampleDto {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new BadRequestException('请提交有效的事项数据');
+  const dto = partial ? plainToInstance(UpdateExampleDto, input) : plainToInstance(CreateExampleDto, input);
+  const errors = validateSync(dto, { whitelist:true, forbidNonWhitelisted:true });
+  if (errors.length) throw validationException(errors);
+  if (partial && Object.values(dto).every(value => value === undefined)) throw new BadRequestException('没有可更新的字段');
+  return dto;
+}

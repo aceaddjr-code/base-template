@@ -1,0 +1,205 @@
+{
+  "appDb": "base_template_b5_app_1792637858014",
+  "patchDb": "base_template_b5_patch_1792637858014",
+  "checks": [
+    {
+      "name": "patch.menu-single",
+      "ok": true,
+      "detail": [
+        {
+          "id": 2,
+          "name": "系统参数",
+          "path": "/system/settings",
+          "sort": 98,
+          "status": 1
+        }
+      ]
+    },
+    {
+      "name": "patch.grant-single",
+      "ok": true,
+      "detail": [
+        {
+          "role_id": 1,
+          "menu_id": 2
+        }
+      ]
+    },
+    {
+      "name": "patch.dict-single",
+      "ok": true,
+      "detail": [
+        {
+          "label": "系统参数",
+          "value": "system_settings",
+          "status": 1
+        }
+      ]
+    },
+    {
+      "name": "seed.app-db-initialized",
+      "ok": true
+    },
+    {
+      "name": "http.login",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "name": "http.list-defaults",
+      "ok": true,
+      "detail": [
+        {
+          "key": "site.name",
+          "name": "系统名称",
+          "type": "string",
+          "public": true,
+          "description": "登录后顶栏品牌与浏览器标题显示的名称；登录页与部署配置（VITE_APP_NAME）不受影响",
+          "maxLength": 50,
+          "value": "企业管理系统",
+          "defaultValue": "企业管理系统",
+          "modified": false,
+          "updatedAt": null
+        },
+        {
+          "key": "help.contact",
+          "name": "帮助联系方式",
+          "type": "text",
+          "public": true,
+          "description": "账号菜单展示的帮助与问题反馈联系方式，如管理员邮箱或电话；留空则不展示",
+          "maxLength": 200,
+          "value": "",
+          "defaultValue": "",
+          "modified": false,
+          "updatedAt": null
+        }
+      ]
+    },
+    {
+      "name": "http.public-defaults",
+      "ok": true,
+      "detail": {
+        "site.name": "企业管理系统",
+        "help.contact": ""
+      }
+    },
+    {
+      "name": "http.unregistered-404",
+      "ok": true,
+      "detail": "参数不存在或未登记"
+    },
+    {
+      "name": "http.required-field-error",
+      "ok": true,
+      "detail": {
+        "code": 400,
+        "message": "系统名称不能为空",
+        "data": null,
+        "requestId": "af96a0a6-323e-490e-8a14-0f9941fa288e",
+        "fieldErrors": [
+          {
+            "path": "value",
+            "code": "required",
+            "message": "系统名称不能为空"
+          }
+        ]
+      }
+    },
+    {
+      "name": "http.update-trims",
+      "ok": true,
+      "detail": {
+        "key": "site.name",
+        "name": "系统名称",
+        "type": "string",
+        "public": true,
+        "description": "登录后顶栏品牌与浏览器标题显示的名称；登录页与部署配置（VITE_APP_NAME）不受影响",
+        "maxLength": 50,
+        "value": "供应链协同平台",
+        "defaultValue": "企业管理系统",
+        "modified": true,
+        "updatedAt": "2026-10-22T02:57:40.369Z"
+      }
+    },
+    {
+      "name": "http.update-text-normalize",
+      "ok": true,
+      "detail": {
+        "key": "help.contact",
+        "name": "帮助联系方式",
+        "type": "text",
+        "public": true,
+        "description": "账号菜单展示的帮助与问题反馈联系方式，如管理员邮箱或电话；留空则不展示",
+        "maxLength": 200,
+        "value": "support@example.com\n内线 8000",
+        "defaultValue": "",
+        "modified": true,
+        "updatedAt": "2026-10-22T02:57:40.384Z"
+      }
+    },
+    {
+      "name": "http.list-modified",
+      "ok": true,
+      "detail": {
+        "site": true,
+        "help": true
+      }
+    },
+    {
+      "name": "http.public-updated",
+      "ok": true,
+      "detail": {
+        "site.name": "供应链协同平台",
+        "help.contact": "support@example.com\n内线 8000"
+      }
+    },
+    {
+      "name": "http.public-needs-auth",
+      "ok": true,
+      "detail": 401
+    },
+    {
+      "name": "http.update-again",
+      "ok": true,
+      "detail": "名称二号"
+    },
+    {
+      "name": "audit.written",
+      "ok": true,
+      "detail": [
+        "site.name",
+        "help.contact",
+        "site.name"
+      ]
+    },
+    {
+      "name": "audit.detail-old-new",
+      "ok": true,
+      "detail": {
+        "old": {
+          "value": "供应链协同平台"
+        },
+        "new": {
+          "value": "名称二号"
+        },
+        "requestId": "eacd5dc1-5d87-47b2-81b9-5a8100009ae8"
+      }
+    },
+    {
+      "name": "seed.menu-and-grant",
+      "ok": true,
+      "detail": [
+        {
+          "id": 18,
+          "path": "/system/settings",
+          "status": 1
+        }
+      ]
+    }
+  ],
+  "startedAt": "2026-10-22T02:57:38.014Z",
+  "backendPid": 21512,
+  "cleaned": true,
+  "finishedAt": "2026-10-22T02:57:40.664Z",
+  "allPassed": true
+}

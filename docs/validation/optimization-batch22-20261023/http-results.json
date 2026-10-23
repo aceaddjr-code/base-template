@@ -1,0 +1,106 @@
+{
+  "port": 3025,
+  "checks": [
+    {
+      "name": "f15.live-anon-200",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "body": {
+          "status": "ok"
+        }
+      }
+    },
+    {
+      "name": "f15.ready-anon-200",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "body": {
+          "status": "ready",
+          "database": "connected"
+        }
+      }
+    },
+    {
+      "name": "f15.aggregate-legacy-shape",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "keys": [
+          "status",
+          "timestamp",
+          "uptime",
+          "database"
+        ]
+      }
+    },
+    {
+      "name": "f15.root-200",
+      "ok": true,
+      "detail": {
+        "status": "ok"
+      }
+    },
+    {
+      "name": "f15.diagnostics-anon-401",
+      "ok": true,
+      "detail": 401
+    },
+    {
+      "name": "setup.login-admin",
+      "ok": true,
+      "detail": 201
+    },
+    {
+      "name": "f15.diagnostics-admin-200",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "name": "f15.diagnostics-fields",
+      "ok": true,
+      "detail": {
+        "db": {
+          "connected": true,
+          "pingMs": 0
+        },
+        "att": {
+          "privateDirWritable": true,
+          "tempRetentionHours": 24
+        },
+        "version": "1.0.0"
+      }
+    },
+    {
+      "name": "f15.diagnostics-no-secrets",
+      "ok": true,
+      "detail": {
+        "compared": 3
+      }
+    },
+    {
+      "name": "setup.normal-role-exists",
+      "ok": true,
+      "detail": "user"
+    },
+    {
+      "name": "setup.create-user",
+      "ok": true,
+      "detail": 201
+    },
+    {
+      "name": "setup.login-user",
+      "ok": true,
+      "detail": 201
+    },
+    {
+      "name": "f15.diagnostics-non-admin-403",
+      "ok": true,
+      "detail": 403
+    }
+  ],
+  "startedAt": "2026-10-23T03:23:45.270Z",
+  "finishedAt": "2026-10-23T03:23:45.708Z",
+  "allPassed": true
+}

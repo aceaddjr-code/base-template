@@ -1,0 +1,70 @@
+{
+  "url": "http://localhost:3029/api/docs-json",
+  "checks": [
+    {
+      "name": "docs-json-200",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "name": "openapi-3",
+      "ok": true,
+      "detail": "3.0.0"
+    },
+    {
+      "name": "info-version",
+      "ok": true,
+      "detail": "1.0.0"
+    },
+    {
+      "name": "conventions-documented",
+      "ok": true,
+      "detail": "响应/错误/分页约定已声明"
+    },
+    {
+      "name": "cookie-auth-scheme",
+      "ok": true,
+      "detail": {
+        "cookie": {
+          "type": "apiKey",
+          "in": "cookie",
+          "name": "access_token"
+        }
+      }
+    },
+    {
+      "name": "paths-use-global-prefix",
+      "ok": true,
+      "detail": "66 条路径"
+    },
+    {
+      "name": "path-exists:/api/v1/auth/login",
+      "ok": true
+    },
+    {
+      "name": "path-exists:/api/v1/auth/profile",
+      "ok": true
+    },
+    {
+      "name": "path-exists:/api/v1/examples/items",
+      "ok": true
+    },
+    {
+      "name": "dto-schemas-derived",
+      "ok": true,
+      "detail": {
+        "total": 20
+      }
+    },
+    {
+      "name": "login-body-schema",
+      "ok": true,
+      "detail": {
+        "$ref": "#/components/schemas/LoginDto"
+      }
+    }
+  ],
+  "startedAt": "2026-10-23T05:55:10.003Z",
+  "allPassed": true,
+  "finishedAt": "2026-10-23T05:55:10.053Z"
+}

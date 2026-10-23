@@ -1,0 +1,207 @@
+{
+  "appDb": "base_template_b6_app_1792640194448",
+  "patchDb": "base_template_b6_patch_1792640194448",
+  "checks": [
+    {
+      "name": "patch.menu-single",
+      "ok": true,
+      "detail": [
+        {
+          "id": 2,
+          "name": "系统公告",
+          "sort": 99
+        }
+      ]
+    },
+    {
+      "name": "patch.grant-single",
+      "ok": true,
+      "detail": [
+        {
+          "role_id": 1
+        }
+      ]
+    },
+    {
+      "name": "patch.log-action-dict",
+      "ok": true,
+      "detail": [
+        {
+          "value": "publish",
+          "label": "发布"
+        },
+        {
+          "value": "withdraw",
+          "label": "撤回"
+        }
+      ]
+    },
+    {
+      "name": "patch.log-entity-dict",
+      "ok": true,
+      "detail": [
+        {
+          "value": "system_announcements"
+        }
+      ]
+    },
+    {
+      "name": "patch.no-dup-existing",
+      "ok": true,
+      "detail": 1
+    },
+    {
+      "name": "life.create-draft",
+      "ok": true,
+      "detail": "ok"
+    },
+    {
+      "name": "life.published-empty-before",
+      "ok": true,
+      "detail": {
+        "code": 200,
+        "message": "success",
+        "data": {
+          "list": [],
+          "total": 0,
+          "page": 1,
+          "pageSize": 10
+        }
+      }
+    },
+    {
+      "name": "life.update-draft",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "name": "life.publish",
+      "ok": true,
+      "detail": "2026-10-22T03:36:36.827Z"
+    },
+    {
+      "name": "life.published-listed",
+      "ok": true,
+      "detail": 1
+    },
+    {
+      "name": "life.detail-published",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "name": "life.update-published-rejected",
+      "ok": true,
+      "detail": "只有草稿可以编辑，已发布的公告请先撤回"
+    },
+    {
+      "name": "life.delete-published-rejected",
+      "ok": true,
+      "detail": 400
+    },
+    {
+      "name": "life.withdraw",
+      "ok": true,
+      "detail": 201
+    },
+    {
+      "name": "life.published-empty-after-withdraw",
+      "ok": true,
+      "detail": 0
+    },
+    {
+      "name": "life.republish",
+      "ok": true,
+      "detail": "2026-10-22T03:36:36.933Z"
+    },
+    {
+      "name": "life.published-order",
+      "ok": true,
+      "detail": [
+        "第二条公告",
+        "平台上线公告（修订）"
+      ]
+    },
+    {
+      "name": "life.empty-title-field-error",
+      "ok": true,
+      "detail": [
+        {
+          "path": "title",
+          "code": "required",
+          "message": "标题不能为空"
+        }
+      ]
+    },
+    {
+      "name": "life.list-filter-draft",
+      "ok": true,
+      "detail": 0
+    },
+    {
+      "name": "life.list-filter-keyword",
+      "ok": true,
+      "detail": 1
+    },
+    {
+      "name": "user.published-visible",
+      "ok": true,
+      "detail": 2
+    },
+    {
+      "name": "user.published-detail-ok",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "name": "user.withdrawn-detail-404",
+      "ok": true,
+      "detail": 404
+    },
+    {
+      "name": "user.published-after-withdraw",
+      "ok": true,
+      "detail": 1
+    },
+    {
+      "name": "user.manage-403",
+      "ok": true,
+      "detail": 403
+    },
+    {
+      "name": "user.create-403",
+      "ok": true,
+      "detail": 403
+    },
+    {
+      "name": "user.anon-401",
+      "ok": true,
+      "detail": 401
+    },
+    {
+      "name": "audit.actions",
+      "ok": true,
+      "detail": {
+        "create": 2,
+        "update": 1,
+        "publish": 3,
+        "withdraw": 2
+      }
+    },
+    {
+      "name": "seed.menu-and-grant",
+      "ok": true,
+      "detail": 1
+    },
+    {
+      "name": "seed.log-action-dict",
+      "ok": true,
+      "detail": 1
+    }
+  ],
+  "startedAt": "2026-10-22T03:36:34.448Z",
+  "backendPid": 51908,
+  "cleaned": true,
+  "finishedAt": "2026-10-22T03:36:37.445Z",
+  "allPassed": true
+}

@@ -1,0 +1,174 @@
+{
+  "appDb": "base_template_b18_app_1792679887552",
+  "port": 3021,
+  "checks": [
+    {
+      "name": "setup.login-admin",
+      "ok": true,
+      "detail": {
+        "status": 201,
+        "body": {
+          "code": 200,
+          "message": "success",
+          "data": {
+            "user": {
+              "id": 1,
+              "username": "admin",
+              "displayName": "系统管理员",
+              "email": null,
+              "phone": null,
+              "role": {
+                "id": 1,
+                "name": "管理员",
+                "code": "admin"
+              },
+              "roles": [
+                "admin"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "f30.template-headers",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "header": [
+          "标题",
+          "状态",
+          "类别",
+          "说明"
+        ]
+      }
+    },
+    {
+      "name": "f30.template-anon-401",
+      "ok": true,
+      "detail": 401
+    },
+    {
+      "name": "f30.precheck-anon-401",
+      "ok": true,
+      "detail": 401
+    },
+    {
+      "name": "f30.precheck-stats",
+      "ok": true,
+      "detail": 201
+    },
+    {
+      "name": "f30.precheck-total-valid",
+      "ok": true,
+      "detail": {
+        "total": 3,
+        "valid": 1
+      }
+    },
+    {
+      "name": "f30.precheck-row-errors",
+      "ok": true,
+      "detail": [
+        {
+          "row": 3,
+          "message": "请填写标题; 标题不能超过 100 字; 标题不能为空; title must be a string"
+        },
+        {
+          "row": 4,
+          "message": "该类别已停用，请重新选择"
+        }
+      ]
+    },
+    {
+      "name": "f30.precheck-writes-nothing",
+      "ok": true,
+      "detail": {
+        "before": 0,
+        "after": 0
+      }
+    },
+    {
+      "name": "f30.precheck-no-file-400",
+      "ok": true,
+      "detail": 400
+    },
+    {
+      "name": "f30.import-partial-success",
+      "ok": true,
+      "detail": {
+        "imported": 1,
+        "total": 2,
+        "errors": [
+          {
+            "row": 3,
+            "message": "该类别已停用，请重新选择"
+          }
+        ]
+      }
+    },
+    {
+      "name": "f30.import-row-stored",
+      "ok": true,
+      "detail": {
+        "total": 1,
+        "list": [
+          {
+            "t": "导入成功行",
+            "c": "cat-a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "f40.export-category-label",
+      "ok": true,
+      "detail": [
+        [
+          "标题",
+          "状态",
+          "类别"
+        ],
+        [
+          "导入成功行",
+          "待处理",
+          "类别甲"
+        ]
+      ]
+    },
+    {
+      "name": "f40.export-roundtrip-import",
+      "ok": true,
+      "detail": {
+        "imported": 1,
+        "total": 1,
+        "errors": []
+      }
+    },
+    {
+      "name": "f40.roundtrip-category-value",
+      "ok": true,
+      "detail": [
+        "cat-a",
+        "cat-a"
+      ]
+    },
+    {
+      "name": "f30.default-role-import-allowed",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "name": "f30.restricted-role-forbidden",
+      "ok": true,
+      "detail": {
+        "template": 403,
+        "precheck": 403
+      }
+    }
+  ],
+  "startedAt": "2026-10-22T14:38:07.552Z",
+  "cleaned": true,
+  "finishedAt": "2026-10-22T14:38:10.496Z",
+  "allPassed": true
+}
