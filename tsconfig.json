@@ -1,0 +1,8 @@
+{
+  // 告诉 VS Code 这是一个多项目仓库，避免 TypeScript 混淆
+  "references": [
+    { "path": "./backend" },
+    { "path": "./frontend" }
+  ],
+  "files": []
+}
