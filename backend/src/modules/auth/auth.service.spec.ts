@@ -11,7 +11,8 @@ const chain = (rows: unknown[] = []) => ({
 
 describe('本地认证、菜单和权限缓存', () => {
   let service: AuthService;
-  let users: any, roles: any, menus: any, links: any, scopes: any, targets: any, jwt: any, loginQuery: any, roleQuery: any;
+  let users: any, roles: any, menus: any, links: any, userDataScopes: any, jwt: any, loginQuery: any, roleQuery: any;
+  const defaultScope = { scopeKey:'__global__', scopeType:'self', viewOthers:1, editOthers:0, deleteOthers:0, targets:[] };
   const account = { id:1, username:'alice', password:'hash', status:1, roleId:2, tokenVersion:1,
     displayName:'用户甲', deptId:3, role:{ id:2, name:'普通用户', code:'user' } };
 
@@ -24,10 +25,9 @@ describe('本地认证、菜单和权限缓存', () => {
     roles = { findOne:jest.fn().mockResolvedValue(account.role), find:jest.fn() };
     menus = { find:jest.fn() };
     links = { createQueryBuilder:jest.fn().mockReturnValue(roleQuery), manager:{ query:jest.fn().mockResolvedValue([]) } };
-    scopes = { find:jest.fn().mockResolvedValue([]) };
-    targets = { find:jest.fn().mockResolvedValue([]) };
+    userDataScopes = { loadForSession:jest.fn().mockResolvedValue([defaultScope]) };
     jwt = { sign:jest.fn().mockReturnValue('signed-token') };
-    service = new AuthService(jwt,users,roles,menus,links,scopes,targets);
+    service = new AuthService(jwt,users,roles,menus,links,userDataScopes);
     (bcrypt.compare as jest.Mock).mockResolvedValue(true);
   });
 
@@ -36,9 +36,7 @@ describe('本地认证、菜单和权限缓存', () => {
     expect(bcrypt.compare).toHaveBeenCalledWith('password','hash');
     expect(result.token).toBe('signed-token');
     expect(result.user).not.toHaveProperty('password');
-    expect(jwt.sign.mock.calls[0][0].dataScopes).toEqual([
-      { scopeKey:'__global__', scopeType:'self', viewOthers:1, editOthers:0, deleteOthers:0, targets:[] },
-    ]);
+    expect(jwt.sign.mock.calls[0][0].dataScopes).toEqual([defaultScope]);
   });
 
   it.each([null, { ...account, password:null }])('缺少本地密码的账号不能登录', async user => {
@@ -58,9 +56,11 @@ describe('本地认证、菜单和权限缓存', () => {
   });
 
   it('用户的表单范围和目标随登录签发', async () => {
-    scopes.find.mockResolvedValue([{ id:11, scopeKey:'example-items', scopeType:'by_users', viewOthers:1,editOthers:1,deleteOthers:0 }]);
-    targets.find.mockResolvedValue([{ userDataScopeId:11,targetId:7 }]);
+    userDataScopes.loadForSession.mockResolvedValueOnce([
+      { scopeKey:'example-items', scopeType:'by_users', viewOthers:1, editOthers:1, deleteOthers:0, targets:[7] },
+    ]);
     await service.login('alice','password');
+    expect(userDataScopes.loadForSession).toHaveBeenCalledWith(account.id);
     expect(jwt.sign.mock.calls[0][0].dataScopes[0]).toMatchObject({ scopeKey:'example-items',targets:[7],editOthers:1 });
   });
 

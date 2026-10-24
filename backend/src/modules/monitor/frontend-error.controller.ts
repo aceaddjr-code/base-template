@@ -1,4 +1,5 @@
 import { Body, Controller, Logger, Post } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { Type } from 'class-transformer';
 import { ArrayMaxSize, IsArray, IsInt, IsOptional, IsString, MaxLength, Min, Max, Matches, ValidateNested } from 'class-validator';
 import { Public } from '../../common/decorators/public.decorator';
@@ -30,7 +31,9 @@ export class FrontendErrorBatchDto {
 export class FrontendErrorController {
   private readonly logger = new Logger('FrontendError');
 
+  /** 匿名可上报：每批至多 20 条，另加独立限流防日志被刷（全局 300 次/分钟之外收紧到 30） */
   @Public()
+  @Throttle({ default: { ttl: 60000, limit: 30 } })
   @Post()
   report(@Body() dto: FrontendErrorBatchDto) {
     const events = Array.isArray(dto?.events) ? dto.events : [];

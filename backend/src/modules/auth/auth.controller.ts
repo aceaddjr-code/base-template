@@ -73,7 +73,7 @@ export class AuthController {
   }
 
   /** 登出 — 清除 httpOnly Cookie（登出审计，未登录调用也记录 IP） */
-  // clearCookie 永不执行（卡死状态）。但 @Public 绕过 passport → req.user 恒 undefined。
+  // @Public 绕过 passport → req.user 恒 undefined，需手动验 token 才能记录登出者身份
   @Public()
   @Post('logout')
   async logout(@Res({ passthrough: true }) res: Response, @Req() req: Request) {

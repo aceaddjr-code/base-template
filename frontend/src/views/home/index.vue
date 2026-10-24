@@ -123,7 +123,7 @@ import { clearRecentVisits, recentVisits } from '@/composables/useRecentVisits'
 import { getUnreadCount } from '@/api/notifications'
 import { getPublishedAnnouncements, type AnnouncementBrief } from '@/api/announcement'
 import { menuIcon } from '@/utils/menu-icons'
-import { formatDateTime } from '@/utils/format'
+import { formatDateTime, todayStr as formatToday } from '@/utils/format'
 
 const router = useRouter()
 const appStore = useAppStore()
@@ -136,7 +136,7 @@ const roleLabel = computed(() => {
 })
 const deptLabel = computed(() => appStore.userInfo?.deptName || '未分配部门')
 
-const todayStr = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`
+const todayStr = formatToday()
 
 const greeting = computed(() => {
   const h = new Date().getHours()

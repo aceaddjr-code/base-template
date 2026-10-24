@@ -1,6 +1,12 @@
 import dayjs from 'dayjs'
 import { h } from 'vue'
 
+/** 今日日期（YYYY-MM-DD，本地时区）：页头"今日"展示共用 */
+export function todayStr(): string {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
+
 export function remainingDaysOf(dateStr: string | null | undefined): number | null {
   if (!dateStr) return null
   const [y, m, d] = String(dateStr).split('-').map((n) => Number(n))

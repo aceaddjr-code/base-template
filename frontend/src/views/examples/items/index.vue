@@ -59,11 +59,11 @@
         </template>
       </a-table>
     </div>
-    <template #footer><ListFooter :source="stickySource" :pagination="pagination" :total-text="(count: number) => failed ? '数量暂不可用' : loading ? '查询中…' : '共 ' + count + ' 条'" @change="changePage" @size-change="(_current: number, size: number) => changePage(1, size)" /></template>
+    <template #footer><ListFooter :source="stickySource" :pagination="pagination" :total-text="totalText" @change="changePage" @size-change="(_current: number, size: number) => changePage(1, size)" /></template>
   </Page>
 
-  <a-modal :open="modalVisible" title="新增示例事项" :confirm-loading="modalLoading" :mask-closable="!modalLoading" :keyboard="!modalLoading" :closable="!modalLoading" :cancel-button-props="{ disabled: modalLoading }" ok-text="保存" cancel-text="取消" @ok="save" @cancel="closeCreate">
-    <div ref="createFeedbackRoot">
+  <a-modal :open="modalVisible" title="新增示例事项" v-bind="modalProps" ok-text="保存" cancel-text="取消" @ok="save" @cancel="closeCreate">
+    <div :ref="createFeedbackRoot">
     <FormFeedback :items="createFeedbackItems" :request-id="createRequestId" @focus="createFeedback.focus" />
     <a-form layout="vertical">
       <a-form-item label="标题" required data-form-field="title" :validate-status="createErrors.title ? 'error' : undefined"><a-input v-model:value="form.title" aria-label="标题" v-bind="createFeedback.attrs('title')" :disabled="modalLoading" :maxlength="100" /><p v-if="createErrors.title" :id="createFeedback.errorId('title')" class="field-error">{{ createErrors.title }}</p></a-form-item>
@@ -100,24 +100,23 @@ import { formatDateTime } from '@/utils/format'
 import Page from '@/components/Page.vue'
 import PageToolbar from '@/components/PageToolbar.vue'
 import ListFilters from '@/components/ListFilters.vue'
-import FilterViews, { type FilterViewPayload } from '@/components/FilterViews.vue'
+import FilterViews from '@/components/FilterViews.vue'
 import { useListQuery } from '@/composables/useListQuery'
 import { filterDatePresets } from '@/utils/filter-dates'
 import { useAppStore } from '@/stores/app'
 import FormFeedback from '@/components/FormFeedback.vue'
-import { useFormFeedback } from '@/composables/useFormFeedback'
-import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
+import { useFormModal } from '@/composables/useFormModal'
 import ListFooter from '@/components/ListFooter.vue'
 import ExampleDetailDrawer from './ExampleDetailDrawer.vue'
 import { statusOptions, statusLabel } from './example-options'
 import { useDict } from '@/composables/useDict'
-import { useCrudModal } from '@/composables/useCrudModal'
+import { makeOnApplyView } from '@/composables/useSavedFilterViews'
 import { useDetailDeepLink } from '@/composables/useDetailDeepLink'
 import { useListPage } from '@/composables/useListPage'
 import { useTableScrollY } from '@/composables/useTableScrollY'
 import { useResizableColumns } from '@/composables/useResizableColumns'
 import { downloadCsv } from '@/utils/csv-download'
-import { batchDeleteExamples, createExample, deleteExample, exampleImportTemplateUrl, getExampleExportUrl, importExamples, listExamples, precheckExamples, updateExample, type ExampleBatchResult, type ExampleItem, type ExampleListQuery } from '@/api/example'
+import { batchDeleteExamples, createExample, deleteExample, exampleImportTemplateUrl, getExampleExportUrl, importExamples, listExamples, precheckExamples, type ExampleBatchResult, type ExampleItem, type ExampleListQuery } from '@/api/example'
 
 // 表头固定 + body 内部滚动：高度由容器实测，工具栏换行时自动重算。
 const bodyRef = ref<HTMLElement | null>(null)
@@ -138,7 +137,7 @@ const app = useAppStore()
 // 类别为字典驱动字段（F40）：新增/编辑候选仅启用项;存量停用值回显"名称（已停用）"
 const { options: categoryOptions, labelOfAny: categoryLabelOfAny } = useDict('item_category')
 const { setTableRef, stickySource } = useListPage()
-const { draft, applied, dirty, loading, failed, rows, total, page, pageSize, sort, activeQuery: filterSnapshot, refresh: fetchRows, apply, reset, changePage, changeSort } = useListQuery<Filters, ExampleItem>({
+const { draft, applied, dirty, loading, failed, rows, total, page, pageSize, sort, activeQuery: filterSnapshot, refresh: fetchRows, apply, reset, changePage, changeSort, onSearchEnter, totalText } = useListQuery<Filters, ExampleItem>({
   key: 'example-items', account: () => app.userInfo?.id,
   defaults: exampleFilterDefaults,
   normalize: query => ({ keyword: query.keyword.trim(), statuses: [...new Set(query.statuses)].sort(), updated: query.updated?.length === 2 ? [query.updated[0], query.updated[1]] : undefined, created: query.created?.length === 2 ? [query.created[0], query.created[1]] : undefined }),
@@ -158,16 +157,10 @@ const filterTags = computed(() => [
   ...(applied.value.created ? [{ key: 'created', label: `创建时间：${applied.value.created.join(' 至 ')}` }] : []),
 ])
 function removeFilter(key: string) { void apply({ ...applied.value, [key]: key === 'keyword' ? '' : key === 'statuses' ? [] : undefined }) }
-function onSearchEnter(event: KeyboardEvent) { if (!event.isComposing && event.keyCode !== 229) void apply() }
 const exampleResizable = computed(() => ({ colWidths, setColumnWidth }))
 
-/** 应用保存的视图：恢复条件与排序；字段已变化的给出失效提示 */
-function onApplyView({ query, sort: viewSort, staleKeys, name }: FilterViewPayload) {
-  if (staleKeys.length) message.warning(`视图「${name}」的字段已变化，已忽略：${staleKeys.join('、')}`)
-  sort.value = viewSort
-  // 旧结构视图可能缺少新字段，用模块默认值补齐后再应用
-  void apply({ ...exampleFilterDefaults(), ...query } as unknown as Filters)
-}
+// 应用保存的视图：失效字段提示、排序恢复与默认值补齐统一走共享处理器
+const onApplyView = makeOnApplyView<Filters>({ sort, apply, defaults: exampleFilterDefaults })
 const appliedRecord = computed(() => ({ ...applied.value }) as Record<string, unknown>)
 const rowSelection = computed(() => ({ selectedRowKeys: selectedIds.value, onChange: (keys: (string | number)[]) => { selectedIds.value = keys.map(Number) }, getCheckboxProps: () => ({ disabled: batchSaving.value }) }))
 const allColumns = ref([
@@ -185,33 +178,33 @@ const tableColumns = computed(() => columns.value.map(column => ({ ...column, so
 const { resizeStart, colWidths, setColumnWidth } = useResizableColumns('starter-example-widths-v2', columns, { title: 220, status: 110, category: 130, updatedAt: 180 })
 const exportColumns = computed(() => columns.value.map(column => column.key).filter(key => !['index', 'action', 'actions'].includes(key)).join(','))
 const exportUrl = computed(() => exportColumns.value ? getExampleExportUrl({ ...activeQuery.value, cols: exportColumns.value }) : '')
-const createFeedbackRoot = ref<HTMLElement | null>(null)
-const { modalVisible, modalLoading, form, openCreate: beginCreate, handleSave } = useCrudModal({
-  formFactory: () => ({ title: '', status: 'pending' as ExampleItem['status'], description: '', category: '' as string }),
-  createFn: data => createExample(data, { errorFeedback: 'form' }),
-  updateFn: updateExample,
-  onSaved: fetchRows,
-  onError: error => createFeedback.capture(error),
+// 新增弹窗状态（本页只有"新增并继续录入"；编辑走详情抽屉原地编辑，不经过这里）
+interface ExampleForm { title: string; status: ExampleItem['status']; description: string; category: string }
+const exampleFormDefaults = (): ExampleForm => ({ title: '', status: 'pending', description: '', category: '' })
+const createModal = useFormModal<ExampleForm>({
+  fields: () => ({ title: '标题', status: '状态', description: '说明', category: '类别' }),
+  defaults: exampleFormDefaults,
+  validate: form => {
+    const errors: Record<string, string> = {}
+    if (!form.title.trim()) errors.title = '请填写标题'
+    else if (Array.from(form.title).length > 100) errors.title = '标题不能超过 100 字'
+    if (!statusOptions.some(option => option.value === form.status)) errors.status = '请选择有效状态'
+    if (form.category && !categoryOptions.value.some(option => option.value === form.category)) errors.category = '请选择有效的类别'
+    if (Array.from(form.description).length > 500) errors.description = '说明不能超过 500 字'
+    return errors
+  },
+  save: async form => {
+    await createExample({ ...form }, { errorFeedback: 'form' })
+    void fetchRows()
+    // 保存并继续：不关弹窗，重置表单连续录入
+    message.success('已保存，可继续新增')
+    return 'continue'
+  },
 })
-const createFeedback = useFormFeedback({ root: createFeedbackRoot, fields: () => ({ title: '标题', status: '状态', description: '说明', category: '类别' }), values: () => ({ ...form }) })
+const { visible: modalVisible, loading: modalLoading, form, feedback: createFeedback, modalProps, bindRoot: createFeedbackRoot, open: openCreate, close: closeCreate, submit: save } = createModal
 const { errors: createErrors, summary: createFeedbackItems, requestId: createRequestId } = createFeedback
-const createBaseline = ref('')
-const createUnsaved = useUnsavedChanges({ active: () => modalVisible.value, dirty: () => JSON.stringify(form) !== createBaseline.value, saving: () => modalLoading.value })
-function openCreate() { if (modalVisible.value) return; beginCreate(); createFeedback.clear(); createBaseline.value = JSON.stringify(form) }
-function closeCreate() { void createUnsaved.attempt(() => { modalVisible.value = false; createFeedback.clear() }) }
 function changeTable(_page: unknown, _filters: Record<string, unknown>, sorter: any) {
   void changeSort({ sortBy: sorter.order ? sorter.field : undefined, sortOrder: sorter.order === 'ascend' ? 'ASC' : sorter.order === 'descend' ? 'DESC' : undefined })
-}
-async function save() {
-  if (modalLoading.value) return
-  const errors: Record<string, string> = {}
-  if (!form.title.trim()) errors.title = '请填写标题'
-  else if (Array.from(form.title).length > 100) errors.title = '标题不能超过 100 字'
-  if (!statusOptions.some(option => option.value === form.status)) errors.status = '请选择有效状态'
-  if (form.category && !categoryOptions.value.some(option => option.value === form.category)) errors.category = '请选择有效的类别'
-  if (Array.from(form.description).length > 500) errors.description = '说明不能超过 500 字'
-  if (!(await createFeedback.validate(errors))) return
-  if (await handleSave()) { createFeedback.clear(); createBaseline.value = JSON.stringify(form); message.success('已保存，可继续新增') }
 }
 async function remove(id: number) { await deleteExample(id); message.success('删除成功'); await fetchRows() }
 function openDetail(id: number, edit = false) {
@@ -284,7 +277,6 @@ onMounted(() => { deepLink.attach() })
 
 <style scoped>
 .page-body { height: 100%; display: flex; flex-direction: column; background: var(--color-surface); }
-.field-error { margin: 4px 0 0; color: #b42318; }
 .row-title {
   display: block;
   width: 100%;
@@ -314,7 +306,7 @@ onMounted(() => { deepLink.attach() })
 .status-tag::before { content: ''; flex: none; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .status-tag.is-pending { color: var(--color-text-secondary); background: var(--color-layer-hover); border-color: transparent; }
 .status-tag.is-doing { color: #0056b3; background: var(--color-blue-10); border-color: transparent; }
-.status-tag.is-done { color: #187536; background: var(--color-green-10); border-color: transparent; }
+.status-tag.is-done { color: var(--color-success-text); background: var(--color-green-10); border-color: transparent; }
 /* 批量操作条：左侧墨条标记「当前上下文已切换」，与表格选中行呼应。 */
 .batch-bar {
   display: flex;

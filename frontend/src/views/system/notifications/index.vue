@@ -1,25 +1,17 @@
 <template>
-  <div class="p-0 h-full flex flex-col page-list">
-
-    <div class="shrink-0 pr-4 ml-2.5 pt-2.5">
-      <div class="page-head-rule flex items-end justify-between mb-1.5">
-        <div>
-          <div class="text-xl font-bold text-[#201d1d] leading-none tracking-tight">站内通知</div>
-          <div class="text-sm text-[#646262] mt-2">预警 · 提醒</div>
-        </div>
-      <div class="text-sm text-[#646262]">今日 {{ todayStr }}</div>
-      </div>
-    </div>
-
-    <a-card :bordered="false" class="flex-1 min-h-0 flex flex-col">
-      <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-      <div class="flex justify-between items-center mb-4">
-        <a-radio-group v-model:value="filter" button-style="solid">
-          <a-radio-button value="unread">未读 {{ unread ?? '—' }}</a-radio-button>
-          <a-radio-button value="all">全部</a-radio-button>
-        </a-radio-group>
-        <a-button @click="handleReadAll">全部已读</a-button>
-      </div>
+  <Page class="page-list" title="站内通知" description="预警 · 提醒">
+    <div ref="bodyRef" class="notice-body">
+      <PageToolbar :show-search="false">
+        <template #left>
+          <a-radio-group v-model:value="filter" button-style="solid">
+            <a-radio-button value="unread">未读 {{ unread ?? '—' }}</a-radio-button>
+            <a-radio-button value="all">全部</a-radio-button>
+          </a-radio-group>
+        </template>
+        <template #actions>
+          <a-button @click="handleReadAll">全部已读</a-button>
+        </template>
+      </PageToolbar>
 
       <a-alert v-if="failed" type="error" message="通知加载失败，请重试" show-icon class="mb-3">
         <template #action><a-button size="small" @click="fetchNotifications">重试</a-button></template>
@@ -30,25 +22,24 @@
         :data-source="records"
         :loading="loading"
         :pagination="false"
-        :scroll="{ x: 920 }"
+        :scroll="{ x: 920, y: tableScrollY }"
         row-key="id"
-        size="small"
-
+        size="middle"
       >
         <template #headerCell="{ column }">
           <span>{{ column.title }}</span>
-          <span class="resize-handle" @mousedown.prevent.stop="(e: any) => resizeStart(String(column.key), e)" />
+          <span class="resize-handle" @click.stop @mousedown.prevent.stop="(e: any) => resizeStart(String(column.key), e)" />
         </template>
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'title'">
             <div class="flex items-center gap-2 cursor-pointer" @click="handleOpen(record)">
-              <span class="w-2 h-2 rounded-full flex-shrink-0" :class="record.readAt ? 'bg-transparent' : 'bg-[#201d1d]'" />
-              <span class="table-long-text" :class="record.readAt ? 'text-gray-500' : 'text-[#201d1d] font-medium'">{{ record.title }}</span>
+              <span class="notice-dot" :class="{ 'is-unread': !record.readAt }" />
+              <span class="table-long-text notice-text" :class="record.readAt ? 'is-read' : 'is-unread'">{{ record.title }}</span>
             </div>
           </template>
           <template v-else-if="column.key === 'content'">
             <!-- 通知内容为长文本，完整展示并保留换行。 -->
-            <span class="text-gray-500 table-long-text">{{ record.content || '-' }}</span>
+            <span class="table-long-text notice-content">{{ record.content || '-' }}</span>
           </template>
           <template v-else-if="column.key === 'type'">
             <a-tag :color="typeColor(record.type)">{{ typeLabel(record.type) }}</a-tag>
@@ -57,7 +48,9 @@
             {{ formatDateTime(record.createdAt) }}
           </template>
           <template v-else-if="column.key === 'action'">
-            <a-tooltip title="标已读"><a-button aria-label="标为已读" class="w-6! h-6! px-0!" type="text" size="small" @click="handleReadOne(record)"><CheckOutlined /></a-button></a-tooltip>
+            <!-- 业务状态决定是否允许操作：已读记录不再提供标已读入口 -->
+            <a-button v-if="!record.readAt" type="link" size="small" :aria-label="`标为已读：${record.title}`" @click="handleReadOne(record)">标已读</a-button>
+            <span v-else class="cell-dash">-</span>
           </template>
         </template>
         <template #emptyText>
@@ -65,35 +58,40 @@
           <a-empty v-else description="暂无通知" />
         </template>
       </a-table>
-          </div>
-    </a-card>
-
-    <ListFooter :source="stickySource" :pagination="pagination" :total-text="totalText" @change="changePage" @size-change="(_current: number, size: number) => changePage(1, size)" />
-  </div>
+    </div>
+    <template #footer>
+      <ListFooter :source="stickySource" :pagination="pagination" :total-text="totalText" @change="changePage" @size-change="(_current: number, size: number) => changePage(1, size)" />
+    </template>
+  </Page>
 </template>
 
 <script lang="ts" setup>
 import { computed, onMounted, ref } from 'vue'
-import { CheckOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
+import Page from '@/components/Page.vue'
+import PageToolbar from '@/components/PageToolbar.vue'
 import ListFooter from '@/components/ListFooter.vue'
 import { formatDateTime, withEmptyDash } from '@/utils/format'
 import { getNotifications, getUnreadCount, markAllRead, markRead, type NotificationItem } from '@/api/notifications'
 import { useResizableColumns } from '@/composables/useResizableColumns'
 import { useListPage } from '@/composables/useListPage'
 import { useListQuery } from '@/composables/useListQuery'
+import { useTableScrollY } from '@/composables/useTableScrollY'
 import { useDict } from '@/composables/useDict'
 import { useAppStore } from '@/stores/app'
 
+// 表头固定 + body 内部滚动：高度由容器实测，失败提示出现/收起时自动重算。
+const bodyRef = ref<HTMLElement | null>(null)
+const tableScrollY = useTableScrollY(bodyRef)
+
 const appStore = useAppStore()
 const unread = ref<number | null>(null)
-const todayStr = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`
 const columns = withEmptyDash([
   { title: '通知', key: 'title', width: 320 },
   { title: '内容', key: 'content' },
   { title: '类型', key: 'type', width: 100 },
   { title: '时间', key: 'createdAt', width: 160 },
-  { title: '操作', key: 'action', width: 50, fixed: 'right' as const },
+  { title: '操作', key: 'action', width: 80, fixed: 'right' as const },
 ])
 const { resizeStart } = useResizableColumns('starter-cols-notifications-main-width', ref(columns))
 
@@ -158,3 +156,14 @@ async function handleReadAll() {
 
 onMounted(() => { void refreshUnread() })
 </script>
+
+<style scoped>
+.notice-body { height: 100%; display: flex; flex-direction: column; min-height: 0; background: var(--color-surface); }
+.notice-body > .ant-table-wrapper { min-height: 0; overflow: hidden; }
+/* 未读圆点与标题强调色取主题 token，替代原硬编码色值 */
+.notice-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.notice-dot.is-unread { background: var(--color-primary); }
+.notice-text.is-unread { color: var(--color-text-primary); font-weight: 500; }
+.notice-text.is-read { color: var(--color-text-tertiary); }
+.notice-content { color: var(--color-text-tertiary); }
+</style>

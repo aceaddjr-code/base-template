@@ -1,8 +1,8 @@
 <template>
-  <Page title="附件管理" description="私有业务附件：上传后为临时状态，业务记录绑定时引用；过期临时附件由系统按保留期清理。">
+  <Page class="page-list" title="附件管理" description="私有业务附件：上传后为临时状态，业务记录绑定时引用；过期临时附件由系统按保留期清理。">
     <div class="page-body">
       <div class="flex justify-between items-center mb-4 gap-3 flex-wrap shrink-0">
-        <a-radio-group v-model:value="statusFilter" button-style="solid" @change="fetchList(1)">
+        <a-radio-group v-model:value="draft.status" button-style="solid" @change="apply()">
           <a-radio-button value="">全部</a-radio-button>
           <a-radio-button value="temp">临时</a-radio-button>
           <a-radio-button value="bound">已绑定</a-radio-button>
@@ -24,16 +24,11 @@
       <a-alert type="info" show-icon class="mb-4" message="附件存储在服务端私有目录，下载需登录授权；临时附件超过保留期（默认 24 小时）会被自动清理" />
 
       <a-table
+        :ref="setTableRef"
         :columns="columns"
         :data-source="list"
         :loading="loading"
-        :pagination="{
-          current: page,
-          pageSize,
-          total,
-          showSizeChanger: false,
-          onChange: (p: number) => fetchList(p),
-        }"
+        :pagination="false"
         row-key="id"
         size="middle"
         :scroll="{ x: 'max-content' }"
@@ -63,27 +58,38 @@
         </template>
       </a-table>
     </div>
+    <template #footer>
+      <ListFooter :source="stickySource" :pagination="pagination" @change="changePage" @size-change="changePage" />
+    </template>
   </Page>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import {
   getAttachments, uploadAttachment, deleteAttachment, cleanupAttachments,
   attachmentDownloadUrl, formatSize, type AttachmentItem, type AttachmentStatus,
 } from '@/api/attachment'
 import Page from '@/components/Page.vue'
+import ListFooter from '@/components/ListFooter.vue'
+import { useListPage } from '@/composables/useListPage'
+import { useListQuery } from '@/composables/useListQuery'
+import { useAppStore } from '@/stores/app'
 import { formatDateTime } from '@/utils/format'
 
-const loading = ref(false)
 const uploading = ref(false)
 const cleaning = ref(false)
-const list = ref<AttachmentItem[]>([])
-const page = ref(1)
-const pageSize = 20
-const total = ref(0)
-const statusFilter = ref<AttachmentStatus | ''>('')
+// 表格函数 ref 与页脚横滚条来源统一走 useListPage；分页/请求（迟到保护、末页回退）统一走 useListQuery
+const { setTableRef, stickySource } = useListPage()
+const app = useAppStore()
+const { draft, loading, rows: list, page, pageSize, total, refresh: fetchList, apply, changePage } = useListQuery<{ status: AttachmentStatus | '' }, AttachmentItem>({
+  key: 'system-attachments', account: () => app.userInfo?.id, pageSize: 20,
+  defaults: () => ({ status: '' }),
+  normalize: query => ({ status: query.status || '' }),
+  load: query => getAttachments({ page: query.page, pageSize: query.pageSize, status: query.status || undefined }),
+})
+const pagination = computed(() => ({ current: page.value, pageSize: pageSize.value, total: total.value }))
 
 const columns = [
   { title: '文件名', key: 'name', width: 280 },
@@ -93,26 +99,12 @@ const columns = [
   { title: '操作', key: 'action', width: 140 },
 ]
 
-async function fetchList(targetPage = page.value) {
-  loading.value = true
-  try {
-    const res = await getAttachments({ page: targetPage, pageSize, status: statusFilter.value || undefined })
-    list.value = res.list
-    total.value = res.total
-    page.value = res.page
-  } catch {
-    /* 拦截器已提示，保留旧列表 */
-  } finally {
-    loading.value = false
-  }
-}
-
 async function handleUpload(file: File): Promise<boolean> {
   uploading.value = true
   try {
     await uploadAttachment(file)
     message.success('上传成功，当前为临时附件')
-    await fetchList(1)
+    await apply()
   } catch {
     /* 拦截器已提示 */
   } finally {
@@ -144,13 +136,11 @@ async function handleCleanup() {
   try {
     const removed = await cleanupAttachments()
     message.success(removed > 0 ? `已清理 ${removed} 个过期临时附件` : '没有需要清理的过期临时附件')
-    await fetchList(1)
+    await apply()
   } catch { /* 拦截器已提示 */ } finally {
     cleaning.value = false
   }
 }
-
-onMounted(() => fetchList(1))
 </script>
 
 <style scoped>

@@ -100,5 +100,12 @@ export function useListQuery<Q extends object, Row>(options: {
   }, { flush: 'sync' })
   onMounted(() => { void refresh() })
   onBeforeUnmount(() => { persist(); disposed = true; ++version; controller?.abort() })
-  return { draft, applied, dirty, activeQuery, rows, total, loading, failed, page, pageSize, sort, refresh, apply, reset, changePage, changeSort }
+
+  /** 关键词回车查询：输入法组合确认（isComposing / 229）不触发 */
+  function onSearchEnter(event: KeyboardEvent) { if (!event.isComposing && event.keyCode !== 229) void apply() }
+
+  /** 页脚总数三态文案：失败暂不可用 / 查询中 / 正常计数 */
+  const totalText = computed(() => (count: number) => (failed.value ? '数量暂不可用' : loading.value ? '查询中…' : `共 ${count} 条`))
+
+  return { draft, applied, dirty, activeQuery, rows, total, loading, failed, page, pageSize, sort, refresh, apply, reset, changePage, changeSort, onSearchEnter, totalText }
 }

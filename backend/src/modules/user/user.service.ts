@@ -8,15 +8,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { User } from './user.entity';
 import { UserRole } from './user-role.entity';
-import { UserDataScope } from './user-data-scope.entity';
-import { UserDataScopeTarget } from './user-data-scope-target.entity';
 import { Role } from '../role/role.entity';
 import { Department } from '../department/department.entity';
 import * as bcrypt from 'bcryptjs';
 import type { JwtPayload } from '../auth/jwt.strategy';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { SCOPE_FORM_REGISTRY, SCOPE_KEYS as SCOPE_KEYS_REGISTRY } from './scope-form.registry';
+import { deptSubtreeSelect } from '../../common/utils/dept-subtree';
 
 @Injectable()
 export class UserService {
@@ -30,10 +28,6 @@ export class UserService {
     private deptRepo: Repository<Department>,
     @InjectRepository(UserRole)
     private userRoleRepo: Repository<UserRole>,
-    @InjectRepository(UserDataScope)
-    private userDataScopeRepo: Repository<UserDataScope>,
-    @InjectRepository(UserDataScopeTarget)
-    private userDataScopeTargetRepo: Repository<UserDataScopeTarget>,
   ) {}
 
   private async syncUserRoles(
@@ -129,7 +123,7 @@ export class UserService {
 
     const [list, total] = await qb.getManyAndCount();
 
-    // 前端编辑弹窗回显恒空 → 改主角色即静默清空全部附加角色
+    // 批量补齐附加角色，保证列表回显完整：编辑回显缺角色会被当成"已取消全部勾选"而误清空
     const ids = list.map((u) => u.id);
     if (ids.length) {
       const rows = await this.userRoleRepo.find({ where: { userId: In(ids) }, select: { userId: true, roleId: true } });
@@ -147,18 +141,9 @@ export class UserService {
     return { list, total, page, pageSize };
   }
 
-  /** 收集某部门及全部子孙部门 id（WITH RECURSIVE，MySQL 8） */
+  /** 收集某部门及全部子孙部门 id（与数据范围过滤同一子树口径，含自身） */
   private async collectDeptWithChildren(deptId: number): Promise<number[]> {
-    const rows = await this.deptRepo.query(
-      `WITH RECURSIVE dept_tree AS (
-        SELECT id FROM departments WHERE id = ? AND deleted_at IS NULL
-        UNION ALL
-        SELECT d.id FROM departments d
-        INNER JOIN dept_tree dt ON d.parent_id = dt.id
-        WHERE d.deleted_at IS NULL
-      ) SELECT id FROM dept_tree`,
-      [deptId],
-    );
+    const rows = await this.deptRepo.query(deptSubtreeSelect('id = ?'), [deptId]);
     return rows.map((r: { id: number }) => Number(r.id));
   }
 
@@ -306,130 +291,6 @@ export class UserService {
       await manager.softDelete(User, id);
     });
     return { message: '删除成功' };
-  }
-
-  /** 可配置表单清单（唯一真相源，供前端数据范围配置面板 / 校验共用） */
-  async listScopeForms() {
-    return SCOPE_FORM_REGISTRY;
-  }
-
-  /** 表单标识白名单（唯一真相源：scope-form.registry.ts，见文件头注释凭据规则） */
-  private readonly SCOPE_KEYS = SCOPE_KEYS_REGISTRY;
-
-  /** 查询用户数据范围全量配置（含 targets 回显）；无配置返回默认 __global__ self 行 */
-  async getDataScopes(userId: number) {
-    await this.findById(userId);
-    const rows = await this.userDataScopeRepo.find({ where: { userId }, order: { id: 'ASC' } });
-    const ids = rows.map((r) => r.id);
-    const targets = ids.length
-      ? await this.userDataScopeTargetRepo.find({ where: { userDataScopeId: In(ids) } })
-      : [];
-    const list = rows.map((r) => ({
-      id: r.id,
-      scopeKey: r.scopeKey,
-      scopeType: r.scopeType,
-      viewOthers: r.viewOthers,
-      editOthers: r.editOthers,
-      deleteOthers: r.deleteOthers,
-      targets: targets.filter((t) => t.userDataScopeId === r.id).map((t) => t.targetId),
-    }));
-    if (!list.length) {
-      list.push({
-        id: 0,
-        scopeKey: '__global__',
-        scopeType: 'self',
-        viewOthers: 1,
-        editOthers: 0,
-        deleteOthers: 0,
-        targets: [],
-      });
-    }
-    return list;
-  }
-
-  /**
-   * 保存用户数据范围（全量替换：物理删除 + 插入，事务）。
-   * 入参 rows: [{ scopeKey, scopeType, viewOthers, editOthers, deleteOthers, targets }]
-   */
-  async saveDataScopes(
-    userId: number,
-    rows: {
-      scopeKey: string;
-      scopeType: string;
-      viewOthers?: number;
-      editOthers?: number;
-      deleteOthers?: number;
-      targets?: number[];
-    }[],
-    caller: JwtPayload,
-  ) {
-    await this.findById(userId);
-    if (!Array.isArray(rows)) throw new BadRequestException('rows 必须为数组');
-
-    const VALID_TYPES = new Set(['self', 'all', 'by_users', 'by_depts']);
-    const seen = new Set<string>();
-    const clean = rows.map(r => {
-      if (!r || !(r.scopeKey === '__global__' || this.SCOPE_KEYS.has(r.scopeKey)) || !VALID_TYPES.has(r.scopeType)) {
-        throw new BadRequestException('数据范围的表单或类型无效');
-      }
-      if (seen.has(r.scopeKey)) throw new BadRequestException('数据范围表单不能重复');
-      seen.add(r.scopeKey);
-      const values = [r.viewOthers, r.editOthers, r.deleteOthers];
-      if (values.some(value => value !== undefined && value !== 0 && value !== 1)) {
-        throw new BadRequestException('操作开关必须为 0 或 1');
-      }
-      if (r.targets !== undefined && (!Array.isArray(r.targets) || r.targets.some(id => !Number.isInteger(id) || id <= 0))) {
-        throw new BadRequestException('数据范围目标必须为正整数 ID');
-      }
-      const targeted = r.scopeType === 'by_users' || r.scopeType === 'by_depts';
-      const targets = targeted ? [...new Set(r.targets ?? [])] : [];
-      if (targeted && !targets.length) throw new BadRequestException('请指定数据范围目标');
-      return { scopeKey:r.scopeKey, scopeType:r.scopeType, viewOthers:r.viewOthers ?? 0,
-        editOthers:r.editOthers ?? 0, deleteOthers:r.deleteOthers ?? 0, targets };
-    });
-    if (!seen.has('__global__')) clean.unshift({ scopeKey:'__global__', scopeType:'self', viewOthers:1, editOthers:0, deleteOthers:0, targets:[] });
-    for (const row of clean) {
-      if (!row.targets.length) continue;
-      const found = row.scopeType === 'by_users'
-        ? await this.userRepo.find({ where: { id: In(row.targets) }, select: { id:true } })
-        : await this.deptRepo.find({ where: { id: In(row.targets) }, select: { id:true } });
-      if (found.length !== row.targets.length) throw new BadRequestException('数据范围包含不存在的目标');
-    }
-    const callerId = caller?.sub ?? userId;
-
-    await this.userDataScopeRepo.manager.transaction(async (manager) => {
-      // 先取旧配置 id 以便级联清 targets
-      const oldRows = await manager.find(UserDataScope, { where: { userId } });
-      const oldIds = oldRows.map((r) => r.id);
-      if (oldIds.length) await manager.delete(UserDataScopeTarget, { userDataScopeId: In(oldIds) });
-      await manager.delete(UserDataScope, { userId });
-      for (const r of clean) {
-        const saved = await manager.save(UserDataScope, {
-          userId,
-          scopeKey: r.scopeKey,
-          scopeType: r.scopeType,
-          viewOthers: r.viewOthers,
-          editOthers: r.editOthers,
-          deleteOthers: r.deleteOthers,
-          ownerId: userId,
-          createdBy: callerId,
-        });
-        if (r.targets.length) {
-          await manager.save(
-            UserDataScopeTarget,
-            r.targets.map((tid) => ({
-              userDataScopeId: saved.id,
-              targetType: r.scopeType === 'by_users' ? 'user' : 'dept',
-              targetId: tid,
-              ownerId: userId,
-              createdBy: callerId,
-            })),
-          );
-        }
-      }
-      await manager.increment(User, { id:userId }, 'tokenVersion', 1);
-    });
-    return this.getDataScopes(userId);
   }
 
 }

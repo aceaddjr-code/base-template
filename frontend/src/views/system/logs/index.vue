@@ -29,21 +29,21 @@
         <template #emptyText><a-empty :description="failed ? '查询失败，请重试' : filterTags.length ? '没有匹配的日志' : '暂无日志记录'" /></template>
       </a-table>
     </div>
-    <template #footer><ListFooter :source="stickySource" :pagination="pagination" :total-text="(count: number) => failed ? '数量暂不可用' : loading ? '查询中…' : '共 ' + count + ' 条'" @change="changePage" @size-change="(_current: number, size: number) => changePage(1, size)" /></template>
+    <template #footer><ListFooter :source="stickySource" :pagination="pagination" :total-text="totalText" @change="changePage" @size-change="(_current: number, size: number) => changePage(1, size)" /></template>
   </Page>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { message } from 'ant-design-vue'
 import { withEmptyDash, formatDateTime } from '@/utils/format'
 import Page from '@/components/Page.vue'
 import PageToolbar from '@/components/PageToolbar.vue'
 import ListFooter from '@/components/ListFooter.vue'
 import ListFilters from '@/components/ListFilters.vue'
-import FilterViews, { type FilterViewPayload } from '@/components/FilterViews.vue'
+import FilterViews from '@/components/FilterViews.vue'
 import { getLogs, type LogItem } from '@/api/logs'
 import { useResizableColumns } from '@/composables/useResizableColumns'
+import { makeOnApplyView } from '@/composables/useSavedFilterViews'
 import { useListPage } from '@/composables/useListPage'
 import { useDict } from '@/composables/useDict'
 import { useListQuery } from '@/composables/useListQuery'
@@ -59,7 +59,7 @@ const tableScrollY = useTableScrollY(bodyRef)
 interface Filters { keyword: string; actions: string[]; dates?: [string, string]; username: string; entityType?: string }
 const logsFilterDefaults = (): Filters => ({ keyword: '', actions: [], dates: undefined, username: '', entityType: undefined })
 const app = useAppStore()
-const { draft, applied, dirty, loading, failed, rows: logList, total, page, pageSize, sort, refresh: fetchLogs, apply, reset, changePage } = useListQuery<Filters, LogItem>({
+const { draft, applied, dirty, loading, failed, rows: logList, total, page, pageSize, sort, refresh: fetchLogs, apply, reset, changePage, onSearchEnter, totalText } = useListQuery<Filters, LogItem>({
   key: 'system-logs', account: () => app.userInfo?.id, pageSize: 20,
   defaults: logsFilterDefaults,
   normalize: query => ({ keyword: query.keyword.trim(), actions: [...new Set(query.actions)].sort(), dates: query.dates?.length === 2 ? [query.dates[0], query.dates[1]] : undefined, username: query.username.trim(), entityType: query.entityType || undefined }),
@@ -75,15 +75,9 @@ const filterTags = computed(() => [
   ...(applied.value.entityType ? [{ key: 'entityType', label: '模块：' + entityTypeLabelOf(applied.value.entityType) }] : []),
 ])
 function removeFilter(key: string) { void apply({ ...applied.value, [key]: key === 'actions' ? [] : key === 'dates' ? undefined : key === 'entityType' ? undefined : '' }) }
-function onSearchEnter(event: KeyboardEvent) { if (!event.isComposing && event.keyCode !== 229) void apply() }
 
-/** 应用保存的视图：恢复条件与排序；字段已变化的给出失效提示 */
-function onApplyView({ query, sort: viewSort, staleKeys, name }: FilterViewPayload) {
-  if (staleKeys.length) message.warning(`视图「${name}」的字段已变化，已忽略：${staleKeys.join('、')}`)
-  sort.value = viewSort
-  // 旧结构视图可能缺少新字段，用模块默认值补齐后再应用
-  void apply({ ...logsFilterDefaults(), ...query } as unknown as Filters)
-}
+// 应用保存的视图：失效字段提示、排序恢复与默认值补齐统一走共享处理器
+const onApplyView = makeOnApplyView<Filters>({ sort, apply, defaults: logsFilterDefaults })
 const appliedRecord = computed(() => ({ ...applied.value }) as Record<string, unknown>)
 
 const columns = withEmptyDash([

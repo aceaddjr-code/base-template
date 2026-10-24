@@ -46,13 +46,14 @@ export function monthPath(now: Date = new Date()): string {
 }
 
 /**
- * diskStorage 目标目录工厂：uploads/YYYY/MM/（首传 mkdirSync recursive 自建，生产无需预建）。
+ * diskStorage 目标目录工厂：<根目录>/YYYY/MM/（首传 mkdirSync recursive 自建，生产无需预建）。
  * 注意：FileInterceptor 装饰器在类实例化前求值，不能用 this.config/注入的 ConfigService——
  * 直接读 process.env（ConfigService 底层即 process.env，值一致；生产 .env 里配 UPLOAD_DIR）。
+ * dirEnv/fallback 指定根目录的环境变量与默认值（如附件的私有根目录）。
  */
-export function uploadDestinationFactory() {
+export function uploadDestinationFactory(dirEnv = 'UPLOAD_DIR', fallback = 'uploads') {
   return (_req: any, _file: Express.Multer.File, cb: (err: Error | null, dest: string) => void) => {
-    const dir = resolve(process.cwd(), process.env.UPLOAD_DIR ?? 'uploads', monthPath());
+    const dir = resolve(process.cwd(), process.env[dirEnv] ?? fallback, monthPath());
     mkdirSync(dir, { recursive: true });
     cb(null, dir);
   };

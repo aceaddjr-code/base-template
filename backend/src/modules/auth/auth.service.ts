@@ -13,8 +13,7 @@ import { User } from '../user/user.entity';
 import { Role } from '../role/role.entity';
 import { Menu } from '../menu/menu.entity';
 import { UserRole } from '../user/user-role.entity';
-import { UserDataScope } from '../user/user-data-scope.entity';
-import { UserDataScopeTarget } from '../user/user-data-scope-target.entity';
+import { UserDataScopeService } from '../user/user-data-scope.service';
 import { type UserScopeEntry } from '../../common/utils/data-scope';
 import { getUserId } from '../../common/utils/service-helpers';
 import type { JwtPayload } from './jwt.strategy';
@@ -34,10 +33,7 @@ export class AuthService {
     private menuRepo: Repository<Menu>,
     @InjectRepository(UserRole)
     private userRoleRepo: Repository<UserRole>,
-    @InjectRepository(UserDataScope)
-    private userDataScopeRepo: Repository<UserDataScope>,
-    @InjectRepository(UserDataScopeTarget)
-    private userDataScopeTargetRepo: Repository<UserDataScopeTarget>,
+    private readonly userDataScopeService: UserDataScopeService,
   ) {}
 
   /** 本地账号登录，密码统一使用 bcrypt 验证。 */
@@ -171,7 +167,7 @@ export class AuthService {
         codes.splice(0, codes.length, main.code, ...rest);
       }
     }
-    const dataScopes = codes.includes('admin')
+    const dataScopes: UserScopeEntry[] = codes.includes('admin')
       ? [
           {
             scopeKey: '__global__',
@@ -182,28 +178,9 @@ export class AuthService {
             targets: [],
           },
         ]
-      : await this.loadUserDataScopes(user.id);
+      : await this.userDataScopeService.loadForSession(user.id);
 
     return { roles: codes, roleIds: roleRows.map((r) => r.roleId as number), dataScopes };
-  }
-
-  private async loadUserDataScopes(userId: number): Promise<UserScopeEntry[]> {
-    const rows = await this.userDataScopeRepo.find({ where: { userId } });
-    if (!rows.length) {
-      return [{ scopeKey: '__global__', scopeType: 'self', viewOthers: 1, editOthers: 0, deleteOthers: 0, targets: [] }];
-    }
-    const ids = rows.map((r) => r.id);
-    const targets = ids.length
-      ? await this.userDataScopeTargetRepo.find({ where: { userDataScopeId: In(ids) } })
-      : [];
-    return rows.map((r) => ({
-      scopeKey: r.scopeKey,
-      scopeType: r.scopeType,
-      viewOthers: r.viewOthers,
-      editOthers: r.editOthers,
-      deleteOthers: r.deleteOthers,
-      targets: targets.filter((t) => t.userDataScopeId === r.id).map((t) => t.targetId),
-    }));
   }
 
   async getUserAccessCodes(user: any): Promise<string[]> {

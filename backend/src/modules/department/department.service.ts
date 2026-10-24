@@ -1,8 +1,9 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Department } from './department.entity';
 import { User } from '../user/user.entity';
+import { deptSubtreeSelect } from '../../common/utils/dept-subtree';
 
 @Injectable()
 export class DepartmentService {
@@ -87,7 +88,7 @@ export class DepartmentService {
         throw new BadRequestException('不能将子部门设为上级部门');
       }
     }
-    // code 可经 API 静默修改，破坏角色前缀派生
+    // code 不进可修改白名单：角色数据范围前缀按 code 派生，允许改码会破坏既有授权
     const patch: Record<string, any> = {};
     for (const k of ['name', 'parentId', 'status', 'sort'] as const) {
       if (dto[k] !== undefined) patch[k] = dto[k];
@@ -98,20 +99,10 @@ export class DepartmentService {
     return this.findById(id);
   }
 
-  /** 收集某部门全部子孙 id（删除/防环校验用） */
+  /** 收集某部门全部子孙 id（删除/防环校验用；与数据范围过滤同一子树口径，不含自身） */
   private async collectDescendantIds(id: number): Promise<number[]> {
-    const all = await this.deptRepo.find({ where: { deletedAt: IsNull() } });
-    const result: number[] = [];
-    const walk = (pid: number) => {
-      for (const d of all) {
-        if (d.parentId === pid) {
-          result.push(d.id);
-          walk(d.id);
-        }
-      }
-    };
-    walk(id);
-    return result;
+    const rows = await this.deptRepo.query(deptSubtreeSelect('id = ?'), [id]) as { id: number }[];
+    return rows.map((r) => Number(r.id)).filter((x) => x !== id);
   }
 
   async delete(id: number) {

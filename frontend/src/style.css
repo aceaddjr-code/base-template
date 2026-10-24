@@ -26,7 +26,11 @@
   --color-text-disabled: #9a9898;
   --color-text-on-color: #fdfcfc;
   --color-success: #30d158;
+  /* 亮底成功文字用深一档的绿：#30d158 在暖白底对比度不足（同 --color-danger-text 口径）。 */
+  --color-success-text: #187536;
   --color-danger: #ff3b30;
+  /* 表单错误文字用深一档的红：#ff3b30 在暖白底对比度不足，14px 错误文案不达标。 */
+  --color-danger-text: #b42318;
   --color-warning: #ff9f0a;
   --color-accent: #007aff;
   /* 可点击文本用深一档的蓝：#007aff 在暖白底只有 3.92:1，14px 正文不达标。 */
@@ -130,7 +134,7 @@ a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-v
   font-variant-numeric: tabular-nums;
 }
 .ant-tag-processing { color: var(--color-text-primary); background: var(--color-layer-hover); border-color: var(--color-border-subtle); }
-.ant-tag-success { color: #187536; background: var(--color-green-10); border-color: transparent; }
+.ant-tag-success { color: var(--color-success-text); background: var(--color-green-10); border-color: transparent; }
 .ant-tag-warning { color: #8a5300; background: #fff5e5; border-color: transparent; }
 .ant-tag-error { color: #a50011; background: var(--color-red-10); border-color: transparent; }
 .ant-tag-default { color: var(--color-text-secondary); background: var(--color-layer-hover); border-color: var(--color-border-subtle); }
@@ -386,6 +390,8 @@ a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-v
 }
 /* 表单反馈：错误文字用语义红，行高与正文一致，避免撑高弹窗。 */
 .ant-form-item-explain-error { font-size: var(--text-aux); line-height: var(--lh-base); margin-top: var(--space-1); }
+/* 字段旁错误文案（与 FormFeedback/字段级 fieldErrors 配套，页面不再各自复制） */
+.field-error { margin: 4px 0 0; color: var(--color-danger-text); font-size: var(--text-aux); line-height: var(--lh-base); }
 .ant-form-item-label > label.ant-form-item-required::before { color: var(--color-danger) !important; }
 .ant-form-item-has-error .ant-input,
 .ant-form-item-has-error .ant-input-affix-wrapper,
@@ -558,25 +564,14 @@ body:has(.ant-drawer-open) .sticky-h-scroll {
   content: none;
 }
 
-/* 旧系统管理页面沿用相同主题和标题节奏，表格仍保留满宽工作区。 */
-.bg-white { background-color: var(--color-surface); }
-.users-page, .page-list:not(.starter-page) { padding: var(--page-pad); }
-.page-list:not(.starter-page) > div:first-child:has(.page-head-rule) { padding: 0; margin-left: 0; }
-.page-list:not(.starter-page) .page-head-rule { margin-bottom: var(--space-5); padding-bottom: var(--space-4); border-bottom: var(--rule); gap: var(--space-3); }
-.page-list .page-head-rule .text-xl { font-size: var(--text-heading); line-height: var(--lh-base); letter-spacing: 0; }
+/* page-list：列表页根容器（配合 Page 使用），表格满宽工作区。 */
 .page-list .ant-table-wrapper { min-width: 0; }
-.users-page .ant-table-thead > tr > th, .users-page .ant-table-tbody > tr > td { border-right: var(--rule); }
-.users-page .ant-table-cell-fix-right { border-left: var(--rule); }
 .ant-table-filter-trigger { min-width: 28px; margin-inline-start: var(--space-1); }
 .table-meta { white-space: nowrap; font-size: var(--text-aux); color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
 .ant-wave { display: none !important; }
 .ant-tooltip-inner { background: var(--color-surface) !important; color: var(--color-text-primary) !important; border: 1px solid var(--color-border-subtle); box-shadow: none !important; }
 .ant-tooltip-arrow::before { background: var(--color-surface) !important; }
 .ant-modal-body, .ant-drawer-body { color: var(--color-text-secondary); }
-@media (max-width: 768px) {
-  .users-page, .page-list:not(.starter-page) { padding: 16px 12px; }
-  .page-list:not(.starter-page) .page-head-rule { flex-wrap: wrap; align-items: flex-start; margin-bottom: 16px; }
-}
 
 /* ===== 窄屏：触摸目标抬到 40px，行内文字按钮仍保持紧凑 ===== */
 @media (max-width: 768px) {

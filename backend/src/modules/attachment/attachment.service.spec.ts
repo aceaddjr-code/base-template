@@ -8,7 +8,6 @@ import { join } from 'path';
 import { AttachmentService } from './attachment.service';
 import { Attachment } from './attachment.entity';
 import { SystemLogService } from '../system/system-log.service';
-import { registerAttachmentTarget } from './attachment-registry';
 
 describe('AttachmentService 生命周期（F08）', () => {
   let service: AttachmentService;
@@ -89,38 +88,22 @@ describe('AttachmentService 生命周期（F08）', () => {
     await expect(service.resolveForDownload(row.id, uploader)).rejects.toMatchObject({ status: 503 });
   });
 
-  it('绑定需登记类型;重复绑定拒绝;解绑回到 temp', async () => {
-    registerAttachmentTarget('spec_entity', '测试实体', () => true);
-    const row = await seedRow();
-    await expect(service.bind(row.id, 'unregistered', 1, uploader)).rejects.toMatchObject({ status: 400 });
-    const bound = await service.bind(row.id, 'spec_entity', 42, uploader);
-    expect(bound.status).toBe('bound');
-    await expect(service.bind(row.id, 'spec_entity', 43, uploader)).rejects.toThrow('已绑定其他记录');
-    const unbound = await service.unbind(row.id, uploader);
-    expect(unbound.status).toBe('temp');
+  it('已绑定附件同样仅上传者/管理员可下载（业务可见性裁决随子表声明式接入演进，ADR-0001）', async () => {
+    const bound = await seedRow({ status: 'bound', entityType: 'example-items', entityId: 9 });
+    writeStoreFile(bound.storagePath);
+    await expect(service.resolveForDownload(bound.id, { sub: 8, username: 'x', roleCode: 'user' } as any)).rejects.toMatchObject({ status: 404 });
+    await expect(service.resolveForDownload(bound.id, uploader)).resolves.toBeDefined();
+    await expect(service.resolveForDownload(bound.id, admin)).resolves.toBeDefined();
   });
 
-  it('已绑定附件按注册表裁决访问;未登记类型仅上传者/管理员', async () => {
-    registerAttachmentTarget('spec_entity', '测试实体', () => true);
-    registerAttachmentTarget('spec_deny', '拒绝实体', () => false);
-    const open = await seedRow({ status: 'bound', entityType: 'spec_entity', entityId: 9 });
-    const deny = await seedRow({ status: 'bound', entityType: 'spec_deny', entityId: 9 });
-    const unregistered = await seedRow({ status: 'bound', entityType: 'no_module', entityId: 9, createdBy: 1 });
-    [open, deny, unregistered].forEach((row) => writeStoreFile(row.storagePath));
-    await expect(service.resolveForDownload(open.id, { sub: 8, username: 'x', roleCode: 'user' } as any)).resolves.toBeDefined();
-    await expect(service.resolveForDownload(deny.id, { sub: 8, username: 'x', roleCode: 'user' } as any)).rejects.toMatchObject({ status: 404 });
-    await expect(service.resolveForDownload(unregistered.id, { sub: 8, username: 'x', roleCode: 'user' } as any)).rejects.toMatchObject({ status: 404 });
-    await expect(service.resolveForDownload(unregistered.id, admin)).resolves.toBeDefined();
-  });
-
-  it('删除移除磁盘文件与行;bound 删除按注册表裁决', async () => {
+  it('删除移除磁盘文件与行;非上传者不可删除 bound 附件且文件保留', async () => {
     const row = await seedRow();
     writeStoreFile(row.storagePath);
     const result = await service.remove(row.id, uploader);
     expect(result.message).toBe('删除成功');
     expect(existsSync(join(tmpDir, row.storagePath))).toBe(false);
     expect(rows.has(row.id)).toBe(false);
-    const bound = await seedRow({ status: 'bound', entityType: 'spec_deny', entityId: 1, createdBy: 1 });
+    const bound = await seedRow({ status: 'bound', entityType: 'example-items', entityId: 1, createdBy: 1 });
     writeStoreFile(bound.storagePath);
     await expect(service.remove(bound.id, { sub: 8, username: 'x', roleCode: 'user' } as any)).rejects.toMatchObject({ status: 404 });
     expect(existsSync(join(tmpDir, bound.storagePath))).toBe(true);

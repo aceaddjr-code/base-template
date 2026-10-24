@@ -23,7 +23,8 @@ import { UserRole } from '../src/modules/user/user-role.entity';
 import { UserDataScope } from '../src/modules/user/user-data-scope.entity';
 import { UserDataScopeTarget } from '../src/modules/user/user-data-scope-target.entity';
 import { ExampleItem } from '../src/modules/example/example-item.entity';
-import { ExampleService } from '../src/modules/example/example.service';
+import { ExampleService, EXAMPLE_ITEMS_SCOPE_KEY } from '../src/modules/example/example.service';
+import { UserDataScopeService } from '../src/modules/user/user-data-scope.service';
 import { SystemLog } from '../src/modules/system/entities/system-log.entity';
 import { SystemLogService } from '../src/modules/system/system-log.service';
 import { excelToData } from '../src/common/utils/excel-helper';
@@ -121,7 +122,8 @@ suite('独立 MySQL：删除回滚、通知分页和原生备份', () => {
     const user = await users.save({ username: 'password-check', password: await bcrypt.hash('abc', 10), status: 1, tokenVersion: 1 });
     const secret = 'test-only-secret-'.repeat(4);
     const jwt = new JwtService({ secret });
-    const auth = new AuthService(jwt, users, data.getRepository(Role), data.getRepository(Menu), data.getRepository(UserRole), data.getRepository(UserDataScope), data.getRepository(UserDataScopeTarget));
+    const auth = new AuthService(jwt, users, data.getRepository(Role), data.getRepository(Menu), data.getRepository(UserRole),
+      new UserDataScopeService(data.getRepository(UserDataScope), data.getRepository(UserDataScopeTarget), users, data.getRepository(Department)));
     const strategy = new JwtStrategy(new ConfigService({ JWT_SECRET: secret }), users);
     const signed = await auth.login(user.username, 'abc');
     const oldPayload = jwt.verify<JwtPayload>(signed.token);
@@ -164,5 +166,43 @@ suite('独立 MySQL：删除回滚、通知分页和原生备份', () => {
     const audit = new SystemLogService(logs, new ConfigService());
     const page = await audit.findAll({ action: 'create,update', entityType: 'range-test', dateFrom: '2026-10-21', dateTo: '2026-10-21', pageSize: 1 });
     expect(page.total).toBe(2); expect(page.list).toHaveLength(1);
+  });
+
+  it('by_depts：递归子树 SQL 真实执行，本人 ∪ 目标部门(含下级)可见，范围外不可见', async () => {
+    const depts = data.getRepository(Department);
+    const hq = await depts.save({ name: '总部', code: 'e2e-scope-hq', status: 1, sort: 0 });
+    const rd = await depts.save({ name: '研发部', code: 'e2e-scope-rd', parentId: hq.id, status: 1, sort: 0 });
+    const fe = await depts.save({ name: '前端组', code: 'e2e-scope-fe', parentId: rd.id, status: 1, sort: 0 });
+    const sales = await depts.save({ name: '销售部', code: 'e2e-scope-sales', status: 1, sort: 0 });
+
+    const users = data.getRepository(User);
+    const viewer = await users.save({ username: 'e2e-scope-viewer', password: 'x', status: 1, tokenVersion: 1, deptId: hq.id });
+    const peer = await users.save({ username: 'e2e-scope-peer', password: 'x', status: 1, tokenVersion: 1, deptId: fe.id });
+    const outsider = await users.save({ username: 'e2e-scope-outsider', password: 'x', status: 1, tokenVersion: 1, deptId: sales.id });
+
+    const items = data.getRepository(ExampleItem);
+    const mine = await items.save({ title: '本人记录', status: 'pending', ownerId: viewer.id });
+    const peerItem = await items.save({ title: '子部门同事记录', status: 'pending', ownerId: peer.id });
+    const outside = await items.save({ title: '范围外记录', status: 'pending', ownerId: outsider.id });
+
+    // 配置：示例事项按部门授权（研发部，递归含其子部门前端组）
+    const scopeRows = data.getRepository(UserDataScope);
+    const scopeTargets = data.getRepository(UserDataScopeTarget);
+    const row = await scopeRows.save({ userId: viewer.id, scopeKey: EXAMPLE_ITEMS_SCOPE_KEY, scopeType: 'by_depts', viewOthers: 1, editOthers: 0, deleteOthers: 0, ownerId: viewer.id, createdBy: viewer.id });
+    await scopeTargets.save({ userDataScopeId: row.id, targetType: 'dept', targetId: rd.id, ownerId: viewer.id, createdBy: viewer.id });
+
+    // 会话装载走收敛后的唯一读侧
+    const userDataScopes = new UserDataScopeService(scopeRows, scopeTargets, users, depts);
+    const dataScopes = await userDataScopes.loadForSession(viewer.id);
+    expect(dataScopes).toEqual([{ scopeKey: 'example-items', scopeType: 'by_depts', viewOthers: 1, editOthers: 0, deleteOthers: 0, targets: [rd.id] }]);
+
+    const session = { sub: viewer.id, roles: ['user'], deptId: hq.id, dataScopes };
+    const service = new ExampleService(items);
+    const page = await service.list({ filters: {} }, session);
+    expect(page.total).toBe(2);
+    const ids = page.list.map((r) => r.id);
+    expect(ids).toContain(mine.id);
+    expect(ids).toContain(peerItem.id);
+    expect(ids).not.toContain(outside.id);
   });
 });

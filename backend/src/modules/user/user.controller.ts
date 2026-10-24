@@ -10,6 +10,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { UserService } from './user.service';
+import { UserDataScopeService } from './user-data-scope.service';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { safeParseInt } from '../../common/utils/service-helpers';
@@ -21,7 +22,10 @@ import type { JwtPayload } from '../auth/jwt.strategy';
 @Controller('users')
 @Roles('admin')
 export class UserController {
-  constructor(private readonly userService: UserService) {}
+  constructor(
+    private readonly userService: UserService,
+    private readonly userDataScopeService: UserDataScopeService,
+  ) {}
 
   /**
    * 列表筛选字段登记（F01/F04）：keyword(账号/姓名 LIKE)、deptId(含子部门)、
@@ -56,7 +60,7 @@ export class UserController {
 
   @Get('scope-forms')
   async listScopeForms() {
-    return this.userService.listScopeForms();
+    return this.userDataScopeService.listScopeForms();
   }
 
   /** 根据 ID 查用户 */
@@ -89,7 +93,7 @@ export class UserController {
 
   @Get(':id/data-scopes')
   async getDataScopes(@Param('id') id: string) {
-    return this.userService.getDataScopes(parseInt(id, 10));
+    return this.userDataScopeService.getPanelRows(parseInt(id, 10));
   }
 
   @Put(':id/data-scopes')
@@ -98,7 +102,8 @@ export class UserController {
     @Param('id') id: string,
     @Body() dto: { rows?: unknown },
   ) {
-    return this.userService.saveDataScopes(parseInt(id, 10), (dto?.rows ?? []) as any, caller);
+    const userId = parseInt(id, 10);
+    return this.userDataScopeService.saveRows(userId, (dto?.rows ?? []) as any, caller?.sub ?? userId);
   }
 
   /** 删除用户 */

@@ -6,11 +6,12 @@ import { LessThan, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { JwtPayload } from '../auth/jwt.strategy';
 import { Attachment, AttachmentStatus } from './attachment.entity';
-import { canAccessBoundAttachment, getAttachmentTarget } from './attachment-registry';
 import { monthPath } from '../../common/uploads/upload.service';
+import { isSystemAdmin } from '../../common/utils/permission-check';
 import { SystemLogService } from '../system/system-log.service';
 
-const ALLOWED_EXTS = [
+/** 附件扩展名白名单（唯一真相源：控制器 multer 过滤器与服务端复核共用） */
+export const ATTACHMENT_ALLOWED_EXTS = [
   '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.xlsm', '.ppt', '.pptx',
   '.zip', '.rar', '.7z', '.txt', '.csv', '.md',
   '.png', '.jpg', '.jpeg', '.webp', '.gif',
@@ -58,7 +59,7 @@ export class AttachmentService {
 
   async saveFile(file: Express.Multer.File, user: JwtPayload): Promise<AttachmentView> {
     const ext = extname(file.originalname).toLowerCase();
-    if (!ALLOWED_EXTS.includes(ext)) throw new BadRequestException('不支持的文件类型');
+    if (!ATTACHMENT_ALLOWED_EXTS.includes(ext)) throw new BadRequestException('不支持的文件类型');
     if (!file.size || file.size > MAX_SIZE) throw new BadRequestException('文件大小超出限制（最大 20MB）');
     const storagePath = `${monthPath()}/${file.filename}`;
     const row = await this.attachmentRepo.save({
@@ -83,18 +84,15 @@ export class AttachmentService {
       .skip((page - 1) * pageSize)
       .take(pageSize);
     if (status === 'temp' || status === 'bound') qb.andWhere('a.status = :status', { status });
-    if (user.roleCode !== 'admin') qb.andWhere('a.createdBy = :me', { me: user.sub });
+    if (!isSystemAdmin(user)) qb.andWhere('a.createdBy = :me', { me: user.sub });
     const [list, total] = await qb.getManyAndCount();
     return { list: list.map((row) => this.toView(row, user)), total, page, pageSize };
   }
 
-  /** 授权下载：temp 仅上传者/管理员；bound 走注册表裁决 */
+  /** 授权下载：仅上传者/管理员（已绑定附件的业务可见性裁决随子表声明式接入演进，见 docs/adr/0001） */
   async resolveForDownload(id: number, user: JwtPayload): Promise<{ row: Attachment; streamPath: string }> {
     const row = await this.mustGet(id);
-    const accessible = row.status === 'temp'
-      ? row.createdBy === user.sub || user.roleCode === 'admin'
-      : await canAccessBoundAttachment(row.entityType ?? '', row.entityId ?? 0, user, row.createdBy === user.sub, user.roleCode === 'admin');
-    if (!accessible) throw new NotFoundException('附件不存在');
+    if (row.createdBy !== user.sub && !isSystemAdmin(user)) throw new NotFoundException('附件不存在');
     const streamPath = this.absolutePath(row.storagePath);
     if (!existsSync(streamPath)) {
       // 文件已丢失：行保留（可在管理列表删除），给出可理解的错误而非 500
@@ -103,40 +101,10 @@ export class AttachmentService {
     return { row, streamPath };
   }
 
-  async bind(id: number, entityType: string, entityId: number, user: JwtPayload): Promise<AttachmentView> {
-    if (!getAttachmentTarget(entityType)) throw new BadRequestException('未登记的绑定目标类型');
-    const row = await this.mustGet(id);
-    if (row.status === 'bound') throw new BadRequestException('该附件已绑定其他记录，请先解绑');
-    if (row.createdBy !== user.sub && user.roleCode !== 'admin') throw new NotFoundException('附件不存在');
-    row.status = 'bound';
-    row.entityType = entityType;
-    row.entityId = entityId;
-    row.updatedBy = user.sub;
-    const saved = await this.attachmentRepo.save(row);
-    await this.writeLog('update', saved, user, JSON.stringify({ status: 'bound', target: `${entityType}:${entityId}` }));
-    return this.toView(saved, user);
-  }
-
-  async unbind(id: number, user: JwtPayload): Promise<AttachmentView> {
-    const row = await this.mustGet(id);
-    if (row.status !== 'bound') throw new BadRequestException('该附件未绑定');
-    if (row.createdBy !== user.sub && user.roleCode !== 'admin') throw new NotFoundException('附件不存在');
-    row.status = 'temp';
-    row.entityType = null;
-    row.entityId = null;
-    row.updatedBy = user.sub;
-    const saved = await this.attachmentRepo.save(row);
-    await this.writeLog('update', saved, user, JSON.stringify({ status: 'temp' }));
-    return this.toView(saved, user);
-  }
-
-  /** 删除：temp 仅上传者/管理员；bound 走注册表裁决（不误删仍有引用的文件）。行删文件删；文件缺失仍清行；磁盘失败可重试 */
+  /** 删除：仅上传者/管理员；行删文件删；文件缺失仍清行；磁盘失败可重试 */
   async remove(id: number, user: JwtPayload): Promise<{ message: string }> {
     const row = await this.mustGet(id);
-    const accessible = row.status === 'temp'
-      ? row.createdBy === user.sub || user.roleCode === 'admin'
-      : await canAccessBoundAttachment(row.entityType ?? '', row.entityId ?? 0, user, row.createdBy === user.sub, user.roleCode === 'admin');
-    if (!accessible) throw new NotFoundException('附件不存在');
+    if (row.createdBy !== user.sub && !isSystemAdmin(user)) throw new NotFoundException('附件不存在');
     const abs = this.absolutePath(row.storagePath);
     if (existsSync(abs)) {
       try {

@@ -12,9 +12,12 @@ import { dataToExcel } from '../../common/utils/excel-helper';
 
 const STATUS_LABELS = { pending: '待处理', doing: '进行中', done: '已完成' };
 
+/** 本模块数据范围 scopeKey（唯一事实来源：scope-form.registry.ts 从这里引用，拼写漂移会导致编译错） */
+export const EXAMPLE_ITEMS_SCOPE_KEY = 'example-items';
+
 @Injectable()
 export class ExampleService extends CrudBaseService<ExampleItem> {
-  protected dataScopeKey = 'example-items';
+  protected dataScopeKey = EXAMPLE_ITEMS_SCOPE_KEY;
 
   constructor(
     @InjectRepository(ExampleItem) repo: Repository<ExampleItem>,

@@ -8,6 +8,8 @@ export interface UserItem {
   phone: string | null
   status: number
   role: { id: number; name: string; code: string } | null
+  /** 主角色之外的附加角色 id（列表与更新接口实际返回） */
+  roleIds?: number[]
   deptId: number | null
   dept?: { id: number; name: string; code: string } | null
   leaderId: number | null
@@ -68,10 +70,13 @@ export function deleteUser(id: number): Promise<void> {
   return request.delete(`/users/${id}`)
 }
 
+/** 数据范围类型（与后端 common/utils/data-scope 的 SCOPE_TYPES 同一字符串族） */
+export type ScopeType = 'self' | 'all' | 'by_users' | 'by_depts'
+
 export interface UserDataScopeRow {
   id?: number
   scopeKey: string
-  scopeType: string
+  scopeType: ScopeType
   viewOthers: number
   editOthers: number
   deleteOthers: number

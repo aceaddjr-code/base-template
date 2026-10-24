@@ -1,179 +1,174 @@
 <template>
-  <div class="p-0 h-full flex flex-col page-list">
+  <Page class="page-list" title="角色管理" description="菜单权限 · 数据范围">
+    <div class="page-body">
+      <PageToolbar :show-search="false" :show-create="true" create-label="新增角色" @create="showCreateModal()">
+        <template #actions>
+          <a-button :disabled="!selectedRole" @click="showCopyModal()">复制当前角色</a-button>
+        </template>
+      </PageToolbar>
 
-    <div class="shrink-0 pr-4 ml-2.5 pt-2.5">
-      <div class="page-head-rule flex items-end justify-between mb-1.5">
-        <div>
-          <div class="text-xl font-bold text-[#201d1d] leading-none tracking-tight">角色管理</div>
-          <div class="text-sm text-[#646262] mt-2">菜单权限 · 数据范围</div>
-        </div>
-        <div class="text-sm text-[#646262]">今日 {{ todayStr }}</div>
-      </div>
-    </div>
-
-    <a-card :bordered="false" class="flex-1 min-h-0 flex flex-col roles-matrix-card">
-      <div class="roles-layout flex-1 min-h-0 flex">
-        <!-- ===== 左：角色列表 ===== -->
-        <div class="role-sidebar w-[280px] shrink-0 flex flex-col border-r border-[rgba(15,0,0,0.12)]">
-          <div class="shrink-0 px-3 pt-3 pb-2 flex items-center justify-between">
-            <span class="text-sm font-semibold text-[#201d1d]">角色列表</span>
-            <span class="text-sm text-[#646262]">共 {{ filteredRoles.length }} 个</span>
-          </div>
-          <div class="shrink-0 px-3">
-            <a-input v-model:value="roleKeyword" placeholder="搜索角色名称 / 编码" allow-clear>
-              <template #prefix><SearchOutlined /></template>
-            </a-input>
-          </div>
-          <div class="flex-1 min-h-0 overflow-y-auto px-1.5 py-2">
-            <div
-              v-for="r in pagedRoles"
-              :key="r.id"
-              class="role-item group"
-              :class="{ 'role-item-active': selectedRole?.id === r.id }"
-              @click="onRoleItemClick(r, $event)"
-            >
-              <div class="flex items-center justify-between gap-1">
-                <span class="role-name">{{ r.name }}</span>
-                <span class="flex items-center gap-1">
-                  <a-tag v-if="r.code === 'admin'" color="processing" class="m-0! text-[10px]! leading-none! px-1! py-0.5!">超级管理员</a-tag>
-                  <span class="role-actions opacity-0 group-hover:opacity-100 transition-opacity flex items-center">
-                    <a-tooltip title="编辑">
-                      <a-button class="w-6! h-6! px-0!" type="text" size="small" @click="showEditModal(r)"><EditOutlined /></a-button>
-                    </a-tooltip>
-                    <a-popconfirm title="确定要删除该角色吗？" ok-text="确定" cancel-text="取消" @confirm="handleDelete(r.id)">
-                      <a-tooltip title="删除">
-                        <a-button class="w-6! h-6! px-0!" type="text" danger size="small"><DeleteOutlined /></a-button>
-                      </a-tooltip>
-                    </a-popconfirm>
+      <a-card :bordered="false" class="flex-1 min-h-0">
+        <div class="roles-layout">
+          <!-- ===== 左：角色列表 ===== -->
+          <div class="role-sidebar">
+            <div class="role-sidebar-head">
+              <span class="sidebar-title">角色列表</span>
+              <span class="sidebar-count">共 {{ filteredRoles.length }} 个</span>
+            </div>
+            <div class="role-sidebar-search">
+              <a-input v-model:value="roleKeyword" placeholder="搜索角色名称 / 编码" allow-clear>
+                <template #prefix><SearchOutlined /></template>
+              </a-input>
+            </div>
+            <div class="role-list">
+              <div
+                v-for="r in pagedRoles"
+                :key="r.id"
+                class="role-item group"
+                :class="{ 'role-item-active': selectedRole?.id === r.id }"
+                @click="onRoleItemClick(r, $event)"
+              >
+                <div class="flex items-center justify-between gap-1">
+                  <span class="role-name">{{ r.name }}</span>
+                  <span class="flex items-center gap-1">
+                    <a-tag v-if="r.code === 'admin'" color="processing" class="m-0!">超级管理员</a-tag>
+                    <span class="role-actions opacity-0 group-hover:opacity-100 transition-opacity">
+                      <a-button type="link" size="small" @click="showEditModal(r)">编辑</a-button>
+                      <a-popconfirm title="确定要删除该角色吗？" ok-text="确定" cancel-text="取消" @confirm="handleDelete(r.id)">
+                        <a-button type="link" danger size="small">删除</a-button>
+                      </a-popconfirm>
+                    </span>
                   </span>
-                </span>
-              </div>
-              <div class="role-desc">{{ r.description || r.code }}</div>
-            </div>
-            <a-empty v-if="!loading && filteredRoles.length === 0" description="无匹配角色" />
-          </div>
-          <div class="shrink-0 px-3 py-2 border-t border-[rgba(15,0,0,0.12)] flex flex-col gap-2">
-            <a-pagination
-              size="small"
-              :current="page.current"
-              :page-size="page.pageSize"
-              :total="filteredRoles.length"
-              :show-size-changer="false"
-              @change="onPageChange"
-            />
-            <a-button type="primary" block @click="showCreateModal()">新增角色</a-button>
-            <a-button block :disabled="!selectedRole" @click="showCopyModal()">复制当前角色</a-button>
-          </div>
-        </div>
-
-        <!-- ===== 右：权限矩阵 ===== -->
-        <div class="role-matrix flex-1 min-w-0 min-h-0 flex flex-col">
-          <!-- 角色信息（只读） -->
-          <div class="shrink-0 px-4 py-3 border-b border-[rgba(15,0,0,0.12)] flex items-center justify-between gap-3">
-            <div class="flex items-center gap-2 min-w-0">
-              <span class="text-base font-semibold text-[#201d1d] truncate">{{ selectedRole?.name || '未选择角色' }}</span>
-              <a-tag v-if="isAdminRole" color="processing">超级管理员</a-tag>
-              <span v-if="selectedRole" class="text-sm text-[#646262]">{{ selectedRole.code }}</span>
-            </div>
-            <div class="text-sm text-[#646262] truncate">{{ selectedRole ? (selectedRole.description || '（无备注）') : '请在左侧选择角色' }}</div>
-          </div>
-
-          <!-- 未选中角色 -->
-          <div v-if="!selectedRole" class="flex-1 flex flex-col items-center justify-center gap-2">
-            <a-empty description="请先选择左侧角色查看 / 配置权限" />
-          </div>
-
-          <template v-else>
-            <!-- admin 只读提示 -->
-            <div v-if="isAdminRole" class="shrink-0 mx-4 mt-3 px-3 py-2 bg-[#f8f7f7] border border-[rgba(15,0,0,0.12)] text-sm text-[#424245]">
-              管理员拥有全部权限，权限矩阵只读。
-            </div>
-
-            <!-- 模块 Tab + 表单搜索 -->
-            <div class="shrink-0 px-4 pt-2 flex items-center justify-between gap-3 flex-wrap">
-              <a-tabs v-model:activeKey="activeTab" size="small" class="mb-0!">
-                <a-tab-pane key="all" tab="全部" />
-                <a-tab-pane v-for="m in moduleTabs" :key="m.key" :tab="m.name" />
-              </a-tabs>
-              <a-input v-model:value="formKeyword" placeholder="搜索表单名称" allow-clear class="w-52!" />
-            </div>
-
-            <!-- 矩阵主体 -->
-            <div class="flex-1 min-h-0 overflow-auto px-4 py-3">
-              <a-spin :spinning="matrixLoading">
-                <div v-if="filteredGroups.length === 0 && !matrixLoading" class="py-16">
-                  <a-empty description="该视图暂无按钮权限项" />
                 </div>
-                <div v-for="g in filteredGroups" :key="g.moduleId" class="mb-4 last:mb-0!">
-                  <!-- 模块分组头（可折叠） -->
-                  <div class="flex items-center gap-1.5 cursor-pointer select-none py-1.5" @click="toggleGroup(g.moduleId)">
-                    <CaretDownOutlined v-if="!collapsed.has(g.moduleId)" class="text-sm text-[#646262]" />
-                    <CaretRightOutlined v-else class="text-sm text-[#646262]" />
-                    <span class="text-sm font-semibold text-[#201d1d]">{{ g.moduleName }}</span>
-                    <span class="text-sm text-[#646262]">{{ g.rows.length }} 个表单</span>
+                <div class="role-desc">{{ r.description || r.code }}</div>
+              </div>
+              <a-empty v-if="!loading && filteredRoles.length === 0" :description="failed ? '角色加载失败' : '无匹配角色'">
+                <a-button v-if="failed" size="small" @click="fetchData">重试</a-button>
+              </a-empty>
+              <a-empty v-else-if="loading && roles.length === 0" description="加载中…" />
+            </div>
+            <div class="role-sidebar-foot">
+              <a-pagination
+                size="small"
+                :current="page.current"
+                :page-size="page.pageSize"
+                :total="filteredRoles.length"
+                :show-size-changer="false"
+                @change="onPageChange"
+              />
+            </div>
+          </div>
+
+          <!-- ===== 右：权限矩阵 ===== -->
+          <div class="role-matrix">
+            <!-- 角色信息（只读） -->
+            <div class="matrix-head">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="matrix-title truncate">{{ selectedRole?.name || '未选择角色' }}</span>
+                <a-tag v-if="isAdminRole" color="processing">超级管理员</a-tag>
+                <span v-if="selectedRole" class="matrix-sub">{{ selectedRole.code }}</span>
+              </div>
+              <div class="matrix-sub truncate">{{ selectedRole ? (selectedRole.description || '（无备注）') : '请在左侧选择角色查看 / 配置权限' }}</div>
+            </div>
+
+            <!-- 未选中角色 -->
+            <div v-if="!selectedRole" class="flex-1 flex flex-col items-center justify-center gap-2">
+              <a-empty description="请先选择左侧角色查看 / 配置权限" />
+            </div>
+
+            <template v-else>
+              <!-- admin 只读提示 -->
+              <div v-if="isAdminRole" class="admin-notice">
+                管理员拥有全部权限，权限矩阵只读。
+              </div>
+
+              <!-- 模块 Tab + 表单搜索 -->
+              <div class="matrix-tabs">
+                <a-tabs v-model:activeKey="activeTab" size="small" class="mb-0!">
+                  <a-tab-pane key="all" tab="全部" />
+                  <a-tab-pane v-for="m in moduleTabs" :key="m.key" :tab="m.name" />
+                </a-tabs>
+                <a-input v-model:value="formKeyword" placeholder="搜索表单名称" allow-clear class="w-52!" />
+              </div>
+
+              <!-- 矩阵主体 -->
+              <div class="matrix-scroll">
+                <a-spin :spinning="matrixLoading">
+                  <div v-if="filteredGroups.length === 0 && !matrixLoading" class="py-16">
+                    <a-empty :description="matrixFailed ? '权限加载失败' : '该视图暂无按钮权限项'">
+                      <a-button v-if="matrixFailed" size="small" @click="loadMatrix">重试</a-button>
+                    </a-empty>
                   </div>
-                  <div v-show="!collapsed.has(g.moduleId)" class="matrix-table">
-                    <div v-for="row in g.rows" :key="row.formId" class="matrix-row">
-                      <div class="matrix-form-col">
-                        <a-checkbox
-                          :checked="row.checked"
-                          :disabled="isAdminRole"
-                          @change="(e: any) => onViewChange(row, e.target.checked)"
-                        >
-                          <span class="text-sm text-[#646262]">页面</span>
-                        </a-checkbox>
-                        <span class="form-name">{{ row.formName }}</span>
-                      </div>
-                      <div class="matrix-btn-col">
-                        <a-checkbox
-                          v-for="b in row.buttons"
-                          :key="b.id"
-                          :checked="row.buttonChecked[b.id]"
-                          :disabled="isAdminRole"
-                          @change="(e: any) => onButtonChange(row, b.id, e.target.checked)"
-                        >
-                          {{ b.name }}
-                        </a-checkbox>
+                  <div v-for="g in filteredGroups" :key="g.moduleId" class="mb-4 last:mb-0!">
+                    <!-- 模块分组头（可折叠） -->
+                    <div class="matrix-group" @click="toggleGroup(g.moduleId)">
+                      <CaretDownOutlined v-if="!collapsed.has(g.moduleId)" class="group-caret" />
+                      <CaretRightOutlined v-else class="group-caret" />
+                      <span class="group-name">{{ g.moduleName }}</span>
+                      <span class="group-count">{{ g.rows.length }} 个表单</span>
+                    </div>
+                    <div v-show="!collapsed.has(g.moduleId)" class="matrix-table">
+                      <div v-for="row in g.rows" :key="row.formId" class="matrix-row">
+                        <div class="matrix-form-col">
+                          <a-checkbox
+                            :checked="row.checked"
+                            :disabled="isAdminRole"
+                            @change="(e: any) => toggleFormChecked(row, e.target.checked)"
+                          >
+                            <span class="matrix-sub">页面</span>
+                          </a-checkbox>
+                          <span class="form-name">{{ row.formName }}</span>
+                        </div>
+                        <div class="matrix-btn-col">
+                          <a-checkbox
+                            v-for="b in row.buttons"
+                            :key="b.id"
+                            :checked="row.buttonChecked[b.id]"
+                            :disabled="isAdminRole"
+                            @change="(e: any) => toggleButtonChecked(row, b.id, e.target.checked)"
+                          >
+                            {{ b.name }}
+                          </a-checkbox>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              </a-spin>
-            </div>
+                </a-spin>
+              </div>
 
-            <!-- 底部操作条 -->
-            <div class="shrink-0 px-4 py-2 border-t border-[rgba(15,0,0,0.12)] flex items-center justify-end gap-2">
-              <a-button :disabled="isAdminRole" @click="checkAllView(true)">全选</a-button>
-              <a-dropdown :disabled="isAdminRole">
-                <a-button>
-                  快速授权
-                  <DownOutlined />
-                </a-button>
-                <template #overlay>
-                  <a-menu @click="onQuickAuth">
-                    <a-menu-item key="all">全选当前视图</a-menu-item>
-                    <a-menu-item key="clear">清空当前视图</a-menu-item>
-                    <a-menu-item key="reset">恢复已保存权限</a-menu-item>
-                  </a-menu>
-                </template>
-              </a-dropdown>
-              <a-button type="primary" :loading="saving" :disabled="isAdminRole" @click="handleSavePerm">保存</a-button>
-            </div>
-          </template>
+              <!-- 底部操作条 -->
+              <div class="matrix-foot">
+                <a-button :disabled="isAdminRole" @click="setRowsChecked(currentViewRows, true)">全选</a-button>
+                <a-dropdown :disabled="isAdminRole">
+                  <a-button>
+                    快速授权
+                    <DownOutlined />
+                  </a-button>
+                  <template #overlay>
+                    <a-menu @click="onQuickAuth">
+                      <a-menu-item key="all">全选当前视图</a-menu-item>
+                      <a-menu-item key="clear">清空当前视图</a-menu-item>
+                      <a-menu-item key="reset">恢复已保存权限</a-menu-item>
+                    </a-menu>
+                  </template>
+                </a-dropdown>
+                <a-button type="primary" :loading="saving" :disabled="isAdminRole" @click="handleSavePerm">保存</a-button>
+              </div>
+            </template>
+          </div>
         </div>
-      </div>
-    </a-card>
+      </a-card>
+    </div>
 
-    <!-- 新增/编辑弹窗（原样保留：名称/编码/数据范围/部门/描述；复制角色复用此弹窗） -->
+    <!-- 新增/编辑弹窗（原样保留：名称/编码/描述；复制角色复用此弹窗） -->
     <a-modal
       :open="modalVisible"
       :title="isEdit ? '编辑角色' : '新增角色'"
-      :confirm-loading="modalLoading"
-      :mask-closable="!modalLoading" :keyboard="!modalLoading" :closable="!modalLoading"
-      :cancel-button-props="{ disabled: modalLoading }" @cancel="closeModal"
+      v-bind="modalProps"
+      @cancel="closeModal"
       ok-text="保存" cancel-text="取消" @ok="handleSubmit"
     >
-      <div ref="feedbackRoot">
+      <div :ref="feedbackRoot">
       <FormFeedback :items="feedbackItems" :request-id="feedbackRequestId" @focus="feedback.focus" />
       <a-form :model="form" layout="vertical">
         <a-row :gutter="8">
@@ -194,7 +189,7 @@
                 :maxlength="50"
               />
               <p v-if="formErrors.code" :id="feedback.errorId('code')" class="field-error">{{ formErrors.code }}</p>
-              <div class="text-gray-400 text-sm mt-1">编码用于程序判断，创建后不可修改</div>
+              <div class="field-hint">编码用于程序判断，创建后不可修改</div>
             </a-form-item>
           </a-col>
           <a-col :span="24">
@@ -206,28 +201,30 @@
       </a-form>
       </div>
     </a-modal>
-  </div>
+  </Page>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted } from 'vue'
-import { SearchOutlined, DownOutlined, CaretRightOutlined, CaretDownOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons-vue'
+import { SearchOutlined, DownOutlined, CaretRightOutlined, CaretDownOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
+import Page from '@/components/Page.vue'
+import PageToolbar from '@/components/PageToolbar.vue'
 import FormFeedback from '@/components/FormFeedback.vue'
-import { useFormFeedback } from '@/composables/useFormFeedback'
-import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
+import { useFormModal } from '@/composables/useFormModal'
 import {
   getRoles, getRoleMenuIds, createRole, updateRole,
   assignRoleMenus, deleteRole,
   type RoleItem,
 } from '@/api/role'
 import { getMenuTree, type MenuItem } from '@/api/menu'
+import { buildPermissionMatrix, collectSaveIds, setRowsChecked, toggleButtonChecked, toggleFormChecked, type MatrixRow } from './permission-matrix'
 
 // ============ 基础状态 ============
 const loading = ref(false)
+const failed = ref(false)
 const roles = ref<RoleItem[]>([])
 const selectedRole = ref<RoleItem | null>(null)
-const todayStr = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`
 // admin（code=admin）矩阵只读
 const isAdminRole = computed(() => selectedRole.value?.code === 'admin')
 
@@ -260,6 +257,7 @@ function onPageChange(p: number) {
 
 async function fetchData() {
   loading.value = true
+  failed.value = false
   try {
     const res = await getRoles({ page: 1, pageSize: 500 })
     roles.value = res.list
@@ -269,6 +267,8 @@ async function fetchData() {
       const fresh = res.list.find((r) => r.id === cur.id)
       if (fresh) selectedRole.value = fresh
     }
+  } catch {
+    failed.value = true
   } finally {
     loading.value = false
   }
@@ -282,67 +282,18 @@ function onRoleItemClick(r: RoleItem, e: MouseEvent) {
 }
 
 // ============ 权限矩阵 ============
-interface MatrixButton {
-  id: number
-  name: string
-  permission?: string | null
-}
-interface MatrixRow {
-  formId: number
-  formName: string
-  moduleId: number
-  moduleName: string
-  buttons: MatrixButton[]
-  /** 页面入口的可见性 */
-  checked: boolean
-  buttonChecked: Record<number, boolean>
-}
-
 const moduleTree = ref<MenuItem[]>([])
 const matrix = ref<MatrixRow[]>([])
 /** 角色已分配的菜单 id（getRoleMenuIds 返回，含按钮节点） */
 const existingIds = ref<number[]>([])
 const matrixLoading = ref(false)
+const matrixFailed = ref(false)
 const saving = ref(false)
 const activeTab = ref('all')
 const formKeyword = ref('')
 const collapsed = reactive(new Set<number>())
 
 const moduleTabs = computed(() => moduleTree.value.map((m) => ({ key: String(m.id), id: m.id, name: m.name })))
-
-/** 按钮节点判定：type='button'；树缺 type 字段时以「有 permission 字段」兜底 */
-function isButtonNode(n: MenuItem): boolean {
-  return n.type === 'button' || (n.type == null && !!n.permission)
-}
-
-function buildMatrix() {
-  const rows: MatrixRow[] = []
-  const pushRow = (node: MenuItem, moduleId: number, moduleName: string) => {
-    const buttons = (node.children ?? []).filter(isButtonNode)
-    if (buttons.length === 0) return
-    rows.push({
-      formId: node.id,
-      formName: node.name,
-      moduleId,
-      moduleName,
-      buttons: buttons.map((b) => ({ id: b.id, name: b.name, permission: b.permission })),
-      checked: existingIds.value.includes(node.id),
-      buttonChecked: Object.fromEntries(buttons.map((b) => [b.id, existingIds.value.includes(b.id)])),
-    })
-  }
-  const walk = (nodes: MenuItem[], moduleId: number, moduleName: string) => {
-    for (const node of nodes) {
-      pushRow(node, moduleId, moduleName)
-      const subMenus = (node.children ?? []).filter((c) => !isButtonNode(c))
-      if (subMenus.length) walk(subMenus, moduleId, moduleName)
-    }
-  }
-  for (const mod of moduleTree.value) {
-    pushRow(mod, mod.id, mod.name)
-    walk(mod.children ?? [], mod.id, mod.name)
-  }
-  matrix.value = rows
-}
 
 async function selectRole(role: RoleItem) {
   if (selectedRole.value?.id === role.id) return
@@ -356,6 +307,7 @@ async function selectRole(role: RoleItem) {
 async function loadMatrix() {
   if (!selectedRole.value) return
   matrixLoading.value = true
+  matrixFailed.value = false
   try {
     const [tree, ids] = await Promise.all([
       getMenuTree(),
@@ -363,8 +315,10 @@ async function loadMatrix() {
     ])
     moduleTree.value = tree
     existingIds.value = ids || []
-    buildMatrix()
-  } catch { /* */ }
+    matrix.value = buildPermissionMatrix(moduleTree.value, existingIds.value)
+  } catch {
+    matrixFailed.value = true
+  }
   finally {
     matrixLoading.value = false
   }
@@ -396,90 +350,23 @@ function toggleGroup(moduleId: number) {
   else collapsed.add(moduleId)
 }
 
-/** 页面入口联动读取权限，关闭入口时清除该行操作权限 */
-function onViewChange(row: MatrixRow, checked: boolean) {
-  row.checked = checked
-  for (const b of row.buttons) {
-    if (!checked || b.permission?.endsWith(':view')) row.buttonChecked[b.id] = checked
-  }
-}
-
-/** 启用操作时同时启用页面和读取权限 */
-function onButtonChange(row: MatrixRow, btnId: number, checked: boolean) {
-  row.buttonChecked[btnId] = checked
-  if (checked) {
-    row.checked = true
-    for (const b of row.buttons) if (b.permission?.endsWith(':view')) row.buttonChecked[b.id] = true
-  } else if (row.buttons.find(b => b.id === btnId)?.permission?.endsWith(':view')) {
-    onViewChange(row, false)
-  }
-}
-
-function checkAllView(checked: boolean) {
-  for (const row of currentViewRows.value) {
-    onViewChange(row, checked)
-    for (const button of row.buttons) row.buttonChecked[button.id] = checked
-  }
-}
-
 /** 恢复为已保存状态（重新按 existingIds 构建） */
 function resetMatrix() {
-  buildMatrix()
+  matrix.value = buildPermissionMatrix(moduleTree.value, existingIds.value)
 }
 
 function onQuickAuth(e: any) {
   const key = e?.key
-  if (key === 'all') checkAllView(true)
-  else if (key === 'clear') checkAllView(false)
+  if (key === 'all') setRowsChecked(currentViewRows.value, true)
+  else if (key === 'clear') setRowsChecked(currentViewRows.value, false)
   else if (key === 'reset') resetMatrix()
-}
-
-/** 收集保存 id：矩阵勾选 + 保留矩阵未覆盖的菜单 + 补全祖先（与旧树保存行为一致） */
-function collectSaveIds(): number[] {
-  const managed = new Set<number>()
-  for (const row of matrix.value) {
-    managed.add(row.formId)
-    for (const b of row.buttons) managed.add(b.id)
-  }
-  const ids = new Set<number>()
-  // 1. 保留矩阵未管理的菜单（未配置按钮的页面等），防全量替换丢权限
-  for (const id of existingIds.value) {
-    if (!managed.has(id)) ids.add(id)
-  }
-  // 2. 矩阵勾选：页面入口（菜单 id）+ 按钮节点 id
-  for (const row of matrix.value) {
-    if (row.checked) ids.add(row.formId)
-    for (const b of row.buttons) {
-      if (row.buttonChecked[b.id]) ids.add(b.id)
-    }
-  }
-  // 3. 补全祖先（表单→模块），与旧树弹窗保存行为一致（后端侧边栏亦自动补父）
-  const parentMap = new Map<number, number>()
-  const walk = (nodes: MenuItem[], parentId: number | null) => {
-    for (const n of nodes) {
-      if (parentId != null) parentMap.set(n.id, parentId)
-      if (n.children?.length) walk(n.children, n.id)
-    }
-  }
-  walk(moduleTree.value, null)
-  const withAncestors = new Set<number>()
-  for (const id of ids) {
-    let cur: number | undefined = id
-    let guard = 0
-    while (cur != null && guard < 20) {
-      withAncestors.add(cur)
-      cur = parentMap.get(cur)
-      guard += 1
-    }
-  }
-  return [...withAncestors]
 }
 
 async function handleSavePerm() {
   if (!selectedRole.value) return
   saving.value = true
   try {
-    const ids = collectSaveIds()
+    const ids = collectSaveIds(matrix.value, existingIds.value, moduleTree.value)
     await assignRoleMenus(selectedRole.value.id, ids)
     existingIds.value = ids
     message.success('权限已保存，相关用户需重新登录生效')
@@ -491,78 +378,41 @@ async function handleSavePerm() {
 }
 
 // ============ 新增/编辑/复制 ============
-const modalVisible = ref(false)
-const modalLoading = ref(false)
-const isEdit = ref(false)
-const form = reactive({ id: 0, name: '', code: '', description: '' })
-const feedbackRoot = ref<HTMLElement | null>(null)
-const feedback = useFormFeedback({ root: feedbackRoot, fields: () => ({ name: '角色名称', code: '角色编码' }), values: () => ({ name: form.name, code: form.code }) })
+const roleModal = useFormModal<{ name: string; code: string; description: string }, number>({
+  fields: () => ({ name: '角色名称', code: '角色编码' }),
+  defaults: () => ({ name: '', code: '', description: '' }),
+  validate: (form, editId) => {
+    const errors: Record<string, string> = {}
+    if (!form.name.trim()) errors.name = '请输入角色名称'
+    if (editId == null && !form.code.trim()) errors.code = '请输入角色编码'
+    return errors
+  },
+  save: async (form, editId) => {
+    const options = { errorFeedback: 'form' } as const
+    if (editId != null) {
+      await updateRole(editId, { name: form.name.trim(), description: form.description || undefined }, options)
+      message.success('保存成功')
+    } else {
+      await createRole({ name: form.name.trim(), code: form.code.trim(), description: form.description || undefined }, options)
+      message.success('创建成功')
+    }
+    fetchData()
+  },
+})
+const { visible: modalVisible, loading: modalLoading, editId, form, feedback, modalProps, close: closeModal, submit: handleSubmit } = roleModal
+const isEdit = computed(() => editId.value != null)
 const { summary: feedbackItems, requestId: feedbackRequestId, errors: formErrors } = feedback
-let baseline = ''
-const unsaved = useUnsavedChanges({ active: () => modalVisible.value, dirty: () => JSON.stringify({ ...form }) !== baseline, saving: () => modalLoading.value })
-function closeModal() { void unsaved.attempt(() => { modalVisible.value = false; feedback.clear() }) }
-function markBaseline() { feedback.clear(); baseline = JSON.stringify({ ...form }) }
-function showCreateModal() {
-  isEdit.value = false
-  form.id = 0
-  form.name = ''
-  form.code = ''
-  form.description = ''
-  markBaseline()
-  modalVisible.value = true
-}
+const feedbackRoot = roleModal.bindRoot
+function showCreateModal() { roleModal.open() }
 
 /** 复制角色：只建空角色（不复制权限），复用新增弹窗预填名称/编码 */
 function showCopyModal() {
   if (!selectedRole.value) return
-  isEdit.value = false
-  form.id = 0
-  form.name = `${selectedRole.value.name}-副本`
-  form.code = `${selectedRole.value.code}_copy`
-  form.description = ''
-  modalVisible.value = true
+  roleModal.open(null, { name: `${selectedRole.value.name}-副本`, code: `${selectedRole.value.code}_copy` })
 }
 
-async function showEditModal(record: any) {
-  isEdit.value = true
-  form.id = record.id
-  form.name = record.name
-  form.code = record.code
-  form.description = record.description || ''
-  markBaseline()
-  modalVisible.value = true
-
-}
-
-async function handleSubmit() {
-  if (modalLoading.value) return
-  const localErrors: Record<string, string> = {}
-  if (!form.name.trim()) localErrors.name = '请输入角色名称'
-  if (!isEdit.value && !form.code.trim()) localErrors.code = '请输入角色编码'
-  if (!(await feedback.validate(localErrors))) return
-  modalLoading.value = true
-  try {
-    const options = { errorFeedback: 'form' } as const
-    if (isEdit.value) {
-      await updateRole(form.id, {
-        name: form.name.trim(),
-        description: form.description || undefined,
-      }, options)
-      message.success('保存成功')
-    } else {
-      await createRole({
-        name: form.name.trim(),
-        code: form.code.trim(),
-        description: form.description || undefined,
-      }, options)
-      message.success('创建成功')
-    }
-    modalVisible.value = false
-    fetchData()
-  } catch (error) {
-    await feedback.capture(error)
-  }
-  finally { modalLoading.value = false }
+function showEditModal(record: any) {
+  roleModal.open(record.id, { name: record.name, code: record.code || '', description: record.description || '' })
 }
 
 // ============ 删除 ============
@@ -587,24 +437,29 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.roles-matrix-card :deep(.ant-card-body) {
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-}
+/* 布局外壳：Page 内容区 100% 高，工具栏在上、左右分栏在下共享纵向空间 */
+.page-body { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.roles-layout { flex: 1; min-height: 0; display: flex; }
+
+/* ===== 左：角色列表 ===== */
+.role-sidebar { width: 280px; flex-shrink: 0; display: flex; flex-direction: column; border-right: var(--rule); }
+.role-sidebar-head { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) var(--space-3) var(--space-2); }
+.sidebar-title { font-size: var(--text-aux); font-weight: 600; color: var(--color-text-primary); }
+.sidebar-count { font-size: var(--text-aux); color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
+.role-sidebar-search { flex-shrink: 0; padding: 0 var(--space-3); }
+.role-list { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-2) 6px; }
+.role-sidebar-foot { flex-shrink: 0; padding: var(--space-2) var(--space-3); border-top: var(--rule); }
 
 /* 角色选择使用细线边框；不使用投影表达选中态。 */
 .role-item {
-  padding: 8px 10px;
+  padding: var(--space-2) 10px;
   border-radius: 0;
   cursor: pointer;
   border: 1px solid transparent;
   margin-bottom: 2px;
 }
 .role-item:hover {
-  background: #f8f7f7;
+  background: var(--color-layer-hover);
 }
 .role-item-active,
 .role-item-active:hover {
@@ -612,39 +467,80 @@ onMounted(() => {
   border-color: var(--color-primary);
 }
 .role-name {
-  font-size: 14px;
+  font-size: var(--text-aux);
   font-weight: 600;
-  color: #201d1d;
+  color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .role-desc {
-  font-size: 14px;
-  color: #646262;
+  font-size: var(--text-aux);
+  color: var(--color-text-tertiary);
   margin-top: 2px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.role-actions { display: flex; align-items: center; }
 
-/* ===== 权限矩阵（div 网格，动态列） ===== */
-.matrix-table {
-  border: 1px solid rgba(15,0,0,0.12);
+/* ===== 右：权限矩阵 ===== */
+.role-matrix { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.matrix-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: var(--rule);
 }
+.matrix-title { font-size: var(--text-heading); font-weight: 600; color: var(--color-text-primary); }
+.matrix-sub { font-size: var(--text-aux); color: var(--color-text-tertiary); }
+.admin-notice {
+  flex-shrink: 0;
+  margin: var(--space-3) var(--space-4) 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-layer-01);
+  border: var(--rule);
+  font-size: var(--text-aux);
+  color: var(--color-text-secondary);
+}
+.matrix-tabs {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-4) 0;
+}
+.matrix-scroll { flex: 1; min-height: 0; overflow: auto; padding: var(--space-3) var(--space-4); }
+.matrix-group { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; padding: 6px 0; }
+.group-caret { font-size: var(--text-aux); color: var(--color-text-tertiary); }
+.group-name { font-size: var(--text-aux); font-weight: 600; color: var(--color-text-primary); }
+.group-count { font-size: var(--text-aux); color: var(--color-text-tertiary); }
+.matrix-foot {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-top: var(--rule);
+}
+
+/* ===== 矩阵网格（div 网格，动态列） ===== */
+.matrix-table { border: var(--rule); }
 .matrix-row {
   display: flex;
   align-items: center;
-  gap: 8px 20px;
-  padding: 8px 12px;
-  border-top: 1px solid rgba(15,0,0,0.12);
+  gap: var(--space-2) 20px;
+  padding: var(--space-2) var(--space-3);
+  border-top: var(--rule);
 }
-.matrix-row:first-child {
-  border-top: none;
-}
-.matrix-row:hover {
-  background: #f8f7f7;
-}
+.matrix-row:first-child { border-top: none; }
+.matrix-row:hover { background: var(--color-layer-hover); }
 .matrix-form-col {
   display: flex;
   align-items: center;
@@ -656,16 +552,20 @@ onMounted(() => {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px 20px;
+  gap: var(--space-1) 20px;
 }
 .form-name {
-  font-size: 14px;
+  font-size: var(--text-aux);
   font-weight: 600;
-  color: #201d1d;
+  color: var(--color-text-primary);
 }
+
+/* 弹窗字段提示（替代 text-gray-400 硬编码灰） */
+.field-hint { margin-top: var(--space-1); font-size: var(--text-aux); color: var(--color-text-tertiary); }
+
 @media (max-width: 768px) {
   .roles-layout { flex-direction: column; overflow-y: auto; }
-  .role-sidebar { width: 100%; max-height: 260px; flex-shrink: 0; border-right: 0; border-bottom: 1px solid var(--color-border-subtle); }
+  .role-sidebar { width: 100%; max-height: 260px; flex-shrink: 0; border-right: 0; border-bottom: var(--rule); }
   .role-matrix { flex: 1 0 420px; }
   .matrix-row { align-items: flex-start; flex-direction: column; }
 }

@@ -57,7 +57,7 @@ function setupApiDocs(app: NestExpressApplication, config: ConfigService) {
       '**响应约定**：全部接口返回统一包装 `{ code, message, data, requestId }`；成功 code=200，data 为业务数据。',
       '**错误约定**：失败时 data 为空；message 为用户可读文案；字段级校验错误（400）另附 `fieldErrors: [{ path, code, message }]`，嵌套路径形如 `rows.0.title`。',
       '**分页约定**：列表接口查询参数 `page`、`pageSize`（默认 1、10），返回 `{ list, total, page, pageSize }`。',
-      '**认证**：登录成功后通过 httpOnly Cookie `access_token`（本页 Authorize 按钮可模拟）；会话失效或权限不足分别返回 401/403。写操作受 CSRF Cookie/头保护。',
+      '**认证**：登录成功后通过 httpOnly Cookie `access_token`（本页 Authorize 按钮可模拟）；会话失效或权限不足分别返回 401/403。写操作受 CSRF 防护：Content-Type 须为 JSON 或 multipart，且 multipart 另做同源 Origin/Referer 校验。',
       '**导入/导出**：导入为 `multipart/form-data` 文件上传；导出返回 xlsx 文件流。',
       '',
       '文档由代码内 DTO 推导生成；类型与描述不能替代服务端运行时校验、数据范围与权限裁决。',

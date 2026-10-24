@@ -1,5 +1,7 @@
-import { ref, watch } from 'vue'
+import { ref, watch, type Ref } from 'vue'
+import { message } from 'ant-design-vue'
 import { accountStorageKey } from './accountStorageKey'
+import type { FilterViewPayload } from '@/components/FilterViews.vue'
 
 /**
  * 个人常用筛选视图（F27）：本机按账号保存（当前浏览器），不做团队共享与后端同步。
@@ -104,4 +106,25 @@ export function useSavedFilterViews(options: {
   })
 
   return { views, defaultId, save, rename, remove, setDefault, loadView }
+}
+
+/**
+ * 统一的"应用保存视图"处理器（FilterViews @apply-view）：失效字段提示 + 恢复排序 +
+ * 模块默认值补齐后应用。页面特有联动（如组织树选中同步）放 beforeApply。
+ */
+export function makeOnApplyView<F>(options: {
+  sort: Ref<Record<string, unknown>>
+  apply: (filters: F) => Promise<void> | void
+  /** 模块筛选默认值：旧结构视图缺少新字段时补齐后再应用 */
+  defaults: () => F
+  /** 应用前的页面联动（可选），入参为原始 payload */
+  beforeApply?: (payload: FilterViewPayload) => void
+}): (payload: FilterViewPayload) => void {
+  return (payload) => {
+    const { query, sort: viewSort, staleKeys, name } = payload
+    if (staleKeys.length) message.warning(`视图「${name}」的字段已变化，已忽略：${staleKeys.join('、')}`)
+    options.beforeApply?.(payload)
+    options.sort.value = viewSort
+    void options.apply({ ...options.defaults(), ...query } as F)
+  }
 }

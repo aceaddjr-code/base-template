@@ -1,84 +1,85 @@
 <template>
-  <div class="p-0 h-full flex flex-col page-list">
-    <div class="shrink-0 pr-4 ml-2.5 pt-2.5">
+  <Page class="page-list" title="数据备份" description="手动备份 · 文件下载">
+    <div ref="bodyRef" class="backup-body">
+      <PageToolbar :show-search="false">
+        <template #actions>
+          <!-- 立即备份需要执行中的 loading 反馈，放 actions 插槽而非工具栏默认新增按钮 -->
+          <a-button type="primary" :loading="backingUp" @click="handleBackup">立即备份</a-button>
+        </template>
+      </PageToolbar>
 
-    <div class="page-head-rule flex items-end justify-between mb-1.5">
-      <div>
-        <div class="text-xl font-bold text-[#201d1d] leading-none tracking-tight">数据备份</div>
-        <div class="text-sm text-[#646262] mt-2">手动备份 · 文件下载</div>
-      </div>
-      <div class="text-sm text-[#646262]">今日 {{ todayStr }}</div>
-    </div>
-    <!-- 说明卡：备份策略 + 恢复指引 -->
-    <a-card :bordered="false" class="mb-4">
-      <div class="flex items-start gap-3">
-        <safety-outlined class="text-2xl text-[#201d1d] mt-1" />
-        <div class="text-sm text-[#424245] leading-relaxed">
-          <div class="font-bold text-[#201d1d] mb-1">数据库备份</div>
-          <div>· 点击立即备份后可查看执行状态，执行期间仍可浏览系统；同一服务进程一次执行一个手动备份。</div>
-          <div>· 默认保留 30 天，可由管理员配置；定时执行与异地保存需在部署环境另行配置。</div>
-          <div class="mt-2 font-bold text-[#201d1d]">恢复指引</div>
-          <div>· 下载备份后交管理员在隔离数据库验证恢复，再按维护计划操作正式环境；当前页面不提供恢复执行。</div>
-          <div>· 数据库备份不包含上传附件，请另行备份附件目录。存在备份文件不代表已经完成恢复验证。</div>
+      <!-- 说明卡：备份策略 + 恢复指引 -->
+      <div class="backup-guide">
+        <div class="flex items-start gap-3">
+          <SafetyOutlined class="text-2xl text-primary mt-1" />
+          <div class="text-sm guide-text leading-relaxed">
+            <div class="font-bold guide-title mb-1">数据库备份</div>
+            <div>· 点击立即备份后可查看执行状态，执行期间仍可浏览系统；同一服务进程一次执行一个手动备份。</div>
+            <div>· 默认保留 30 天，可由管理员配置；定时执行与异地保存需在部署环境另行配置。</div>
+            <div class="mt-2 font-bold guide-title">恢复指引</div>
+            <div>· 下载备份后交管理员在隔离数据库验证恢复，再按维护计划操作正式环境；当前页面不提供恢复执行。</div>
+            <div>· 数据库备份不包含上传附件，请另行备份附件目录。存在备份文件不代表已经完成恢复验证。</div>
+          </div>
         </div>
+        <a-alert v-if="backupState.status !== 'idle'" class="mt-3" show-icon
+          :type="backupState.status === 'failed' ? 'error' : backupState.status === 'running' ? 'info' : 'success'"
+          :message="statusText" />
       </div>
-      <a-alert v-if="backupState.status !== 'idle'" class="mt-3" show-icon
-        :type="backupState.status === 'failed' ? 'error' : backupState.status === 'running' ? 'info' : 'success'"
-        :message="statusText" />
-    </a-card>
-    </div>
 
-    <a-card :bordered="false" class="flex-1 min-h-0 flex flex-col">
-      <div class="flex items-center justify-between shrink-0">
-        <span class="font-bold text-[#201d1d]">备份文件</span>
-        <a-button type="primary" :loading="backingUp" @click="handleBackup">立即备份</a-button>
-      </div>
-      <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+      <a-alert v-if="failed" class="mb-3" type="error" show-icon message="备份列表加载失败">
+        <template #action><a-button size="small" @click="fetchData">重试</a-button></template>
+      </a-alert>
+
       <a-table
         :ref="setTableRef"
-        class="mt-3"
         :columns="columns"
         :data-source="pagedRecords"
         :loading="loading"
         :pagination="false"
-        :scroll="{ x: 720 }"
+        :scroll="{ x: 720, y: tableScrollY }"
         row-key="filename"
-        size="small"
+        size="middle"
       >
         <template #headerCell="{ column }">
           <span>{{ column.title }}</span>
-          <span class="resize-handle" @mousedown.prevent.stop="(e: any) => resizeStart(String(column.key), e)" />
+          <span class="resize-handle" @click.stop @mousedown.prevent.stop="(e: any) => resizeStart(String(column.key), e)" />
         </template>
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'size'">{{ formatNumber(record.size) }} B</template>
           <template v-if="column.key === 'action'">
-            <a :href="getBackupDownloadUrl(record.filename)" download>
-              <a-tooltip title="下载"><a-button aria-label="下载备份" class="w-6! h-6! px-0!" type="text" size="small"><DownloadOutlined /></a-button></a-tooltip>
-            </a>
+            <a-button type="link" size="small" :aria-label="`下载 ${record.filename}`" @click="handleDownload(record.filename)">下载</a-button>
           </template>
         </template>
+        <template #emptyText>
+          <a-empty :description="failed ? '备份文件未加载，请使用上方重试' : '暂无备份文件，可点击「立即备份」'" />
+        </template>
       </a-table>
-      <a-empty v-if="!records.length && !loading" description="暂无备份文件，可点击「立即备份」" />
-      </div>
-    </a-card>
-
-    <ListFooter :source="stickySource" :pagination="pagination" @change="handlePageChange" @size-change="handleSizeChange" />
-  </div>
+    </div>
+    <template #footer>
+      <ListFooter :source="stickySource" :pagination="pagination" @change="handlePageChange" @size-change="handleSizeChange" />
+    </template>
+  </Page>
 </template>
 
 <script lang="ts" setup>
-const todayStr = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`
-
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import ListFooter from '@/components/ListFooter.vue'
 import { message } from 'ant-design-vue'
-import { SafetyOutlined , DownloadOutlined } from '@ant-design/icons-vue'
+import { SafetyOutlined } from '@ant-design/icons-vue'
+import Page from '@/components/Page.vue'
+import PageToolbar from '@/components/PageToolbar.vue'
+import ListFooter from '@/components/ListFooter.vue'
 import { formatNumber, withEmptyDash } from '@/utils/format'
 import { listBackups, createBackup, getBackupStatus, getBackupDownloadUrl, type BackupFile, type BackupStatus } from '@/api/system/backups'
-import { useResizableColumns } from '@/composables/useResizableColumns'
 import { useListPage } from '@/composables/useListPage'
+import { useTableScrollY } from '@/composables/useTableScrollY'
+import { useResizableColumns } from '@/composables/useResizableColumns'
+
+// 表头固定 + body 内部滚动：高度由容器实测，说明卡与状态提示出现/收起时自动重算。
+const bodyRef = ref<HTMLElement | null>(null)
+const tableScrollY = useTableScrollY(bodyRef)
 
 const loading = ref(false)
+const failed = ref(false)
 const backingUp = ref(false)
 const backupState = ref<BackupStatus>({ status: 'idle' })
 const statusText = computed(() => backupState.value.status === 'running' ? '备份执行中，可继续浏览系统。服务重启后本次状态不再保留，请检查文件列表。'
@@ -117,19 +118,33 @@ const columns = withEmptyDash([
   { title: '备份时间', dataIndex: 'date', key: 'date', width: 180 },
   { title: '文件名', dataIndex: 'filename', key: 'filename', ellipsis: true },
   { title: '大小', dataIndex: 'size', key: 'size', width: 120 },
-  { title: '操作', key: 'action', width: 50 },
+  { title: '操作', key: 'action', width: 70 },
 ])
 const { resizeStart } = useResizableColumns('starter-cols-backups-main-width', ref(columns))
 
 async function fetchData() {
   loading.value = true
+  failed.value = false
   try {
     const list = await listBackups()
     records.value = list ?? []
     pagination.total = (list ?? []).length
-  } catch { /* 拦截器已提示 */ } finally {
+  } catch {
+    // 拦截器已提示；保留旧列表，同时给出显式重试入口覆盖首次加载失败的场景
+    failed.value = true
+  } finally {
     loading.value = false
   }
+}
+
+/** 授权下载：同源 Cookie 随请求携带，临时锚点触发浏览器保存（与附件页同一方式） */
+function handleDownload(filename: string) {
+  const anchor = document.createElement('a')
+  anchor.href = getBackupDownloadUrl(filename)
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
 }
 
 async function handleBackup() {
@@ -151,3 +166,12 @@ async function handleBackup() {
 
 onMounted(() => { void fetchData(); void refreshStatus() })
 </script>
+
+<style scoped>
+.backup-body { height: 100%; display: flex; flex-direction: column; min-height: 0; background: var(--color-surface); }
+.backup-body > .ant-table-wrapper { min-height: 0; overflow: hidden; }
+/* 说明卡：细线容器加一层浅底。不用 a-card——page-list 下 ant-card-body 会被共享样式去掉内边距 */
+.backup-guide { flex-shrink: 0; margin-bottom: var(--space-4); padding: var(--space-4); background: var(--color-layer-01); border: var(--rule); }
+.guide-title { color: var(--color-text-primary); }
+.guide-text { color: var(--color-text-secondary); }
+</style>

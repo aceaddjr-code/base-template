@@ -37,79 +37,61 @@
       </a-tooltip>
     </template>
     <a-spin :spinning="loading">
-      <div ref="feedbackRoot" class="flex flex-col gap-1">
+      <div :ref="bindRoot" class="flex flex-col gap-1">
         <FormFeedback :items="feedbackItems" :request-id="feedbackRequestId" @focus="feedback.focus" />
-        <!-- 大卡片：卡片式详情（无条件渲染导航栏；无下游页签时仅"单据详情"一项） -->
+        <!-- 大卡片：卡片式详情（字段按 group 分组展示） -->
         <a-card :bordered="false" :body-style="{ padding: '10px' }">
-          <a-tabs v-model:activeKey="activeKey">
-            <a-tab-pane key="detail" tab="单据详情">
-              <slot name="before" />
-              <template v-if="record && visibleFields.length">
-                <template v-for="(g, gi) in fieldGroups" :key="gi">
-                  <slot v-if="g.title && beforeGroupSlots?.[g.title]" :name="'before-group-' + beforeGroupSlots[g.title]" />
-                  <div v-if="g.title" class="detail-group-title">{{ g.title }}</div>
-                  <a-descriptions :column="{ xs: 1, sm: 2, md: column }" size="small" bordered>
-                    <a-descriptions-item
-                      v-for="f in g.fields"
-                      :key="f.dataIndex"
-                      :label="f.label"
-                      :span="f.span ?? 1"
-                    >
-                      <template v-if="editing && editableFields.has(f.dataIndex)">
-                        <div :data-form-field="f.dataIndex">
-                        <a-input v-if="(editableFields.get(f.dataIndex)?.inputType ?? 'input') === 'input'" v-model:value="editForm[f.dataIndex]" :aria-label="f.label" v-bind="feedback.attrs(f.dataIndex)" :maxlength="editableFields.get(f.dataIndex)?.maxLength" :disabled="saving" />
-                        <a-textarea v-else-if="editableFields.get(f.dataIndex)?.inputType === 'textarea'" v-model:value="editForm[f.dataIndex]" :aria-label="f.label" v-bind="feedback.attrs(f.dataIndex)" :maxlength="editableFields.get(f.dataIndex)?.maxLength" :disabled="saving" :rows="4" show-count />
-                        <a-input-number v-else-if="editableFields.get(f.dataIndex)?.inputType === 'number'" v-model:value="editForm[f.dataIndex]" :aria-label="f.label" v-bind="feedback.attrs(f.dataIndex)" :disabled="saving" style="width: 100%" />
-                        <a-date-picker v-else-if="editableFields.get(f.dataIndex)?.inputType === 'date'" v-model:value="editForm[f.dataIndex]" :aria-label="f.label" v-bind="feedback.attrs(f.dataIndex)" :disabled="saving" value-format="YYYY-MM-DD" style="width: 100%" />
-                        <a-select v-else-if="editableFields.get(f.dataIndex)?.inputType === 'select'" v-model:value="editForm[f.dataIndex]" :aria-label="f.label" v-bind="feedback.attrs(f.dataIndex)" :options="editableFields.get(f.dataIndex)?.options" :allow-clear="!editableFields.get(f.dataIndex)?.required" :disabled="saving" style="width: 100%" />
-                        <a-switch v-else v-model:checked="editForm[f.dataIndex]" :aria-label="f.label" v-bind="feedback.attrs(f.dataIndex)" :disabled="saving" />
-                        <p v-if="fieldErrors[f.dataIndex]" :id="feedback.errorId(f.dataIndex)" class="field-error">{{ fieldErrors[f.dataIndex] }}</p>
-                        </div>
-                      </template>
-                      <template v-else-if="f.valueType === 'tag' && record[f.dataIndex]">
-                        <a-tag :color="f.tagColor?.(record[f.dataIndex]) ?? 'default'">
-                          {{ f.formatter ? f.formatter(record) : record[f.dataIndex] }}
-                        </a-tag>
-                      </template>
-                      <template v-else-if="f.valueType === 'boolean'">
-                        <span :class="{ 'cell-dash': record[f.dataIndex] == null }">{{ record[f.dataIndex] == null ? '-' : (record[f.dataIndex] ? '是' : '否') }}</span>
-                      </template>
-                      <template v-else-if="f.formatter">
-                        {{ f.formatter(record) }}
-                      </template>
-                      <template v-else>
-                        <span class="detail-text" :class="{ 'cell-dash': isEmptyValue(record[f.dataIndex]) }">{{ formatDate(record[f.dataIndex]) }}</span>
-                      </template>
-                    </a-descriptions-item>
-
-                    <template v-if="gi === fieldGroups.length - 1">
-                      <a-descriptions-item v-if="hasCreatedAt" label="创建时间">
-                        {{ formatDateTime(record.createdAt) }}
-                      </a-descriptions-item>
-                      <a-descriptions-item v-if="hasUpdatedAt" label="修改时间">
-                        {{ formatDateTime(record.updatedAt) }}
-                      </a-descriptions-item>
-                    </template>
-                  </a-descriptions>
-                </template>
-              </template>
-              <a-empty v-else-if="open && !loading && !$slots.default" :description="record ? '暂无数据' : '详情加载失败或记录不可见'" />
-              <slot />
-            </a-tab-pane>
-            <a-tab-pane v-for="t in tabs" :key="t.key">
-              <template #tab>
-
-                <a-dropdown v-if="t.create" v-access="t.create.access" trigger="hover" :mouse-enter-delay="0">
-                  <span>{{ t.label }}</span>
-                  <template #overlay>
-                    <a-menu :items="[{ key: t.key, label: t.create.label }]" @click="t.create.handler" />
+          <slot name="before" />
+          <template v-if="record && visibleFields.length">
+            <template v-for="(g, gi) in fieldGroups" :key="gi">
+              <div v-if="g.title" class="detail-group-title">{{ g.title }}</div>
+              <a-descriptions :column="{ xs: 1, sm: 2, md: column }" size="small" bordered>
+                <a-descriptions-item
+                  v-for="f in g.fields"
+                  :key="f.dataIndex"
+                  :label="f.label"
+                  :span="f.span ?? 1"
+                >
+                  <template v-if="editing && editableFields.has(f.dataIndex)">
+                    <div :data-form-field="f.dataIndex">
+                    <a-input v-if="(editableFields.get(f.dataIndex)?.inputType ?? 'input') === 'input'" v-model:value="editForm[f.dataIndex]" :aria-label="f.label" v-bind="feedback.attrs(f.dataIndex)" :maxlength="editableFields.get(f.dataIndex)?.maxLength" :disabled="saving" />
+                    <a-textarea v-else-if="editableFields.get(f.dataIndex)?.inputType === 'textarea'" v-model:value="editForm[f.dataIndex]" :aria-label="f.label" v-bind="feedback.attrs(f.dataIndex)" :maxlength="editableFields.get(f.dataIndex)?.maxLength" :disabled="saving" :rows="4" show-count />
+                    <a-input-number v-else-if="editableFields.get(f.dataIndex)?.inputType === 'number'" v-model:value="editForm[f.dataIndex]" :aria-label="f.label" v-bind="feedback.attrs(f.dataIndex)" :disabled="saving" style="width: 100%" />
+                    <a-date-picker v-else-if="editableFields.get(f.dataIndex)?.inputType === 'date'" v-model:value="editForm[f.dataIndex]" :aria-label="f.label" v-bind="feedback.attrs(f.dataIndex)" :disabled="saving" value-format="YYYY-MM-DD" style="width: 100%" />
+                    <a-select v-else-if="editableFields.get(f.dataIndex)?.inputType === 'select'" v-model:value="editForm[f.dataIndex]" :aria-label="f.label" v-bind="feedback.attrs(f.dataIndex)" :options="editableFields.get(f.dataIndex)?.options" :allow-clear="!editableFields.get(f.dataIndex)?.required" :disabled="saving" style="width: 100%" />
+                    <a-switch v-else v-model:checked="editForm[f.dataIndex]" :aria-label="f.label" v-bind="feedback.attrs(f.dataIndex)" :disabled="saving" />
+                    <p v-if="fieldErrors[f.dataIndex]" :id="feedback.errorId(f.dataIndex)" class="field-error">{{ fieldErrors[f.dataIndex] }}</p>
+                    </div>
                   </template>
-                </a-dropdown>
-                <template v-else>{{ t.label }}</template>
-              </template>
-              <slot :name="'tab-' + t.key" />
-            </a-tab-pane>
-          </a-tabs>
+                  <template v-else-if="f.valueType === 'tag' && record[f.dataIndex]">
+                    <a-tag :color="f.tagColor?.(record[f.dataIndex]) ?? 'default'">
+                      {{ f.formatter ? f.formatter(record) : record[f.dataIndex] }}
+                    </a-tag>
+                  </template>
+                  <template v-else-if="f.valueType === 'boolean'">
+                    <span :class="{ 'cell-dash': record[f.dataIndex] == null }">{{ record[f.dataIndex] == null ? '-' : (record[f.dataIndex] ? '是' : '否') }}</span>
+                  </template>
+                  <template v-else-if="f.formatter">
+                    {{ f.formatter(record) }}
+                  </template>
+                  <template v-else>
+                    <span class="detail-text" :class="{ 'cell-dash': isEmptyValue(record[f.dataIndex]) }">{{ formatDate(record[f.dataIndex]) }}</span>
+                  </template>
+                </a-descriptions-item>
+
+                <template v-if="gi === fieldGroups.length - 1">
+                  <a-descriptions-item v-if="hasCreatedAt" label="创建时间">
+                    {{ formatDateTime(record.createdAt) }}
+                  </a-descriptions-item>
+                  <a-descriptions-item v-if="hasUpdatedAt" label="修改时间">
+                    {{ formatDateTime(record.updatedAt) }}
+                  </a-descriptions-item>
+                </template>
+              </a-descriptions>
+            </template>
+          </template>
+          <a-empty v-else-if="open && !loading && !$slots.default" :description="record ? '暂无数据' : '详情加载失败或记录不可见'" />
+          <slot />
         </a-card>
       </div>
     </a-spin>
@@ -117,14 +99,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, reactive } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { formatDate, formatDateTime, isEmptyValue } from '@/utils/format'
 import { EditOutlined, FullscreenOutlined, FullscreenExitOutlined, PrinterOutlined } from '@ant-design/icons-vue'
 import { buildPrintDocument, collectPrintRows, printHtml } from '@/utils/print-document'
 import FormFeedback from './FormFeedback.vue'
-import { useFormFeedback } from '@/composables/useFormFeedback'
-import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
+import { useFormModal } from '@/composables/useFormModal'
 
 export interface DetailField {
   /** 展示标签 */
@@ -171,19 +152,6 @@ export interface DetailEditField {
   maxLength?: number
 }
 
-/** 页签配置：每个 key 对应一个 #tab-{key} 插槽；
-    create 可选——提供后页签标签支持 hover 下拉新增 */
-export interface DetailTabConfig {
-  key: string
-  label: string
-  create?: {
-    label: string
-
-    access?: string[]
-    handler: () => void
-  }
-}
-
 const props = withDefaults(
   defineProps<{
     open: boolean
@@ -196,15 +164,11 @@ const props = withDefaults(
     column?: number
     /** 抽屉宽度（默认 1000） */
     width?: number
-    /** 页签配置（下游表单/子表）；不传/空数组 → 导航栏仅"单据详情"一项 */
-    tabs?: DetailTabConfig[]
-
-    activeKey?: string
     /** 是否启用详情内编辑（需同时传入 saveHandler；true 时抽屉右上角出现「编辑」按钮） */
     editable?: boolean
 
     saveAccess?: string[]
-    /** 可编辑字段配置；缺省时使用 fields 中 valueType='text' 的字段（自动推断控件类型） */
+    /** 可编辑字段配置；缺省时使用 fields 中标记 editable 的字段（自动推断控件类型） */
     editFields?: DetailEditField[]
     /** 保存处理器：接收编辑后的字段值，负责调更新 API；resolve 表示成功（退出编辑模式并提示），reject/throw 表示失败（保持编辑模式） */
     saveHandler?: (payload: Record<string, any>) => Promise<void>
@@ -212,14 +176,12 @@ const props = withDefaults(
     reloadHandler?: () => Promise<void>
 
     customExtra?: boolean
-    /** 字段分组间插槽：{ groupTitle: slotName } 格式；渲染单据详情时，匹配到 groupTitle 的字段组前会先渲染 #before-group-{slotName} 插槽 */
-    beforeGroupSlots?: Record<string, string>
     /** 是否提供打印入口（F21）：查看态显示「打印」，范围为当前已加载的这条记录 */
     printable?: boolean
     /** 打印抬头系统名称（F21）；不传则打印文档不含系统名 */
     systemName?: string
   }>(),
-  { title: '单据详情', loading: false, column: 3, width: 1000, tabs: undefined, editable: false, editFields: undefined, saveHandler: undefined, customExtra: false, showAuditTime: true, activeKey: undefined, beforeGroupSlots: undefined, printable: false, systemName: undefined },
+  { title: '单据详情', loading: false, column: 3, width: 1000, editable: false, editFields: undefined, saveHandler: undefined, customExtra: false, showAuditTime: true, printable: false, systemName: undefined },
 )
 
 const hasCreatedAt = computed(
@@ -237,34 +199,12 @@ const hasUpdatedAt = computed(
 
 const emit = defineEmits<{
   (e: 'update:open', v: boolean): void
-  /** 受控页签回写（配合 v-model:active-key；用户点页签时通知父组件） */
-  (e: 'update:activeKey', v: string): void
   /** 详情内编辑保存成功后触发（父页面用于刷新详情/列表数据） */
   (e: 'saved'): void
 }>()
 
-const innerActiveKey = ref('detail')
-const activeKey = computed({
-  get: () => props.activeKey ?? innerActiveKey.value,
-  set: (v: string) => {
-    innerActiveKey.value = v
-    emit('update:activeKey', v)
-  },
-})
-// 非受控模式：打开抽屉时重置到「单据详情」页签（避免抽屉复用时停留在已删页签）。
-// 不能用 watch(tabs)：父组件内联数组字面量每次重渲染都是新引用，会把用户切到的页签弹回「单据详情」
-watch(
-  () => props.open,
-  (open) => { if (open && props.activeKey === undefined) innerActiveKey.value = 'detail' },
-)
-
-// ===== 详情内编辑（editable + saveHandler 开启） =====
-const editing = ref(false)
-const saving = ref(false)
+// ===== 详情内编辑（editable + saveHandler 开启）：状态机走共享 useFormModal，visible 即编辑中 =====
 const fullscreen = ref(false)
-const editForm = reactive<Record<string, any>>({})
-const editBaseline = ref('')
-const feedbackRoot = ref<HTMLElement | null>(null)
 
 /** 可编辑字段：优先 editFields；缺省取 fields 中标记 editable 的字段 */
 
@@ -291,49 +231,86 @@ const editFieldList = computed<DetailEditField[]>(() => {
     .map((f) => ({ label: f.label, dataIndex: f.dataIndex, span: f.span, inputType: f.inputType, options: f.options, required: f.required, maxLength: f.maxLength }))
 })
 const editableFields = computed(() => new Map(editFieldList.value.map(field => [field.dataIndex, field])))
-const feedback = useFormFeedback({ fields: () => Object.fromEntries(editFieldList.value.map(field => [field.dataIndex, field.label])), root: feedbackRoot, values: () => ({ ...editForm }), beforeFocus: () => { activeKey.value = 'detail' } })
-const { errors: fieldErrors, summary: feedbackItems, requestId: feedbackRequestId } = feedback
-function editSnapshot() { return JSON.stringify(Object.fromEntries(editFieldList.value.map(field => [field.dataIndex, editForm[field.dataIndex] === '' || editForm[field.dataIndex] == null ? null : editForm[field.dataIndex]]))) }
-const unsaved = useUnsavedChanges({ active: () => props.open && (editing.value || saving.value), dirty: () => editSnapshot() !== editBaseline.value, saving: () => saving.value })
-function requestClose() { void unsaved.attempt(() => emit('update:open', false)) }
+
+/** 详情切换令牌：保存期间记录被切换时，旧记录的结果不再打扰当前视图 */
 let editContext = 0
+
+const editSession = useFormModal<Record<string, any>, number | string>({
+  fields: () => Object.fromEntries(editFieldList.value.map(field => [field.dataIndex, field.label])),
+  defaults: () => ({}),
+  validate: form => {
+    const errors: Record<string, string> = {}
+    for (const f of editFieldList.value) {
+      const v = form[f.dataIndex]
+      if (f.required && (v == null || (typeof v === 'string' && !v.trim()))) {
+        errors[f.dataIndex] = `请填写${f.label}`
+      }
+      if (typeof v === 'string' && f.maxLength && Array.from(v).length > f.maxLength) errors[f.dataIndex] = `${f.label}不能超过 ${f.maxLength} 字`
+    }
+    return errors
+  },
+  save: async form => {
+    if (!props.saveHandler) return
+    const context = editContext
+    // 空值统一转 null（与弹窗表单一致），其余原样提交
+    const payload: Record<string, any> = {}
+    for (const f of editFieldList.value) {
+      const v = form[f.dataIndex]
+      payload[f.dataIndex] = v === '' || v == null ? null : v
+    }
+    try {
+      await props.saveHandler(payload)
+      if (context !== editContext || !props.open) return
+      message.success('已保存')
+      emit('saved')
+    } catch (error) {
+      // 详情已切换到别的记录：旧记录的保存结果不再打扰当前视图
+      if (context === editContext && props.open) throw error
+    }
+  },
+  active: () => props.open,
+  snapshot: form => Object.fromEntries(editFieldList.value.map(field => [field.dataIndex, form[field.dataIndex] === '' || form[field.dataIndex] == null ? null : form[field.dataIndex]])),
+})
+const editing = editSession.visible
+const saving = editSession.loading
+const editForm = editSession.form
+const feedback = editSession.feedback
+const bindRoot = editSession.bindRoot
+const { errors: fieldErrors, summary: feedbackItems, requestId: feedbackRequestId } = feedback
+
+function requestClose() { editSession.guard(() => emit('update:open', false)) }
+
+function resetEditState() {
+  editSession.visible.value = false
+  feedback.clear()
+  for (const key of Object.keys(editForm)) delete editForm[key]
+}
 
 watch(
   [() => props.open, () => props.record?.id],
   () => {
     editContext++
-    editing.value = false
-    feedback.clear()
-    for (const key of Object.keys(editForm)) delete editForm[key]
+    resetEditState()
   },
 )
 
 function startEdit() {
   if (!props.open || !props.record || props.loading || saving.value || !props.editable || !props.saveHandler) return
-  editing.value = true
-  for (const f of editFieldList.value) {
-    const value = props.record[f.dataIndex]
-    editForm[f.dataIndex] = Array.isArray(value) ? [...value] : value ?? null
-  }
-  editBaseline.value = editSnapshot()
-  feedback.clear()
+  editSession.open(props.record.id ?? null, Object.fromEntries(editFieldList.value.map((f) => {
+    const value = props.record![f.dataIndex]
+    return [f.dataIndex, Array.isArray(value) ? [...value] : value ?? null]
+  })))
 }
 
 async function cancelEdit() {
-  await unsaved.attempt(async () => {
-    editing.value = false
-    feedback.clear()
-    for (const key of Object.keys(editForm)) delete editForm[key]
+  editSession.guard(async () => {
+    resetEditState()
     try { await props.reloadHandler?.() } catch { /* 当前查看态保留最近服务端数据 */ }
   })
 }
 
 /** F06 冲突恢复：调用方已明确确认“放弃当前修改并载入最新内容”后直接退出编辑态，不经未保存确认 */
-function exitEditToView() {
-  editing.value = false
-  feedback.clear()
-  for (const key of Object.keys(editForm)) delete editForm[key]
-}
+function exitEditToView() { resetEditState() }
 
 // ===== 打印（F21）：范围为当前查看的这条记录，字段与查看态同口径 =====
 function printDetail() {
@@ -350,37 +327,9 @@ function printDetail() {
   printHtml(html)
 }
 
-async function saveEdit() {
-  if (!props.saveHandler || saving.value || props.loading || !editing.value) return
-  const errors: Record<string, string> = {}
-  for (const f of editFieldList.value) {
-    const v = editForm[f.dataIndex]
-    if (f.required && (v == null || (typeof v === 'string' && !v.trim()))) {
-      errors[f.dataIndex] = `请填写${f.label}`
-    }
-    if (typeof v === 'string' && f.maxLength && Array.from(v).length > f.maxLength) errors[f.dataIndex] = `${f.label}不能超过 ${f.maxLength} 字`
-  }
-  if (!(await feedback.validate(errors))) return
-  // 空值统一转 null（与弹窗表单一致），其余原样提交
-  const payload: Record<string, any> = {}
-  for (const f of editFieldList.value) {
-    const v = editForm[f.dataIndex]
-    payload[f.dataIndex] = v === '' || v == null ? null : v
-  }
-  saving.value = true
-  const context = editContext
-  try {
-    await props.saveHandler(payload)
-    if (context !== editContext || !props.open) return
-    message.success('已保存')
-    editing.value = false
-    feedback.clear()
-    emit('saved')
-  } catch (error) {
-    if (context === editContext && props.open) await feedback.capture(error)
-  } finally {
-    saving.value = false
-  }
+function saveEdit() {
+  if (props.loading) return
+  void editSession.submit()
 }
 
 defineExpose({ startEdit, exitEditToView })
@@ -388,7 +337,6 @@ defineExpose({ startEdit, exitEditToView })
 
 <style scoped>
 .detail-text { white-space: pre-wrap; overflow-wrap: anywhere; }
-.field-error { margin: 4px 0 0; color: #b42318; }
 
 /* 字段网格：标签列压成浅底窄列，值列留给内容，长文本按容器换行。 */
 :deep(.ant-descriptions-item-label) {
@@ -417,8 +365,6 @@ defineExpose({ startEdit, exitEditToView })
 /* 抽屉头：标题与操作同一行对齐，细线分隔内容区。 */
 .detail-drawer .ant-drawer-header { padding: var(--space-3) var(--space-4); border-bottom: var(--rule); }
 .detail-drawer .ant-drawer-title { font-size: var(--text-heading); font-weight: 700; }
-.detail-drawer .ant-tabs-tab { padding: var(--space-2) 0; }
-/* 字段标签列铺浅底，值列保持画布色，表格读起来像台账。 */
 .detail-drawer .ant-descriptions-item-label { background: var(--color-layer-01) !important; }
 
 /* Drawer 通过 Teleport 挂载；用专属根类约束样式，保证窄屏标题和操作分别成行。 */

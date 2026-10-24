@@ -9,7 +9,7 @@
         </slot>
       </div>
       <div class="starter-page-header-extra">
-        <div class="starter-page-today">今日 {{ todayStr }}</div>
+        <div class="starter-page-today">今日 {{ today }}</div>
         <slot name="extra" />
       </div>
     </div>
@@ -26,12 +26,14 @@
  * Page 组件 - 替代 @vben/common-ui 的 Page
  * 提供标题、描述和内容区域的简单包装
  */
+import { todayStr } from '@/utils/format'
+
 defineProps<{
   title?: string;
   description?: string;
 }>();
 
-const todayStr = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`
+const today = todayStr()
 </script>
 
 <style scoped>

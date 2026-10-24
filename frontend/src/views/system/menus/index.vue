@@ -1,27 +1,24 @@
 <template>
-  <div class="p-0 h-full flex flex-col page-list">
+  <Page class="page-list" title="菜单管理" description="菜单树 · 按钮权限">
+    <div ref="bodyRef" class="menus-body">
+      <PageToolbar
+        :show-search="false"
+        :show-create="true"
+        :menu-items="['columns']"
+        :columns="columns"
+        :all-columns="allColumns"
+        column-settings-key="starter-cols-menus-main"
+        :resizable="menusResizable"
+        :locked-keys="['action']"
+        @create="showCreateModal(null)"
+        @update:columns="columns = $event"
+      >
+        <template #actions>
+          <a-button v-if="failed" size="small" @click="fetchData">重试</a-button>
+        </template>
+      </PageToolbar>
 
-    <div class="shrink-0 pr-4 ml-2.5 pt-2.5">
-      <div class="page-head-rule flex items-end justify-between mb-1.5">
-        <div>
-          <div class="text-xl font-bold text-[#201d1d] leading-none tracking-tight">菜单管理</div>
-          <div class="text-sm text-[#646262] mt-2">菜单树 · 按钮权限</div>
-        </div>
-      <div class="text-sm text-[#646262]">今日 {{ todayStr }}</div>
-      </div>
-    </div>
-
-    <a-card :bordered="false" class="flex-1 min-h-0 flex flex-col">
-      <div class="flex-1 min-h-0 overflow-y-auto">
-      <!-- 标题栏 -->
-      <div class="flex justify-between items-center mb-4">
-        <a-button type="primary" @click="showCreateModal(null)">
-          新增
-        </a-button>
-        <ColumnSettings v-model:columns="columns" :all-columns="allColumns" storage-key="starter-cols-menus-main" />
-      </div>
-
-      <!-- 表格：将树形数据展平 -->
+      <!-- 表格：树形数据按深度展平，名称列用缩进表达层级 -->
       <a-table
         :ref="setTableRef"
         :columns="columns"
@@ -32,70 +29,61 @@
         row-key="id"
         size="middle"
         :children-column-name="'__children'"
-        :scroll="{ x: 'max-content' }"
+        :scroll="{ x: 1016, y: tableScrollY }"
       >
         <template #headerCell="{ column }">
           <span>{{ column.title }}</span>
-          <span class="resize-handle" @mousedown.prevent.stop="(e: any) => resizeStart(String(column.key), e)" />
+          <span v-if="column.key !== 'action'" class="resize-handle" @click.stop @mousedown.prevent.stop="(e: any) => resizeStart(String(column.key), e)" />
         </template>
         <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'icon'">
-            {{ record.icon || '-' }}
+          <template v-if="column.key === 'name'">
+            <span class="menu-name" :style="{ paddingLeft: `${(record.__level ?? 0) * 16}px` }">{{ record.name }}</span>
           </template>
-          <template v-if="column.key === 'type'">
+          <template v-else-if="column.key === 'type'">
             <a-tag :color="record.type === 'menu' ? 'processing' : 'warning'">
               {{ record.type === 'menu' ? '菜单' : '按钮' }}
             </a-tag>
           </template>
-          <template v-if="column.key === 'path'">
-            {{ record.path || '-' }}
-          </template>
-          <template v-if="column.key === 'permission'">
-            {{ record.permission || '-' }}
-          </template>
-          <template v-if="column.key === 'status'">
+          <template v-else-if="column.key === 'status'">
             <a-badge :status="record.status === 1 ? 'success' : 'error'" :text="record.status === 1 ? '启用' : '禁用'" />
           </template>
-          <template v-if="column.key === 'sort'">
-            {{ record.sort ?? 0 }}
-          </template>
-          <template v-if="column.key === 'action'">
+          <template v-else-if="column.key === 'action'">
             <a-space>
-              <a-tooltip title="添加子项"><a-button aria-label="添加子项" class="w-6! h-6! px-0!" type="text" size="small" @click="showCreateModal(record)"><PlusOutlined /></a-button></a-tooltip>
-              <a-tooltip title="编辑"><a-button aria-label="编辑菜单" @click="showEditModal(record)" class="w-6! h-6! px-0!" type="text" size="small"><EditOutlined /></a-button></a-tooltip>
+              <a-button type="link" size="small" @click="showCreateModal(record)">新增子项</a-button>
+              <a-button type="link" size="small" @click="showEditModal(record)">编辑</a-button>
               <a-popconfirm
                 title="确定要删除该菜单吗？如有子菜单会失败。"
                 ok-text="确定"
                 cancel-text="取消"
                 @confirm="handleDelete(record.id)"
               >
-                <a-tooltip title="删除"><a-button aria-label="删除菜单" danger class="w-6! h-6! px-0!" type="text" size="small"><DeleteOutlined /></a-button></a-tooltip>
+                <a-button type="link" danger size="small">删除</a-button>
               </a-popconfirm>
             </a-space>
           </template>
         </template>
+        <template #emptyText><a-empty :description="failed ? '菜单加载失败，请重试' : '暂无菜单'" /></template>
       </a-table>
-          </div>
-    </a-card>
-
-    <div class="shrink-0 bg-white">
-      <StickyScrollBar :source="stickySource" />
-      <div class="flex items-center justify-end px-4 py-1">
-        <span class="text-sm text-[#646262]">共 {{ treeData.length }} 条</span>
-      </div>
     </div>
+    <!-- 全量树无分页：页脚只承载横滚条与总数文案 -->
+    <template #footer>
+      <div class="menus-footer">
+        <StickyScrollBar :source="stickySource" />
+        <div class="menus-footer-meta">共 {{ treeData.length }} 条</div>
+      </div>
+    </template>
+  </Page>
 
-    <!-- 新增/编辑弹窗 -->
-    <a-modal
+  <!-- 新增/编辑弹窗 -->
+  <a-modal
       :open="modalVisible"
       :title="modalTitle"
-      :confirm-loading="modalLoading"
-      :mask-closable="!modalLoading" :keyboard="!modalLoading" :closable="!modalLoading"
-      :cancel-button-props="{ disabled: modalLoading }" @cancel="closeModal"
+      v-bind="modalProps"
+      @cancel="closeModal"
       ok-text="保存" cancel-text="取消" @ok="handleSubmit"
     >
 
-      <div ref="feedbackRoot">
+      <div :ref="feedbackRoot">
       <FormFeedback :items="feedbackItems" :request-id="feedbackRequestId" @focus="feedback.focus" />
       <a-form :model="form" layout="vertical">
         <a-row :gutter="8">
@@ -120,7 +108,7 @@
           <a-col :span="12">
             <a-form-item label="图标">
               <a-input v-model:value="form.icon" placeholder="Ant Design 图标名，如 SettingOutlined" :maxlength="50" />
-              <div class="text-gray-400 text-sm mt-1">仅菜单类型有效，按钮类型忽略</div>
+              <div class="field-hint">仅菜单类型有效，按钮类型忽略</div>
             </a-form-item>
           </a-col>
           <a-col :span="12">
@@ -146,21 +134,20 @@
       </a-form>
       </div>
     </a-modal>
-  </div>
 </template>
 
 <script setup lang="ts">
 import { withEmptyDash } from '@/utils/format'
+import Page from '@/components/Page.vue'
+import PageToolbar from '@/components/PageToolbar.vue'
 import StickyScrollBar from '@/components/StickyScrollBar.vue'
 import { useResizableColumns } from '@/composables/useResizableColumns'
 import { useListPage } from '@/composables/useListPage'
-import { ref, reactive, computed, onMounted } from 'vue'
-import { EditOutlined, DeleteOutlined , PlusOutlined } from '@ant-design/icons-vue'
-import ColumnSettings from '@/components/ColumnSettings.vue'
+import { useTableScrollY } from '@/composables/useTableScrollY'
+import { ref, computed, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
 import FormFeedback from '@/components/FormFeedback.vue'
-import { useFormFeedback } from '@/composables/useFormFeedback'
-import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
+import { useFormModal } from '@/composables/useFormModal'
 import { getMenus, createMenu, updateMenu, deleteMenu, type MenuItem } from '@/api/menu'
 
 // ============ 将树形数据扁平化 ============
@@ -177,8 +164,11 @@ function flattenTree(tree: MenuItem[], level = 0): (MenuItem & { __level: number
 
 // ============ 状态 ============
 const loading = ref(false)
-const todayStr = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`
+const failed = ref(false)
 const { setTableRef, stickySource } = useListPage()
+// 表头固定 + body 内部滚动：高度由容器实测，工具栏换行时自动重算
+const bodyRef = ref<HTMLElement | null>(null)
+const tableScrollY = useTableScrollY(bodyRef)
 
 const treeData = ref<MenuItem[]>([])
 const flatData = computed(() => flattenTree(treeData.value))
@@ -192,93 +182,40 @@ const allColumns = ref(withEmptyDash([
   { title: '权限标识', key: 'permission', width: 150 },
   { title: '排序', key: 'sort', width: 70 },
   { title: '状态', key: 'status', width: 80 },
-  { title: '操作', key: 'action', width: 80 },
+  // 操作列改为文字链接（新增子项/编辑/删除），按现有按钮收紧
+  { title: '操作', key: 'action', width: 168, fixed: 'right' as const },
 ]))
 const columns = ref([...allColumns.value])
-const { resizeStart } = useResizableColumns('starter-cols-menus-main-width', columns, {
-  name: 180, icon: 100, type: 80, path: 180, permission: 150, sort: 70, status: 80, action: 80,
+// v2：操作列从图标改为 3 个文字链接并固定右侧，旧 key 里保存的 80px 宽度会把按钮挤换行
+const { resizeStart, colWidths, setColumnWidth } = useResizableColumns('starter-cols-menus-main-width-v2', columns, {
+  name: 180, icon: 100, type: 80, path: 180, permission: 150, sort: 70, status: 80, action: 168,
 })
+const menusResizable = computed(() => ({ colWidths, setColumnWidth }))
 
 // ============ 数据获取 ============
 async function fetchData() {
   loading.value = true
+  failed.value = false
   try {
     treeData.value = await getMenus()
+  } catch {
+    failed.value = true
   } finally {
     loading.value = false
   }
 }
 
 // ============ 新增/编辑 ============
-const modalVisible = ref(false)
-const modalLoading = ref(false)
-const isEdit = ref(false)
 const parentMenu = ref<MenuItem | null>(null)
-const form = reactive({
-  id: 0,
-  parentId: undefined as number | undefined,
-  name: '',
-  path: '',
-  icon: '',
-  type: 'menu' as string,
-  permission: '',
-  sort: 0,
-})
-const feedbackRoot = ref<HTMLElement | null>(null)
-const feedback = useFormFeedback({ root: feedbackRoot, fields: () => ({ name: '菜单名称', path: '路由路径', permission: '权限标识' }), values: () => ({ ...form }) })
-const { summary: feedbackItems, requestId: feedbackRequestId, errors: formErrors } = feedback
-let baseline = ''
-const unsaved = useUnsavedChanges({ active: () => modalVisible.value, dirty: () => JSON.stringify({ ...form }) !== baseline, saving: () => modalLoading.value })
-function closeModal() { void unsaved.attempt(() => { modalVisible.value = false; feedback.clear() }) }
-
-const modalTitle = computed(() => {
-  if (isEdit.value) return '编辑菜单'
-  if (parentMenu.value) return `添加子菜单 - ${parentMenu.value.name}`
-  return '新增顶级菜单'
-})
-
-function showCreateModal(parent: any | null) {
-  isEdit.value = false
-  parentMenu.value = parent
-  form.id = 0
-  form.parentId = parent?.id || undefined
-  form.name = ''
-  form.path = ''
-  form.icon = ''
-  form.type = 'menu'
-  form.permission = ''
-  form.sort = 0
-  feedback.clear()
-  baseline = JSON.stringify({ ...form })
-  modalVisible.value = true
-}
-
-function showEditModal(record: any) {
-  isEdit.value = true
-  parentMenu.value = null
-  form.id = record.id
-  form.parentId = record.parentId || undefined
-  form.name = record.name
-  form.path = record.path || ''
-  form.icon = record.icon || ''
-  form.type = record.type || 'menu'
-  form.permission = record.permission || ''
-  form.sort = record.sort ?? 0
-  feedback.clear()
-  baseline = JSON.stringify({ ...form })
-  modalVisible.value = true
-}
-
-async function handleSubmit() {
-  if (modalLoading.value) return
-  const localErrors: Record<string, string> = {}
-  if (!form.name.trim()) localErrors.name = '菜单名称不能为空'
-  if (!(await feedback.validate(localErrors))) return
-  modalLoading.value = true
-  try {
+interface MenuForm { parentId: number | undefined; name: string; path: string; icon: string; type: string; permission: string; sort: number }
+const menuModal = useFormModal<MenuForm, number>({
+  fields: () => ({ name: '菜单名称', path: '路由路径', permission: '权限标识' }),
+  defaults: () => ({ parentId: undefined, name: '', path: '', icon: '', type: 'menu', permission: '', sort: 0 }),
+  validate: form => (form.name.trim() ? {} : { name: '菜单名称不能为空' }),
+  save: async (form, editId) => {
     const options = { errorFeedback: 'form' } as const
-    if (isEdit.value) {
-      await updateMenu(form.id, {
+    if (editId != null) {
+      await updateMenu(editId, {
         name: form.name.trim(),
         path: form.path || undefined,
         icon: form.icon || undefined,
@@ -299,11 +236,36 @@ async function handleSubmit() {
       }, options)
       message.success('创建成功')
     }
-    modalVisible.value = false
     fetchData()
-  } catch (error) {
-    await feedback.capture(error)
-  } finally { modalLoading.value = false }
+  },
+})
+const { visible: modalVisible, loading: modalLoading, editId, form, feedback, modalProps, close: closeModal, submit: handleSubmit } = menuModal
+const isEdit = computed(() => editId.value != null)
+const { summary: feedbackItems, requestId: feedbackRequestId, errors: formErrors } = feedback
+const feedbackRoot = menuModal.bindRoot
+
+const modalTitle = computed(() => {
+  if (isEdit.value) return '编辑菜单'
+  if (parentMenu.value) return `添加子菜单 - ${parentMenu.value.name}`
+  return '新增顶级菜单'
+})
+
+function showCreateModal(parent: any | null) {
+  parentMenu.value = parent
+  menuModal.open(null, { parentId: parent?.id || undefined })
+}
+
+function showEditModal(record: any) {
+  parentMenu.value = null
+  menuModal.open(record.id, {
+    parentId: record.parentId || undefined,
+    name: record.name,
+    path: record.path || '',
+    icon: record.icon || '',
+    type: record.type || 'menu',
+    permission: record.permission || '',
+    sort: record.sort ?? 0,
+  })
 }
 
 // ============ 删除 ============
@@ -320,3 +282,15 @@ onMounted(() => {
   fetchData()
 })
 </script>
+
+<style scoped>
+.menus-body { height: 100%; display: flex; flex-direction: column; min-height: 0; background: var(--color-surface); }
+.menus-body > .ant-table-wrapper { min-height: 0; overflow: hidden; }
+/* 名称列缩进表达树层级，长名称允许截断省略 */
+.menu-name { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+/* 全量树页脚：横滚条 + 总数，无分页器 */
+.menus-footer { background: var(--color-surface); border-top: var(--rule); flex-shrink: 0; }
+.menus-footer-meta { display: flex; justify-content: flex-end; padding: var(--space-2) 0; color: var(--color-text-tertiary); font-size: var(--text-aux); font-variant-numeric: tabular-nums; }
+/* 弹窗字段提示（替代 text-gray-400 硬编码灰） */
+.field-hint { margin-top: var(--space-1); font-size: var(--text-aux); color: var(--color-text-tertiary); }
+</style>

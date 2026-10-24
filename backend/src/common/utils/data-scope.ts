@@ -2,10 +2,15 @@ import { SelectQueryBuilder } from 'typeorm';
 import { ForbiddenException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { getUserId } from './service-helpers';
 import { isSystemAdmin } from './permission-check';
+import { deptSubtreeIn } from './dept-subtree';
+
+/** 数据范围类型全集：读侧分发（本模块）与写侧校验（UserDataScopeService）共用同一字符串族 */
+export const SCOPE_TYPES = ['self', 'all', 'by_users', 'by_depts'] as const;
+export type ScopeType = (typeof SCOPE_TYPES)[number];
 
 export interface UserScopeEntry {
   scopeKey: string;
-  scopeType: string;
+  scopeType: ScopeType;
   viewOthers?: number;
   editOthers?: number;
   deleteOthers?: number;
@@ -36,18 +41,6 @@ export function findScopeEntry(
     if (exact) return exact;
   }
   return list.find((e) => e.scopeKey === '__global__') ?? null;
-}
-
-export function deptSubtreeIn(rootCond: string): string {
-  return `u.dept_id IN (
-    WITH RECURSIVE dept_tree AS (
-      SELECT id FROM departments WHERE ${rootCond} AND deleted_at IS NULL
-      UNION ALL
-      SELECT d.id FROM departments d
-      INNER JOIN dept_tree dt ON d.parent_id = dt.id
-      WHERE d.deleted_at IS NULL
-    ) SELECT id FROM dept_tree
-  )`;
 }
 
 /**
