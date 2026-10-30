@@ -10,8 +10,10 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { SystemLogService } from '../system/system-log.service';
 import type { JwtPayload } from './jwt.strategy';
+import { SkipRequestAudit } from '../../common/decorators/skip-request-audit.decorator';
 
 @Controller('auth')
+@SkipRequestAudit()
 export class AuthController {
   private readonly logger = new Logger(AuthController.name);
 

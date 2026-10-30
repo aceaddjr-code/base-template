@@ -36,3 +36,17 @@
 ## 新业务清单
 
 复制示例模块后，必须修改实体表名、路由、权限码、scopeKey、菜单、页面存储 key、Excel 列和测试名称。删除与新业务无关的示例字段，禁止用假数据或静默吞错掩盖未完成的接口。
+
+## Agent skills
+
+### Issue tracker
+
+任务使用本地 Markdown；拆分、发布或读取任务前，阅读 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+使用五种标准分流标签；设置或转换任务状态前，阅读 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+使用 single-context 领域文档；设计或实施前，按 `docs/agents/domain.md` 阅读术语表和相关 ADR。

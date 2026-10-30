@@ -73,7 +73,7 @@ describe('示例事项 HTTP 权限与验证', () => {
     expect(service.batchRemove).not.toHaveBeenCalled();
     codes=['example-items:delete'];
     await request(app.getHttpServer()).post('/api/v1/examples/items/batch/remove').send({ids:[1]}).expect(201);
-    expect(service.batchRemove).toHaveBeenCalledWith([1],expect.objectContaining({sub:1}));
+    expect(service.batchRemove).toHaveBeenCalledWith([1],expect.objectContaining({sub:1}),expect.any(String));
   });
 
   it('批量 DTO 拒绝空、负数、字符串和超限 ID', async () => {

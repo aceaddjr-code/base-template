@@ -1,17 +1,21 @@
 <template>
   <Page class="page-list" title="操作日志" description="审计留痕 · 多条件筛选">
     <div ref="bodyRef" class="logs-body">
-      <PageToolbar :show-search="false" />
-      <ListFilters :tags="filterTags" :total="total" :dirty="dirty" :loading="loading" :failed="failed" @apply="apply()" @reset="reset" @remove="removeFilter" @retry="fetchLogs">
-        <label class="filter-field">关键词<a-input v-model:value="draft.keyword" placeholder="搜索用户/模块/描述" allow-clear style="width:220px" @press-enter="onSearchEnter" /></label>
-        <label class="filter-field">操作类型<a-select v-model:value="draft.actions" mode="multiple" :options="ACTION_OPTIONS" allow-clear placeholder="全部操作" style="min-width:180px;max-width:300px" /></label>
-        <label class="filter-field">操作日期<a-range-picker v-model:value="draft.dates" value-format="YYYY-MM-DD" :presets="filterDatePresets()" style="width:250px" /></label>
-        <template #more>
-          <label class="filter-field">用户名<a-input v-model:value="draft.username" placeholder="精确匹配用户名" allow-clear style="width:180px" @press-enter="onSearchEnter" /></label>
-          <label class="filter-field">模块<a-select v-model:value="draft.entityType" :options="ENTITY_OPTIONS" placeholder="全部模块" allow-clear style="width:210px" /></label>
+      <PageToolbar :show-search="false">
+        <!-- 筛选行放进工具栏左区：查询条件与右侧功能按钮同处一行。 -->
+        <template #left>
+          <ListFilters :tags="filterTags" :dirty="dirty" :failed="failed" @apply="apply()" @reset="reset" @remove="removeFilter" @retry="fetchLogs">
+            <label class="filter-field">关键词<a-input v-model:value="draft.keyword" placeholder="搜索用户/模块/描述" allow-clear style="width:220px" @press-enter="onSearchEnter" /></label>
+            <label class="filter-field">操作类型<a-select v-model:value="draft.actions" mode="multiple" :options="ACTION_OPTIONS" allow-clear placeholder="全部操作" style="min-width:180px;max-width:300px" /></label>
+            <label class="filter-field">操作日期<a-range-picker v-model:value="draft.dates" value-format="YYYY-MM-DD" :presets="filterDatePresets()" style="width:250px" /></label>
+            <template #more>
+              <label class="filter-field">用户名<a-input v-model:value="draft.username" placeholder="精确匹配用户名" allow-clear style="width:180px" @press-enter="onSearchEnter" /></label>
+              <label class="filter-field">模块<a-select v-model:value="draft.entityType" :options="ENTITY_OPTIONS" placeholder="全部模块" allow-clear style="width:210px" /></label>
+            </template>
+            <template #views><FilterViews module-key="system-logs" :applied="appliedRecord" :sort="sort" :known-fields="['keyword', 'actions', 'dates', 'username', 'entityType']" :date-fields="['dates']" :disabled="loading" @apply-view="onApplyView" /></template>
+          </ListFilters>
         </template>
-        <template #views><FilterViews module-key="system-logs" :applied="appliedRecord" :sort="sort" :known-fields="['keyword', 'actions', 'dates', 'username', 'entityType']" :date-fields="['dates']" :disabled="loading" @apply-view="onApplyView" /></template>
-      </ListFilters>
+      </PageToolbar>
       <a-table :ref="setTableRef" :columns="columns" :data-source="logList" :loading="loading" :pagination="false" row-key="id" size="middle" :scroll="{ x: 1000, y: tableScrollY }">
         <template #headerCell="{ column }">
           <span>{{ column.title }}</span><span class="resize-handle" @click.stop @mousedown.prevent.stop="(e: any) => resizeStart(String(column.key), e)" />

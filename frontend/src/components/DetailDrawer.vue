@@ -19,7 +19,7 @@
 
       <template v-else-if="editable && saveHandler">
         <template v-if="!editing">
-          <a-button v-if="printable" :disabled="loading || !record" @click="printDetail"><PrinterOutlined /> 打印</a-button>
+          <a-button v-if="printable" :disabled="loading || !record" :loading="printing" @click="printDetail"><PrinterOutlined /> 打印</a-button>
           <a-button v-access="saveAccess" :disabled="loading || !record" @click="startEdit"><EditOutlined /> 编辑</a-button>
         </template>
         <template v-else>
@@ -36,10 +36,12 @@
         </a-button>
       </a-tooltip>
     </template>
+    <slot name="navigation" />
     <a-spin :spinning="loading">
-      <div :ref="bindRoot" class="flex flex-col gap-1">
+      <div :ref="bindRoot" class="detail-content flex flex-col gap-1">
         <FormFeedback :items="feedbackItems" :request-id="feedbackRequestId" @focus="feedback.focus" />
         <!-- 大卡片：卡片式详情（字段按 group 分组展示） -->
+        <div v-show="showFields">
         <a-card :bordered="false" :body-style="{ padding: '10px' }">
           <slot name="before" />
           <template v-if="record && visibleFields.length">
@@ -93,6 +95,8 @@
           <a-empty v-else-if="open && !loading && !$slots.default" :description="record ? '暂无数据' : '详情加载失败或记录不可见'" />
           <slot />
         </a-card>
+        </div>
+        <slot name="panel" />
       </div>
     </a-spin>
   </a-drawer>
@@ -106,6 +110,7 @@ import { EditOutlined, FullscreenOutlined, FullscreenExitOutlined, PrinterOutlin
 import { buildPrintDocument, collectPrintRows, printHtml } from '@/utils/print-document'
 import FormFeedback from './FormFeedback.vue'
 import { useFormModal } from '@/composables/useFormModal'
+import type { RouteLocationNormalized } from 'vue-router'
 
 export interface DetailField {
   /** 展示标签 */
@@ -120,7 +125,7 @@ export interface DetailField {
   tagColor?: (value: any) => string
   /** 复合值自定义渲染（如 "12 台"、起止日期）；缺省走 formatDate */
   formatter?: (record: Record<string, any>) => string
-  /** 是否允许详情内编辑（editable 开启且未传 editFields 时，仅该标记字段进入编辑表单） */
+  /** 是否进入编辑表单（editable 开启时生效，控件配置取 inputType/options/required/maxLength） */
   editable?: boolean
   /** editable 时编辑控件类型（缺省 input） */
   inputType?: 'input' | 'textarea' | 'number' | 'date' | 'select' | 'switch'
@@ -135,19 +140,12 @@ export interface DetailField {
   group?: string
 }
 
-/** 详情内编辑字段配置（editable/editFields 开启编辑模式时生效） */
-export interface DetailEditField {
-  /** 展示标签 */
+/** 详情内编辑字段视图：由 fields 中标记 editable 的字段推导（控件配置并入字段定义），不对组件外开放 */
+interface EditFieldView {
   label: string
-  /** 记录字段名 */
   dataIndex: string
-  /** a-form-item 的 span（长文本用 2） */
-  span?: number
-  /** 编辑控件类型（缺省 input） */
-  inputType?: 'input' | 'textarea' | 'number' | 'date' | 'select' | 'switch'
-  /** inputType='select' 时下拉选项 */
-  options?: { label: string; value: string | number }[]
-  /** 必填（保存时校验，为空提示） */
+  inputType?: DetailField['inputType']
+  options?: DetailField['options']
   required?: boolean
   maxLength?: number
 }
@@ -168,8 +166,6 @@ const props = withDefaults(
     editable?: boolean
 
     saveAccess?: string[]
-    /** 可编辑字段配置；缺省时使用 fields 中标记 editable 的字段（自动推断控件类型） */
-    editFields?: DetailEditField[]
     /** 保存处理器：接收编辑后的字段值，负责调更新 API；resolve 表示成功（退出编辑模式并提示），reject/throw 表示失败（保持编辑模式） */
     saveHandler?: (payload: Record<string, any>) => Promise<void>
     /** 取消时重载服务端详情；不修改草稿以外的数据。 */
@@ -180,8 +176,12 @@ const props = withDefaults(
     printable?: boolean
     /** 打印抬头系统名称（F21）；不传则打印文档不含系统名 */
     systemName?: string
+    showFields?: boolean
+    /** 业务模块先授权及记录打印，再返回本次应打印的服务端快照。 */
+    preparePrint?: () => Promise<Record<string, any>>
+    preserveNavigation?: (to: RouteLocationNormalized, from: RouteLocationNormalized) => boolean
   }>(),
-  { title: '单据详情', loading: false, column: 3, width: 1000, editable: false, editFields: undefined, saveHandler: undefined, customExtra: false, showAuditTime: true, printable: false, systemName: undefined },
+  { title: '单据详情', loading: false, column: 3, width: 1000, editable: false, saveHandler: undefined, customExtra: false, showAuditTime: true, printable: false, systemName: undefined, showFields: true },
 )
 
 const hasCreatedAt = computed(
@@ -201,12 +201,12 @@ const emit = defineEmits<{
   (e: 'update:open', v: boolean): void
   /** 详情内编辑保存成功后触发（父页面用于刷新详情/列表数据） */
   (e: 'saved'): void
+  (e: 'view-mode'): void
+  (e: 'edit-started'): void
 }>()
 
 // ===== 详情内编辑（editable + saveHandler 开启）：状态机走共享 useFormModal，visible 即编辑中 =====
 const fullscreen = ref(false)
-
-/** 可编辑字段：优先 editFields；缺省取 fields 中标记 editable 的字段 */
 
 const visibleFields = computed(() => (props.fields ?? []).filter((f) => !f.hidden?.(props.record)))
 
@@ -224,11 +224,11 @@ const fieldGroups = computed(() => {
   return groups
 })
 
-const editFieldList = computed<DetailEditField[]>(() => {
-  if (props.editFields?.length) return props.editFields
+/** 编辑字段：fields 中标记 editable 的字段按其控件配置进入编辑表单 */
+const editFieldList = computed<EditFieldView[]>(() => {
   return visibleFields.value
     .filter((f) => f.editable)
-    .map((f) => ({ label: f.label, dataIndex: f.dataIndex, span: f.span, inputType: f.inputType, options: f.options, required: f.required, maxLength: f.maxLength }))
+    .map((f) => ({ label: f.label, dataIndex: f.dataIndex, inputType: f.inputType, options: f.options, required: f.required, maxLength: f.maxLength }))
 })
 const editableFields = computed(() => new Map(editFieldList.value.map(field => [field.dataIndex, field])))
 
@@ -269,6 +269,7 @@ const editSession = useFormModal<Record<string, any>, number | string>({
     }
   },
   active: () => props.open,
+  preserveNavigation: (to, from) => props.preserveNavigation?.(to, from) ?? false,
   snapshot: form => Object.fromEntries(editFieldList.value.map(field => [field.dataIndex, form[field.dataIndex] === '' || form[field.dataIndex] == null ? null : form[field.dataIndex]])),
 })
 const editing = editSession.visible
@@ -278,7 +279,7 @@ const feedback = editSession.feedback
 const bindRoot = editSession.bindRoot
 const { errors: fieldErrors, summary: feedbackItems, requestId: feedbackRequestId } = feedback
 
-function requestClose() { editSession.guard(() => emit('update:open', false)) }
+function requestClose() { editSession.guard(() => { resetEditState(); emit('update:open', false) }) }
 
 function resetEditState() {
   editSession.visible.value = false
@@ -300,11 +301,13 @@ function startEdit() {
     const value = props.record![f.dataIndex]
     return [f.dataIndex, Array.isArray(value) ? [...value] : value ?? null]
   })))
+  emit('edit-started')
 }
 
 async function cancelEdit() {
   editSession.guard(async () => {
     resetEditState()
+    emit('view-mode')
     try { await props.reloadHandler?.() } catch { /* 当前查看态保留最近服务端数据 */ }
   })
 }
@@ -313,18 +316,25 @@ async function cancelEdit() {
 function exitEditToView() { resetEditState() }
 
 // ===== 打印（F21）：范围为当前查看的这条记录，字段与查看态同口径 =====
-function printDetail() {
-  if (!props.record) return
-  const rows = collectPrintRows(visibleFields.value, props.record, { showAuditTime: props.showAuditTime })
+const printing = ref(false)
+async function printDetail() {
+  if (!props.record || printing.value) return
+  printing.value = true
+  try {
+  const record = props.preparePrint ? await props.preparePrint() : props.record
+  if (!props.open || record.id !== props.record?.id) return
+  const rows = collectPrintRows(props.fields, record, { showAuditTime: props.showAuditTime })
   const html = buildPrintDocument({
     title: props.title,
     systemName: props.systemName,
-    recordId: props.record.id ?? null,
+    recordId: record.id ?? null,
     rows,
     printedAt: new Date(),
     scopeNote: '打印范围：当前查看的单据详情。',
   })
   printHtml(html)
+  } catch (error) { message.error((error as Error).message || '打印未完成，请重试') }
+  finally { printing.value = false }
 }
 
 function saveEdit() {
@@ -332,7 +342,7 @@ function saveEdit() {
   void editSession.submit()
 }
 
-defineExpose({ startEdit, exitEditToView })
+defineExpose({ startEdit, exitEditToView, printDetail })
 </script>
 
 <style scoped>
@@ -366,6 +376,10 @@ defineExpose({ startEdit, exitEditToView })
 .detail-drawer .ant-drawer-header { padding: var(--space-3) var(--space-4); border-bottom: var(--rule); }
 .detail-drawer .ant-drawer-title { font-size: var(--text-heading); font-weight: 700; }
 .detail-drawer .ant-descriptions-item-label { background: var(--color-layer-01) !important; }
+/* 通用详情采用一个内容滚动区，字段和错误反馈不参与剩余高度压缩。 */
+.detail-drawer .ant-drawer-body > .ant-spin-nested-loading > .ant-spin-container > .detail-content { display: block !important; overflow-y: auto; }
+.detail-drawer .ant-drawer-body .ant-card,
+.detail-drawer .ant-drawer-body .ant-card > .ant-card-body { display: block !important; flex: none !important; overflow: visible !important; }
 
 /* Drawer 通过 Teleport 挂载；用专属根类约束样式，保证窄屏标题和操作分别成行。 */
 @media (max-width: 600px) {

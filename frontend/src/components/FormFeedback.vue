@@ -11,7 +11,7 @@ defineProps<{ items: FeedbackItem[]; requestId?: string }>()
 const emit = defineEmits<{ focus: [field: string] }>()
 </script>
 <style scoped>
-.form-feedback { border: 1px solid var(--color-text-secondary); border-left: 3px solid #b42318; padding: var(--space-3); margin-bottom: var(--space-3); overflow-wrap: anywhere; }
+.form-feedback { border: 1px solid var(--color-text-secondary); border-left: 3px solid var(--color-danger-text); padding: var(--space-3); margin-bottom: var(--space-3); overflow-wrap: anywhere; }
 ul { margin: var(--space-2) 0 0; padding-left: var(--space-4); }
 button { padding: 0; border: 0; background: transparent; color: inherit; text-align: left; text-decoration: underline; cursor: pointer; }
 small { display: block; margin-top: var(--space-2); color: var(--color-text-tertiary); }

@@ -152,25 +152,26 @@ onMounted(load)
 </script>
 
 <style scoped>
+/* 全部走令牌：这里的字号、色值、边框原先逐条写死，改主题时整块不跟随。 */
 .pd-card {
-  background: #fdfcfc;
-  border: 1px solid rgba(15,0,0,0.12);
-  padding: 14px;
-  margin-bottom: 12px;
+  background: var(--color-surface);
+  border: var(--rule);
+  padding: var(--space-3) var(--space-3) var(--space-4);
+  margin-bottom: var(--space-3);
 }
 .pd-title {
-  font-size: 14px;
+  font-size: var(--text-aux);
   font-weight: 700;
-  color: #201d1d;
-  padding-bottom: 8px;
-  margin-bottom: 10px;
-  border-bottom: 1px solid rgba(15,0,0,0.12);
+  color: var(--color-text-primary);
+  padding-bottom: var(--space-2);
+  margin-bottom: var(--space-2);
+  border-bottom: var(--rule);
 }
 .pd-avatar-row {
   display: flex;
   align-items: center;
-  gap: 14px;
-  margin-bottom: 12px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
 }
 .pd-avatar {
   background: var(--color-primary);
@@ -180,64 +181,66 @@ onMounted(load)
 .pd-avatar-actions {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
 }
 .pd-hint {
-  font-size: 14px;
-  color: #646262;
+  font-size: var(--text-aux);
+  color: var(--color-text-tertiary);
 }
 .pd-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 5px 0;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
 }
 .pd-label {
   width: 56px;
-  font-size: 14px;
-  color: #424245;
+  font-size: var(--text-aux);
+  color: var(--color-text-secondary);
   flex-shrink: 0;
 }
 .pd-value {
-  font-size: 14px;
-  color: #201d1d;
+  font-size: var(--text-aux);
+  color: var(--color-text-primary);
 }
 .pd-input {
   flex: 1;
 }
 .pd-save {
-  margin-top: 8px;
+  margin-top: var(--space-2);
 }
 .pd-sec-text {
-  font-size: 14px;
-  color: #424245;
-  line-height: 1.7;
+  font-size: var(--text-aux);
+  color: var(--color-text-secondary);
+  line-height: var(--lh-relaxed);
 }
-.pd-password-error { color: var(--color-danger, #b42318); margin-bottom: var(--space-3); }
+/* 表单错误文字用深一档的红：--color-danger 在暖白底只有 3.5:1，14px 正文不达标。 */
+.pd-password-error { color: var(--color-danger-text); margin-bottom: var(--space-3); }
 .pd-stat-row {
   display: flex;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
 }
 .pd-stat {
   flex: 1;
   text-align: center;
-  border: 1px solid rgba(15,0,0,0.12);
-  padding: 10px 4px;
+  border: var(--rule);
+  padding: var(--space-2) var(--space-1);
 }
 .pd-stat-num {
-  font-size: 20px;
+  font-size: var(--text-title);
   font-weight: 700;
-  color: var(--color-primary);
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
 }
 .pd-stat-label {
-  font-size: 14px;
-  color: #646262;
+  font-size: var(--text-aux);
+  color: var(--color-text-tertiary);
   margin-top: 2px;
 }
 .pd-links {
   display: flex;
-  gap: 16px;
-  font-size: 14px;
+  gap: var(--space-4);
+  font-size: var(--text-aux);
 }
 </style>

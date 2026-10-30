@@ -1,16 +1,23 @@
-import { BadRequestException, HttpException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, HttpException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { CrudBaseService, ListQuery } from '../../common/services/crud-base.service';
+import { EntityManager, In, Repository } from 'typeorm';
+import { CrudBaseService, ListQuery, conflictWithReason } from '../../common/services/crud-base.service';
 import { ExampleItem } from './example-item.entity';
 import { validateExample } from './example.dto';
 import { DictService } from '../system/dict.service';
+import { User } from '../user/user.entity';
+import { ExampleEvent, ExampleChange } from './example-event.entity';
+import { ExampleAccessDto, ExampleHistoryQuery } from './example-history.dto';
+import { getUserId } from '../../common/utils/service-helpers';
+import { dateRangeBounds } from '../../common/utils/date-range';
+import { randomUUID } from 'node:crypto';
 
 const CATEGORY_DICT = 'item_category';
 import type { ScopeUser } from '../../common/utils/data-scope';
-import { dataToExcel } from '../../common/utils/excel-helper';
+import { dataToExcel, excelToData } from '../../common/utils/excel-helper';
 
 const STATUS_LABELS = { pending: '待处理', doing: '进行中', done: '已完成' };
+interface EventContext { interactionId?: string; requestId?: string; source?: 'web' | 'import'; batchId?: string; rowNumber?: number }
 
 /** 本模块数据范围 scopeKey（唯一事实来源：scope-form.registry.ts 从这里引用，拼写漂移会导致编译错） */
 export const EXAMPLE_ITEMS_SCOPE_KEY = 'example-items';
@@ -48,22 +55,168 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
     });
   }
 
-  override async create(dto: unknown, userId?: number, user?: ScopeUser) {
-    const validated = validateExample(dto);
-    await this.assertCategorySelectable(validated.category ?? null);
-    return super.create(validated, userId, user);
+  /** 交互标识挪用（ID16）：同标识用于其他动作或对象时统一 409，reason 供前端分派。 */
+  private intentConflict(): ConflictException {
+    return conflictWithReason('intent_reused', '交互标识已用于其他操作，请重新发起');
   }
 
-  override async update(id: number, dto: unknown, userId?: number, user?: ScopeUser) {
+  private async appendEvent(manager: EntityManager, item: ExampleItem, action: string, user: ScopeUser | undefined, context: EventContext = {}) {
+    const actorId = getUserId(user);
+    if (actorId == null) throw new UnauthorizedException('未登录');
+    const actor = await manager.getRepository(User).findOne({ where: { id: actorId }, select: { id: true, displayName: true, username: true } });
+    if (!actor) throw new UnauthorizedException('用户不存在');
+    return manager.getRepository(ExampleEvent).save({
+      itemId: item.id, objectLabel: item.title, action, result: action === 'print' ? 'accepted' : action === 'no_change' ? 'no_change' : 'success',
+      actorId, actorName: actor.displayName || actor.username, occurredAt: new Date(), source: context.source ?? 'web', requestId: context.requestId?.slice(0, 100) ?? null,
+      interactionId: context.interactionId ?? null, batchId: context.batchId ?? null, rowNumber: context.rowNumber ?? null, version: item.version,
+    });
+  }
+
+  async accessEvent(id: number, dto: ExampleAccessDto, user?: ScopeUser, requestId?: string) {
+    try {
+      return await this.repo.manager.transaction(async manager => {
+        const item = await this.findOneForWrite(manager, id, user, 'view');
+        if (dto.action === 'print' && dto.expectedVersion !== item.version) throw conflictWithReason('version_stale', '单据版本已变化，请重新加载后再打印');
+        const events = manager.getRepository(ExampleEvent);
+        const prior = await events.findOneBy({ actorId: getUserId(user)!, interactionId: dto.interactionId });
+        if (prior && (prior.itemId !== id || prior.action !== dto.action || (dto.action === 'print' && prior.version !== dto.expectedVersion))) {
+          throw this.intentConflict();
+        }
+        const event = prior ?? await this.appendEvent(manager, item, dto.action, user, { interactionId: dto.interactionId, requestId });
+        return { record: item, eventId: event.id };
+      });
+    } catch (error) {
+      // 跨单据并发复用同一标识由唯一索引裁决；同单据请求由行锁串行化。
+      if (error?.code === 'ER_DUP_ENTRY' || error?.driverError?.code === 'ER_DUP_ENTRY') {
+        // 唯一索引命中时首个请求已落库：同意图（同操作者/动作/单据/版本）复用该事件并重新鉴权返回，只有挪用才判冲突。
+        return this.repo.manager.transaction(async manager => {
+          const item = await this.findOneForWrite(manager, id, user, 'view');
+          if (dto.action === 'print' && dto.expectedVersion !== item.version) throw conflictWithReason('version_stale', '单据版本已变化，请重新加载后再打印');
+          const prior = await manager.getRepository(ExampleEvent).findOneBy({ actorId: getUserId(user)!, interactionId: dto.interactionId });
+          if (!prior || prior.itemId !== id || prior.action !== dto.action || (dto.action === 'print' && prior.version !== dto.expectedVersion)) {
+            throw this.intentConflict();
+          }
+          return { record: item, eventId: prior.id };
+        });
+      }
+      throw error;
+    }
+  }
+
+  async history(id: number, kind: 'activity' | 'operations' | 'changes', query: ExampleHistoryQuery, user?: ScopeUser) {
+    return this.repo.manager.transaction(async manager => {
+    await this.findOneForWrite(manager, id, user, 'view');
+    const repo = manager.getRepository(ExampleEvent);
+    const bounds = dateRangeBounds(query.from, query.to);
+    let upper = query.upper;
+    const fingerprint = JSON.stringify([id, kind, query.action ?? '', query.actorId ?? '', query.from ?? '', query.to ?? '', query.eventId ?? '']);
+    let cursor: { before: string; id: number; upper: number; fingerprint: string } | undefined;
+    if (query.cursor) {
+      try {
+        cursor = JSON.parse(Buffer.from(query.cursor, 'base64url').toString());
+        if (!cursor || cursor.fingerprint !== fingerprint || !Number.isSafeInteger(cursor.id) || cursor.id < 1 || !Number.isSafeInteger(cursor.upper) || cursor.upper < 0 || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}$/.test(cursor.before)) throw new Error();
+        dateRangeBounds(cursor.before.slice(0, 10));
+        if (!/ (?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{6}$/.test(cursor.before)) throw new Error();
+        upper = cursor.upper;
+      } catch { throw new BadRequestException('分页游标无效，请重新查询'); }
+    }
+    if (upper === undefined) {
+      const latest = await repo.findOne({ where: { itemId: id }, order: { id: 'DESC' } });
+      upper = latest?.id ?? 0;
+    }
+    const qb = repo.createQueryBuilder('e').where('e.itemId = :id AND e.id <= :upper', { id, upper });
+    if (kind === 'activity') qb.andWhere('e.action IN (:...actions)', { actions: ['create', 'update', 'delete'] });
+    if (kind === 'changes') qb.andWhere('e.action = :updateAction', { updateAction: 'update' });
+    if (query.action) qb.andWhere('e.action = :action', { action: query.action });
+    if (query.actorId) qb.andWhere('e.actorId = :actorId', { actorId: query.actorId });
+    // 日期筛选明确按北京时间解释，再由驱动按同一连接时区绑定 Date。
+    if (bounds.from) qb.andWhere('e.occurredAt >= :from', { from: new Date(bounds.from.replace(' ', 'T') + '+08:00') });
+    if (bounds.before) qb.andWhere('e.occurredAt < :before', { before: new Date(bounds.before.replace(' ', 'T') + '+08:00') });
+    if (query.eventId) qb.andWhere('e.id = :eventId', { eventId: query.eventId });
+    if (cursor) qb.andWhere('(e.occurredAt < :cursorTime OR (e.occurredAt = :cursorTime AND e.id < :cursorId))', { cursorTime: cursor.before, cursorId: cursor.id });
+    qb.orderBy('e.occurredAt', 'DESC').addOrderBy('e.id', 'DESC');
+    const size = query.pageSize ?? 20;
+    const total = await qb.getCount();
+    // raw 保留微秒用于精确游标；JS Date 仅有毫秒，不能作为数据库排序游标。
+    const result = await qb.addSelect("DATE_FORMAT(e.occurredAt, '%Y-%m-%d %H:%i:%s.%f')", 'cursor_time')
+      .skip(kind === 'activity' ? 0 : ((query.page ?? 1) - 1) * size).take(size + (kind === 'activity' ? 1 : 0)).getRawAndEntities();
+    const hasMore = kind === 'activity' && result.entities.length > size;
+    const events = result.entities.slice(0, size);
+    const diffs = events.length && kind === 'changes' ? await manager.getRepository(ExampleChange).find({ where: { eventId: In(events.map(e => e.id)) }, order: { id: 'ASC' } }) : [];
+    const list = events.map(({ requestId: _request, interactionId: _interaction, ...event }) => ({ ...event, ...(kind === 'changes' ? { changes: diffs.filter(d => d.eventId === event.id) } : {}) }));
+    const last = events[events.length - 1];
+    return { list, total, upper, page: query.page ?? 1, pageSize: size,
+      nextCursor: hasMore ? Buffer.from(JSON.stringify({ before: result.raw[size - 1].cursor_time, id: last.id, upper, fingerprint })).toString('base64url') : null,
+      notice: '本履历仅展示启用采集后的已记录事件；此前历史未记录。时间按北京时间显示。',
+    };
+    });
+  }
+
+  override async create(dto: unknown, userId?: number, user?: ScopeUser, context: EventContext = {}) {
+    const validated = validateExample(dto);
+    await this.assertCategorySelectable(validated.category ?? null);
+    const actorId = getUserId(user);
+    if (actorId == null) throw new UnauthorizedException('未登录');
+    return this.repo.manager.transaction(async manager => {
+      const item = await manager.getRepository(ExampleItem).save({ ...validated, category: validated.category || null, description: validated.description || null, version: 1, ownerId: actorId, createdBy: actorId });
+      await this.appendEvent(manager, item, 'create', user, context);
+      return item;
+    });
+  }
+
+  override async update(id: number, dto: unknown, userId?: number, user?: ScopeUser, context: EventContext = {}) {
     const validated = validateExample(dto, true);
-    // F40:回读原记录判断类别是否"未变"——未变的停用值允许保留,改选仅限启用项;不信任前端提交的原值
-    if (validated.category !== undefined) {
-      const old = await this.repo.findOne({ where: { id } });
-      if (!old || (validated.category ?? null) !== (old.category ?? null)) {
-        await this.assertCategorySelectable(validated.category ?? null);
+    return this.repo.manager.transaction(async manager => {
+      const old = await this.findOneForWrite(manager, id, user, 'edit');
+      if (validated.version !== old.version) throw this.versionConflict();
+      if (validated.category !== undefined && (validated.category || null) !== old.category) await this.assertCategorySelectable(validated.category || null);
+      const tracked = { title: '标题', status: '状态', category: '类别', description: '说明' };
+      const next = { ...old };
+      const changed: string[] = [];
+      for (const key of Object.keys(tracked)) {
+        if (validated[key] === undefined) continue;
+        next[key] = validated[key] === '' ? null : validated[key];
+        if ((old[key] ?? null) !== next[key]) changed.push(key);
+      }
+      if (!changed.length) {
+        await this.appendEvent(manager, old, 'no_change', user, context);
+        return old;
+      }
+      next.version = old.version + 1; next.updatedBy = getUserId(user)!;
+      const item = await manager.getRepository(ExampleItem).save(next);
+      const event = await this.appendEvent(manager, item, 'update', user, context);
+      // 在同一事务采集当时名称；类型停用或软删除不妨碍清空存量类别。
+      const labelBook = changed.includes('category') ? await this.dictService?.getLabelBook(CATEGORY_DICT, manager) : undefined;
+      const label = (key: string, value: any) => value == null || value === '' ? null : key === 'status' ? STATUS_LABELS[value] ?? String(value) : key === 'category' ? labelBook?.display(value) ?? String(value) : null;
+      await manager.getRepository(ExampleChange).save(changed.map(key => ({ eventId: event.id, fieldKey: key, fieldLabel: tracked[key], valueType: key === 'status' || key === 'category' ? 'enum' : 'text', beforeValue: old[key] ?? null, afterValue: item[key] ?? null, beforeLabel: label(key, old[key]), afterLabel: label(key, item[key]) })));
+      return item;
+    });
+  }
+
+  override async remove(id: number, user?: ScopeUser, context: EventContext = {}) {
+    await this.repo.manager.transaction(async manager => {
+      const item = await this.findOneForWrite(manager, id, user, 'delete');
+      await manager.getRepository(ExampleItem).softDelete(id);
+      await this.appendEvent(manager, item, 'delete', user, context);
+    });
+    return { success: true };
+  }
+
+  override async importFromExcel(buffer: Buffer, userId?: number, user?: ScopeUser) {
+    const rows = await this.prepareImportRows(await excelToData(buffer, this.options.excelImportMap!));
+    const batchId = randomUUID(), errors: Array<{ row: number; message: string }> = [];
+    let imported = 0;
+    for (let i = 0; i < rows.length; i++) {
+      try {
+        await this.create(rows[i], userId, user, { source: 'import', batchId, rowNumber: i + 2 });
+        imported++;
+      } catch (error) {
+        const message = error instanceof HttpException && error.getStatus() < 500 ? error.message : '导入失败，请稍后重试';
+        if (!(error instanceof HttpException) || error.getStatus() >= 500) this.logger.error(`导入批次 ${batchId} 第 ${i + 2} 行失败`, error instanceof Error ? error.stack : undefined);
+        errors.push({ row: i + 2, message });
       }
     }
-    return super.update(id, validated, userId, user);
+    return { imported, total: rows.length, errors, batchId };
   }
 
   /** 类别为字典驱动字段:清空允许;新增/改选必须是启用中的选项,停用/不存在拒绝并落到字段 */
@@ -77,40 +230,34 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
   }
 
   /** 仅编排现有单条删除；每条独立成功或失败，不另写数据范围和删除规则。 */
-  async batchRemove(ids: number[], user?: ScopeUser) {
+  async batchRemove(ids: number[], user?: ScopeUser, requestId?: string) {
     if (!Array.isArray(ids) || !ids.length || ids.length > 500 || ids.some(id => !Number.isSafeInteger(id) || id <= 0)) {
       throw new BadRequestException('请选择 1 至 500 条有效记录');
     }
     const unique = [...new Set(ids)];
+    const batchId = randomUUID();
     const failures: Array<{ id: number; reason: string }> = [];
     let successCount = 0;
     for (const id of unique) {
-      try { await this.remove(id, user); successCount++; }
+      try { await this.remove(id, user, { batchId, requestId }); successCount++; }
       catch (error) {
         const reason = error instanceof HttpException && error.getStatus() < 500 ? error.message : '删除失败，请稍后重试';
         if (!(error instanceof HttpException) || error.getStatus() >= 500) this.logger.error(`批量删除记录 ${id} 失败`, error instanceof Error ? error.stack : undefined);
         failures.push({ id, reason });
       }
     }
-    return { successCount, total: unique.length, failures };
+    return { successCount, total: unique.length, failures, batchId };
   }
 
   protected override async getExportRows(user?: ScopeUser, query: ListQuery = {}) {
     const rows = await super.getExportRows(user, query);
-    const labels = await this.categoryDisplayLabels();
+    const labelBook = await this.dictService?.getLabelBook(CATEGORY_DICT);
     return rows.map(row => ({
       ...row,
       status: STATUS_LABELS[row.status] ?? row.status,
-      category: row.category ? (labels.get(row.category) ?? row.category) : '',
+      category: row.category ? (labelBook?.display(row.category) ?? row.category) : '',
       updatedAt: row.updatedAt ? new Date(row.updatedAt) : null,
     }));
-  }
-
-  /** 类别导出为字典名称；停用项加“（已停用）”后缀，与页面回显口径一致（F40） */
-  private async categoryDisplayLabels(): Promise<Map<string, string>> {
-    if (!this.dictService) return new Map();
-    const { options } = await this.dictService.getAllItemsByCode(CATEGORY_DICT);
-    return new Map(options.map(option => [option.value, option.status === 1 ? option.label : `${option.label}（已停用）`]));
   }
 
   /** 模板下载：仅表头的单工作表（与导入列一致） */
@@ -124,27 +271,17 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
 
   /** 导入接受导出的展示值：状态与类别的字典标签整批翻译回内部值（F30/F40）；已是内部值原样通过 */
   protected override async prepareImportRows(rows: Record<string, any>[]): Promise<Record<string, any>[]> {
-    const labels = await this.categoryImportMap();
+    const labelBook = await this.dictService?.getLabelBook(CATEGORY_DICT);
     return rows.map(row => {
       const cleaned = Object.fromEntries(Object.entries(row).filter(([, value]) => value !== null && value !== ''));
       const status = Object.entries(STATUS_LABELS).find(([, label]) => label === cleaned.status)?.[0];
       if (status) cleaned.status = status;
-      if (typeof cleaned.category === 'string' && labels.has(cleaned.category)) cleaned.category = labels.get(cleaned.category);
+      if (typeof cleaned.category === 'string') {
+        const value = labelBook?.valueOf(cleaned.category);
+        if (value !== undefined) cleaned.category = value;
+      }
       return cleaned;
     });
-  }
-
-  /** 标签→值映射：停用项也翻译，让后续校验给出准确的“已停用”错误而不是“不存在” */
-  private async categoryImportMap(): Promise<Map<string, string>> {
-    if (!this.dictService) return new Map();
-    const { options } = await this.dictService.getAllItemsByCode(CATEGORY_DICT);
-    const map = new Map<string, string>();
-    for (const option of options) {
-      map.set(option.value, option.value);
-      map.set(option.label, option.value);
-      if (option.status !== 1) map.set(`${option.label}（已停用）`, option.value);
-    }
-    return map;
   }
 
   /** 预检与导入共用行校验（F30/F40）:DTO 规则 + 类别字典状态（含数据库查询）；确认导入会重新走同一套校验 */

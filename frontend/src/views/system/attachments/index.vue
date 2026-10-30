@@ -1,13 +1,16 @@
 <template>
   <Page class="page-list" title="附件管理" description="私有业务附件：上传后为临时状态，业务记录绑定时引用；过期临时附件由系统按保留期清理。">
     <div class="page-body">
-      <div class="flex justify-between items-center mb-4 gap-3 flex-wrap shrink-0">
-        <a-radio-group v-model:value="draft.status" button-style="solid" @change="apply()">
-          <a-radio-button value="">全部</a-radio-button>
-          <a-radio-button value="temp">临时</a-radio-button>
-          <a-radio-button value="bound">已绑定</a-radio-button>
-        </a-radio-group>
-        <div class="flex items-center gap-2">
+      <!-- 与其他列表页共用 PageToolbar：同一套吸顶与右侧动作区，不再自建一排按钮。 -->
+      <PageToolbar :show-search="false" :show-create="false">
+        <template #left>
+          <a-radio-group v-model:value="draft.status" button-style="solid" @change="apply()">
+            <a-radio-button value="">全部</a-radio-button>
+            <a-radio-button value="temp">临时</a-radio-button>
+            <a-radio-button value="bound">已绑定</a-radio-button>
+          </a-radio-group>
+        </template>
+        <template #actions>
           <a-upload
             :show-upload-list="false"
             :before-upload="handleUpload"
@@ -18,10 +21,10 @@
           <a-popconfirm title="确认清理所有超过保留期的临时附件？" ok-text="确定" cancel-text="取消" @confirm="handleCleanup">
             <a-button danger :loading="cleaning">清理过期临时</a-button>
           </a-popconfirm>
-        </div>
-      </div>
+        </template>
+      </PageToolbar>
 
-      <a-alert type="info" show-icon class="mb-4" message="附件存储在服务端私有目录，下载需登录授权；临时附件超过保留期（默认 24 小时）会被自动清理" />
+      <a-alert type="info" show-icon class="mb-3" message="附件存储在服务端私有目录，下载需登录授权；临时附件超过保留期（默认 24 小时）会被自动清理" />
 
       <a-table
         :ref="setTableRef"
@@ -72,6 +75,7 @@ import {
   attachmentDownloadUrl, formatSize, type AttachmentItem, type AttachmentStatus,
 } from '@/api/attachment'
 import Page from '@/components/Page.vue'
+import PageToolbar from '@/components/PageToolbar.vue'
 import ListFooter from '@/components/ListFooter.vue'
 import { useListPage } from '@/composables/useListPage'
 import { useListQuery } from '@/composables/useListQuery'

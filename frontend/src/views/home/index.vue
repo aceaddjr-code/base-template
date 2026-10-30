@@ -38,10 +38,13 @@
           <router-link class="block-action" to="/announcements">查看全部</router-link>
         </div>
         <div class="announcement-list">
-          <button v-for="item in announcements" :key="item.id" type="button" class="announcement-item" @click="openAnnouncement(item)">
-            <span class="announcement-title">{{ item.title }}</span>
-            <span class="announcement-time">{{ formatDateTime(item.publishedAt) }}</span>
-          </button>
+          <AnnouncementRow
+            v-for="item in announcements"
+            :key="item.id"
+            :title="item.title"
+            :time="formatDateTime(item.publishedAt)"
+            @open="openAnnouncement(item)"
+          />
         </div>
       </section>
 
@@ -119,6 +122,7 @@ import { ArrowRightOutlined } from '@ant-design/icons-vue'
 import { useAppStore } from '@/stores/app'
 import Page from '@/components/Page.vue'
 import AnnouncementDetailModal from '@/components/AnnouncementDetailModal.vue'
+import AnnouncementRow from '@/components/AnnouncementRow.vue'
 import { clearRecentVisits, recentVisits } from '@/composables/useRecentVisits'
 import { getUnreadCount } from '@/api/notifications'
 import { getPublishedAnnouncements, type AnnouncementBrief } from '@/api/announcement'
@@ -257,40 +261,25 @@ function openAnnouncement(item: AnnouncementBrief) {
 
 <style scoped>
 .home {
-  max-width: 1100px;
-  margin: 0 auto;
+  /* 撑满内容区：入口卡片本身就是 auto-fill 网格，宽度越宽自动增列。
+     过去锁 1240px 是为了避免居中留白，结果宽屏下右侧空出一大片，反而更散。 */
+  width: 100%;
   display: flex;
   flex-direction: column;
-  gap: var(--space-7);
-  padding-bottom: var(--space-6);
+  gap: var(--space-6);
+  padding-bottom: var(--space-5);
 }
 
 /* ===== 最新公告 ===== */
+/* 行样式收在 AnnouncementRow 里，与历史公告页共用，避免两处各写一份。 */
 .announcement-list { display: flex; flex-direction: column; }
-.announcement-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 16px;
-  width: 100%;
-  padding: 10px 8px;
-  border: 0;
-  border-bottom: 1px solid var(--color-border-subtle);
-  background: transparent;
-  color: var(--color-text-primary);
-  text-align: left;
-  cursor: pointer;
-}
-.announcement-item:hover { background: var(--color-layer-01); }
-.announcement-title { overflow-wrap: anywhere; }
-.announcement-time { color: var(--color-text-tertiary); font-size: var(--text-aux); white-space: nowrap; }
 
 /* ===== 深色终端区：唯一反白面板，用一条标题栏交代身份与时间 ===== */
 .hero {
   display: flex;
   flex-direction: column;
-  gap: var(--space-6);
-  padding: var(--space-5) var(--space-6) var(--space-6);
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-5) var(--space-5);
   background: var(--color-surface-dark);
   color: var(--color-text-on-color);
 }
@@ -329,7 +318,7 @@ function openAnnouncement(item: AnnouncementBrief) {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0;
   margin: 0;
-  padding-top: var(--space-4);
+  padding-top: var(--space-3);
   border-top: 1px solid var(--color-border-strong);
 }
 .stat { padding: 0 var(--space-5); border-left: 1px solid var(--color-border-strong); }
@@ -349,11 +338,12 @@ function openAnnouncement(item: AnnouncementBrief) {
   justify-content: space-between;
   gap: var(--space-3);
   flex-wrap: wrap;
-  padding-bottom: var(--space-3);
-  margin-bottom: var(--space-3);
+  /* 标题到内容只需一道 16px 的气口：padding + margin 各 12 会变成 24px 的空带。 */
+  padding-bottom: var(--space-2);
+  margin-bottom: var(--space-2);
   border-bottom: var(--rule);
 }
-.block-head h2 { margin: 0; font-size: var(--text-heading); font-weight: 700; color: var(--color-text-primary); }
+.block-head h2 { margin: 0; font-size: var(--text-heading-lg); font-weight: 700; color: var(--color-text-primary); }
 .block-note { font-size: var(--text-aux); color: var(--color-text-tertiary); }
 .block-action { border: 0; background: none; padding: 0; font-family: inherit; font-size: var(--text-aux); color: var(--color-link); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 .block-action:hover { color: var(--color-link-hover); }
@@ -377,7 +367,9 @@ function openAnnouncement(item: AnnouncementBrief) {
 .recent-time { font-size: var(--text-aux); color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
 
 /* ===== 模块入口：图标 + 名称 + 所属模块，不再暴露路由 ===== */
-.entries { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
+/* 入口卡片用自适应列宽：固定两列会让每张卡中间留出大片空白，
+   表现为「一个图标孤零零挂着」。248px 起，宽屏自动排到 4 列。 */
+.entries { display: grid; grid-template-columns: repeat(auto-fill, minmax(248px, 1fr)); gap: var(--space-2); }
 .entry {
   display: flex;
   align-items: center;
@@ -461,7 +453,8 @@ function openAnnouncement(item: AnnouncementBrief) {
 }
 .step-link:hover { color: var(--color-link-hover); }
 
-.caps { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 var(--space-5); }
+/* 能力清单跟随容器宽度自动增减列：固定两列在宽屏下每格会拉得过宽。 */
+.caps { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 var(--space-5); }
 .caps li { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3) 0; border-bottom: var(--rule); min-width: 0; }
 .caps li strong { font-size: var(--text-body); font-weight: 500; color: var(--color-text-primary); }
 .caps li span { font-size: var(--text-aux); line-height: var(--lh-base); color: var(--color-text-tertiary); overflow-wrap: anywhere; }

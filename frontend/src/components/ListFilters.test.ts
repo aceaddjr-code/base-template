@@ -4,7 +4,7 @@ import { Modal } from 'ant-design-vue'
 import ListFilters from './ListFilters.vue'
 
 describe('已应用筛选标签', () => {
-  const props = { tags: [{ key: 'status', label: '状态：进行中' }], dirty: false, loading: false, failed: false, total: 10 }
+  const props = { tags: [{ key: 'status', label: '状态：进行中' }], dirty: false, failed: false }
   it('键盘可达的移除按钮明确命名；干净草稿直接移除', async () => {
     const wrapper = mount(ListFilters, { props, global: { stubs: { ATag: { template: '<span><slot /></span>' } } } })
     await wrapper.find('button[aria-label="移除状态：进行中"]').trigger('click')

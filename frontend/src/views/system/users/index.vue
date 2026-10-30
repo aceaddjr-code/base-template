@@ -22,14 +22,17 @@
           :locked-keys="['action']"
           @create="createVisible = true"
           @update:columns="columns = $event"
-        />
-
-        <ListFilters :tags="filterTags" :total="total" :dirty="dirty" :loading="loading" :failed="failed" @apply="apply()" @reset="onFiltersReset" @remove="removeFilter" @retry="fetchUsers">
-          <label class="filter-field">关键词<a-input v-model:value="draft.keyword" placeholder="搜索账号或姓名" allow-clear style="width:200px" @press-enter="onSearchEnter" /></label>
-          <label class="filter-field">状态<a-select v-model:value="draft.statuses" mode="multiple" :options="userStatusOptions" allow-clear placeholder="全部状态" style="min-width:150px;max-width:240px" /></label>
-          <template #more><label class="filter-field">创建时间<a-range-picker v-model:value="draft.created" value-format="YYYY-MM-DD" :presets="filterDatePresets()" style="width:240px" /></label></template>
-          <template #views><FilterViews module-key="system-users" :applied="appliedRecord" :sort="sort" :known-fields="['keyword', 'statuses', 'created', 'deptId']" :date-fields="['created']" :disabled="loading" @apply-view="onApplyView" /></template>
-        </ListFilters>
+        >
+          <!-- 筛选行放进工具栏左区：查询条件与「新增用户 / 功能」同处一行。 -->
+          <template #left>
+            <ListFilters :tags="filterTags" :dirty="dirty" :failed="failed" @apply="apply()" @reset="onFiltersReset" @remove="removeFilter" @retry="fetchUsers">
+              <label class="filter-field">关键词<a-input v-model:value="draft.keyword" placeholder="搜索账号或姓名" allow-clear style="width:200px" @press-enter="onSearchEnter" /></label>
+              <label class="filter-field">状态<a-select v-model:value="draft.statuses" mode="multiple" :options="userStatusOptions" allow-clear placeholder="全部状态" style="min-width:150px;max-width:240px" /></label>
+              <template #more><label class="filter-field">创建时间<a-range-picker v-model:value="draft.created" value-format="YYYY-MM-DD" :presets="filterDatePresets()" style="width:240px" /></label></template>
+              <template #views><FilterViews module-key="system-users" :applied="appliedRecord" :sort="sort" :known-fields="['keyword', 'statuses', 'created', 'deptId']" :date-fields="['created']" :disabled="loading" @apply-view="onApplyView" /></template>
+            </ListFilters>
+          </template>
+        </PageToolbar>
 
         <a-table
           :ref="setTableRef"

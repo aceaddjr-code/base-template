@@ -362,10 +362,14 @@ function downloadTemplate(): void {
   z-index: 30; /* 低于侧边栏 100、弹层 1050，高于表格 fixed 列 z-index 1-2 */
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  /* 顶部对齐：左区可能是多行筛选（字段行 + 筛选标签行），右侧按钮要跟第一行齐，不能垂直居中。 */
+  align-items: flex-start;
   gap: var(--space-3);
   background: var(--color-bg-page);
-  padding: var(--space-1) 0 var(--space-3);
+  /* 顶部不留白：紧贴页头分隔线，避免「页头留白 + 工具栏留白」叠成一条空带。
+     不参与压缩：表格内容溢出时工具栏必须保持原高度。 */
+  padding: 0 0 var(--space-2);
+  flex-shrink: 0;
   flex-wrap: wrap;
 }
 .pt-left {
@@ -374,7 +378,12 @@ function downloadTemplate(): void {
   gap: 8px;
   flex-wrap: wrap;
   min-width: 0;
+  /* 占满左侧剩余宽度：筛选行与右侧新增/功能按钮共享同一行。 */
+  flex: 1 1 auto;
 }
+/* 嵌入左区的 ListFilters：去掉自身底部内边距，间距统一由工具栏给，
+   否则会叠成双份空白。 */
+.pt-left :deep(.list-filters) { flex: 1 1 auto; width: 100%; padding-bottom: 0; }
 /* 搜索框与右侧按钮同高：内层 input 会撑高 affix 外壳，所以同时压外壳的高度和内边距。 */
 .pt-left :deep(.ant-input-search .ant-input-affix-wrapper) {
   height: var(--control-h);
@@ -425,7 +434,7 @@ function downloadTemplate(): void {
   font-size: var(--text-aux);
 }
 .pt-err-list li { word-break: break-all; }
-.pt-err-count { color: #b42318; }
+.pt-err-count { color: var(--color-danger-text); }
 .pt-err-more { margin-top: 2px; }
 .pt-err-download {
   padding: 0;

@@ -5,6 +5,7 @@ export interface ExampleItem {
   title: string
   status: 'pending' | 'doing' | 'done'
   description: string | null
+  category?: string | null
   ownerId: number | null
   /** 乐观锁版本（F06）：编辑保存时回传，服务端按原值做条件更新 */
   version: number
@@ -16,6 +17,19 @@ export function listExamples(params: Record<string, any>, signal?: AbortSignal):
   return request.get('/examples/items', { params, signal })
 }
 export function getExample(id: number, options?: FormRequestOptions): Promise<ExampleItem> { return request.get(`/examples/items/${id}`, options) }
+export type HistoryTab = 'detail' | 'activity' | 'operations' | 'changes'
+export interface ExampleEvent {
+  id: number; itemId: number; action: string; result: string; actorId: number; actorName: string
+  occurredAt: string; objectLabel: string; source: string; version: number; batchId: string | null; rowNumber: number | null
+  changes?: Array<{ id: number; fieldKey: string; fieldLabel: string; valueType: string; beforeValue: unknown; afterValue: unknown; beforeLabel: string | null; afterLabel: string | null }>
+}
+export interface HistoryResult { list: ExampleEvent[]; total: number; upper: number; pageSize?: number; nextCursor: string | null; notice: string }
+export function accessExample(id: number, data: { action: 'view' | 'print'; interactionId: string; expectedVersion?: number }): Promise<{ record: ExampleItem; eventId: number }> {
+  return request.post(`/examples/items/${id}/access-events`, data, { errorFeedback: 'form' })
+}
+export function getExampleHistory(id: number, tab: Exclude<HistoryTab, 'detail'>, params: Record<string, unknown>): Promise<HistoryResult> {
+  return request.get(`/examples/items/${id}/${tab}`, { params, errorFeedback: 'form' })
+}
 export function createExample(data: Partial<ExampleItem>, options?: FormRequestOptions): Promise<ExampleItem> { return request.post('/examples/items', data, options) as unknown as Promise<ExampleItem> }
 export function updateExample(id: number, data: Partial<ExampleItem>, options?: FormRequestOptions): Promise<ExampleItem> { return request.put(`/examples/items/${id}`, data, options) as unknown as Promise<ExampleItem> }
 export function deleteExample(id: number): Promise<void> { return request.delete(`/examples/items/${id}`) as unknown as Promise<void> }

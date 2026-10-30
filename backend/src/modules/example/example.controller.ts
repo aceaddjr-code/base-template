@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, ParseIntPipe, Post, Put, Req, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query, Req, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { CrudBaseController } from '../../common/controllers/crud-base.controller';
 import { CrudPermPrefix } from '../../common/decorators/crud-perm-prefix.decorator';
 import { ExampleService } from './example.service';
@@ -8,12 +8,39 @@ import { excelFileFilter, sendExcel } from '../../common/utils/excel-helper';
 import type { Request, Response } from 'express';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { getUserId } from '../../common/utils/service-helpers';
+import { ExampleAccessDto, ExampleHistoryQuery } from './example-history.dto';
+import { SkipRequestAudit } from '../../common/decorators/skip-request-audit.decorator';
 
 @CrudPermPrefix('example-items')
 @Controller('examples/items')
 export class ExampleController extends CrudBaseController {
   constructor(protected readonly service: ExampleService) {
     super(service);
+  }
+
+  @Post(':id/access-events')
+  @SkipRequestAudit()
+  @RequirePermission('example-items:view')
+  accessEvent(@Param('id', ParseIntPipe) id: number, @Body() dto: ExampleAccessDto, @Req() req: Request) {
+    return this.service.accessEvent(id, dto, req.user as any, req['requestId']);
+  }
+
+  @Get(':id/activity')
+  @RequirePermission('example-items:view')
+  activity(@Param('id', ParseIntPipe) id: number, @Query() query: ExampleHistoryQuery, @Req() req: Request) {
+    return this.service.history(id, 'activity', query, req.user as any);
+  }
+
+  @Get(':id/operations')
+  @RequirePermission('example-items:view')
+  operations(@Param('id', ParseIntPipe) id: number, @Query() query: ExampleHistoryQuery, @Req() req: Request) {
+    return this.service.history(id, 'operations', query, req.user as any);
+  }
+
+  @Get(':id/changes')
+  @RequirePermission('example-items:view')
+  changes(@Param('id', ParseIntPipe) id: number, @Query() query: ExampleHistoryQuery, @Req() req: Request) {
+    return this.service.history(id, 'changes', query, req.user as any);
   }
 
   /** 预检（F30）：逐行走导入同套规则,不写任何数据;确认导入时服务端会重新验证 */
@@ -35,16 +62,21 @@ export class ExampleController extends CrudBaseController {
   @Post('batch/remove')
   @RequirePermission('example-items:delete')
   batchRemove(@Body() dto: BatchRemoveExampleDto, @Req() req: Request) {
-    return this.service.batchRemove(dto.ids, req.user as any);
+    return this.service.batchRemove(dto.ids, req.user as any, req['requestId']);
   }
 
   @Post()
   override create(@Body() dto: CreateExampleDto, @Req() req: Request) {
-    return super.create(dto, req);
+    return this.service.create(dto, getUserId(req.user) ?? undefined, req.user as any, { requestId: req['requestId'] });
   }
 
   @Put(':id')
   override update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateExampleDto, @Req() req: Request) {
-    return super.update(id, dto, req);
+    return this.service.update(id, dto, getUserId(req.user) ?? undefined, req.user as any, { requestId: req['requestId'] });
+  }
+
+  @Delete(':id')
+  override remove(@Param('id', ParseIntPipe) id: number, @Req() req: Request) {
+    return this.service.remove(id, req.user as any, { requestId: req['requestId'] });
   }
 }

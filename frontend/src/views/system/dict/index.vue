@@ -6,10 +6,14 @@
         :show-create="true"
         create-label="新增类型"
         @create="showTypeModal()"
-      />
-      <ListFilters :tags="filterTags" :total="total" :dirty="dirty" :loading="loading" :failed="failed" @apply="apply()" @reset="reset" @remove="removeFilter" @retry="fetchTypes">
-        <label class="filter-field">关键词<a-input v-model:value="draft.keyword" placeholder="搜索类型编码/名称" allow-clear style="width:220px" @press-enter="onSearchEnter" /></label>
-      </ListFilters>
+      >
+        <!-- 筛选行放进工具栏左区：查询条件与「新增类型」同处一行。 -->
+        <template #left>
+          <ListFilters :tags="filterTags" :dirty="dirty" :failed="failed" @apply="apply()" @reset="reset" @remove="removeFilter" @retry="fetchTypes">
+            <label class="filter-field">关键词<a-input v-model:value="draft.keyword" placeholder="搜索类型编码/名称" allow-clear style="width:220px" @press-enter="onSearchEnter" /></label>
+          </ListFilters>
+        </template>
+      </PageToolbar>
       <a-table
         :ref="setTableRef"
         :columns="columns"
@@ -396,7 +400,5 @@ async function handleItemDelete(id: number) {
 </script>
 
 <style scoped>
-/* 列表滚动链：标题与页脚固定，表体内部滚动（min-height: 0 必须保留）。 */
-.page-body { height: 100%; display: flex; flex-direction: column; min-height: 0; background: var(--color-surface); }
-.page-body > .ant-table-wrapper { min-height: 0; overflow: hidden; }
+/* 列表滚动链（.page-body）由 style.css 统一提供，页面不再重复定义。 */
 </style>

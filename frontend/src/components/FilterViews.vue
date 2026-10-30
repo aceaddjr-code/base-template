@@ -152,7 +152,7 @@ function confirmRename(id: string) {
   overflow-wrap: anywhere;
 }
 .view-name:hover { background: var(--color-layer-01); }
-.view-name .star { color: #d48806; }
+.view-name .star { color: var(--color-warning-text); }
 .view-actions { display: inline-flex; align-items: center; gap: 0; }
 .panel-save { display: flex; gap: 6px; padding-top: 8px; border-top: var(--rule); }
 </style>

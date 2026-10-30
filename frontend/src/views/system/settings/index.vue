@@ -1,5 +1,6 @@
 <template>
   <Page
+    class="page-list"
     title="系统设置"
     description="参数键为代码预登记，页面只维护取值；数据库密码、JWT 密钥等部署配置不在这里修改。"
   >
@@ -158,6 +159,8 @@ onMounted(fetchList)
 </script>
 
 <style scoped>
+/* 本页是无分页的参数全量列表：page-list 默认把底边交给页脚，这里自行补一条闭合线。 */
+.page-list :deep(.ant-table-tbody > tr:last-child > td) { border-bottom: var(--rule); }
 .setting-value {
   display: inline-block;
   max-width: 100%;

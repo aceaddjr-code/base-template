@@ -67,11 +67,11 @@ onBeforeUnmount(() => {
   height: 6px;
 }
 .sticky-h-scroll::-webkit-scrollbar-thumb {
-  background: #9a9898;
+  background: var(--color-text-disabled);
   border-radius: 3px;
 }
 .sticky-h-scroll::-webkit-scrollbar-thumb:hover {
-  background: #646262;
+  background: var(--color-border-strong);
 }
 .sticky-h-scroll::-webkit-scrollbar-track {
   background: transparent;

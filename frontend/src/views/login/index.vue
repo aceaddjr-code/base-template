@@ -4,7 +4,7 @@
     <!-- ===== 左：深色终端式欢迎区 ===== -->
     <section class="login-brand">
       <div class="brand-mark">
-        <span class="brand-logo" aria-hidden="true">[=]</span>
+        <span class="brand-logo" aria-hidden="true"><BrandMark :size="18" /></span>
         <div class="brand-text">
           <strong>{{ appName }}</strong>
           <span>{{ appSubtitle }}</span>
@@ -80,6 +80,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { WarningOutlined } from '@ant-design/icons-vue'
 import { useAppStore } from '@/stores/app'
+import BrandMark from '@/components/BrandMark.vue'
 import { APP_VERSION } from '@/version'
 
 const router = useRouter()
@@ -198,7 +199,7 @@ async function handleLogin() {
   border: 1px solid var(--color-danger);
   border-left-width: 3px;
   background: var(--color-red-10);
-  color: #a50011;
+  color: var(--color-danger-text);
   font-size: var(--text-aux);
 }
 .form-error-icon { flex: none; padding-top: 4px; }

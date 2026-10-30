@@ -95,18 +95,18 @@ function handleReset(): void { props.preferences.resetFields() }
 <style scoped>
 .cs-panel {
   width: 240px;
-  background: #fdfcfc;
+  background: var(--color-surface);
   border-radius: 0;
-  border: 1px solid var(--color-border-subtle);
-  padding: 8px;
+  border: var(--rule);
+  padding: var(--space-2);
 }
 .cs-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 8px;
-  border-bottom: 1px solid #f8f7f7;
-  margin-bottom: 4px;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: var(--rule);
+  margin-bottom: var(--space-1);
 }
 .cs-body {
   max-height: 320px;
@@ -115,14 +115,14 @@ function handleReset(): void { props.preferences.resetFields() }
 .cs-item {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
   border-radius: 4px;
   cursor: pointer;
   user-select: none;
 }
 .cs-item:hover {
-  background: #f8f7f7;
+  background: var(--color-layer-01);
 }
 .cs-item.is-dragging {
   opacity: 0.6;
@@ -133,8 +133,8 @@ function handleReset(): void { props.preferences.resetFields() }
   opacity: 0.75;
 }
 .cs-handle {
-  font-size: 14px;
-  color: #646262;
+  font-size: var(--text-aux);
+  color: var(--color-text-tertiary);
   cursor: grab;
   flex-shrink: 0;
 }

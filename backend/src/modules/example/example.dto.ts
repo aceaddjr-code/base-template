@@ -61,18 +61,20 @@ export class UpdateExampleDto {
   @MaxLength(500, { message: '说明不能超过 500 字' })
   description?: string | null;
 
-  @ValidateIf((_, value) => value !== undefined)
+  @IsDefined({ message: '缺少版本信息，请刷新后重试' })
   @IsInt({ message: '版本信息无效，请刷新后重试' })
   @Min(1, { message: '版本信息无效，请刷新后重试' })
   version?: number;
 }
 
 /** HTTP 写入和 Excel 导入共用业务验证，禁止调用方仅依赖前端校验。 */
+export function validateExample(input: unknown, partial: true): UpdateExampleDto;
+export function validateExample(input: unknown, partial?: false): CreateExampleDto;
 export function validateExample(input: unknown, partial = false): CreateExampleDto | UpdateExampleDto {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new BadRequestException('请提交有效的事项数据');
   const dto = partial ? plainToInstance(UpdateExampleDto, input) : plainToInstance(CreateExampleDto, input);
   const errors = validateSync(dto, { whitelist:true, forbidNonWhitelisted:true });
   if (errors.length) throw validationException(errors);
-  if (partial && Object.values(dto).every(value => value === undefined)) throw new BadRequestException('没有可更新的字段');
+  if (partial && Object.entries(dto).every(([key, value]) => key === 'version' || value === undefined)) throw new BadRequestException('没有可更新的字段');
   return dto;
 }

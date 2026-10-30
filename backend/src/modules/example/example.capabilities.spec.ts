@@ -66,11 +66,7 @@ describe('示例事项导出与批量删除', () => {
   it('标准导出可重新导入，展示状态在模块内转换并继续执行创建验证', async () => {
     const { service } = fixture();
     const exported = await service.exportExcel(admin, { ids: [1] });
-    const create = jest.spyOn(CrudBaseService.prototype, 'create').mockResolvedValue({ id: 4 });
-    try {
-      await expect(service.importFromExcel(exported.buffer, 1, admin)).resolves.toEqual({ imported: 1, total: 1, errors: [] });
-      expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: '目标甲', status: 'doing', description: '第一行\n第二行' }), 1, admin);
-    } finally { create.mockRestore(); }
+    await expect(service.importPreview(exported.buffer, 1, admin)).resolves.toEqual({ valid: 1, total: 1, errors: [] });
   });
 
   it('超过 50000 条明确拒绝，不返回静默截断的文件', async () => {
@@ -87,8 +83,10 @@ describe('示例事项导出与批量删除', () => {
       if (id === 3) throw new NotFoundException('记录不存在');
       return { success: true };
     });
-    await expect(service.batchRemove([1, 2, 1, 3], admin)).resolves.toEqual({ successCount: 1, total: 3, failures: [{ id: 2, reason: '没有删除他人单据的权限' }, { id: 3, reason: '记录不存在' }] });
-    expect(remove.mock.calls).toEqual([[1, admin], [2, admin], [3, admin]]);
+    const result = await service.batchRemove([1, 2, 1, 3], admin);
+    expect(result).toMatchObject({ successCount: 1, total: 3, failures: [{ id: 2, reason: '没有删除他人单据的权限' }, { id: 3, reason: '记录不存在' }] });
+    expect(remove.mock.calls.map(call => [call[0], call[1]])).toEqual([[1, admin], [2, admin], [3, admin]]);
+    expect(remove.mock.calls.every(call => call[2]?.batchId === result.batchId)).toBe(true);
   });
 
   it.each([[], [0], [-1], [1.5], ['1'], Array(501).fill(1)].map(ids => ({ ids })))('非法批量输入在任何删除前被拒绝', async ({ ids }) => {

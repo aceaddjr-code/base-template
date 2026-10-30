@@ -9,25 +9,28 @@ import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 import { SystemLogService } from '../../modules/system/system-log.service';
 import { serializeAuditDetail } from '../utils/log-sanitizer';
+import { Reflector } from '@nestjs/core';
+import { SKIP_REQUEST_AUDIT } from '../decorators/skip-request-audit.decorator';
 
 @Injectable()
 export class AuditInterceptor implements NestInterceptor {
   private readonly logger = new Logger(AuditInterceptor.name);
 
-  constructor(private logService: SystemLogService) {}
+  constructor(private logService: SystemLogService, private readonly reflector: Reflector = new Reflector()) {}
 
   /** 已手动记录审计的路径前缀（防重复） */
   private static readonly MANUAL_LOGGED_PREFIXES = [
     '/api/v1/system/dicts/', // 数据字典
     '/api/v1/system/settings/', // 系统参数（修改时服务层记录含旧值/新值）
     '/api/v1/system/announcements', // 系统公告（含裸 POST 创建路径，服务层记录）
-    '/api/v1/auth/', // 登录登出单独处理
     '/api/v1/monitor/frontend-error', // 错误收集不产生另一条业务审计
   ];
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const req = context.switchToHttp().getRequest();
     const url: string = req.originalUrl || req.url || '';
+
+    if (this.reflector.getAllAndOverride<boolean>(SKIP_REQUEST_AUDIT, [context.getHandler(), context.getClass()])) return next.handle();
 
     // 白名单跳过（手动记录模块）
     if (AuditInterceptor.MANUAL_LOGGED_PREFIXES.some((p) => url.startsWith(p))) {

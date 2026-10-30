@@ -46,13 +46,13 @@ const today = todayStr()
 /* 有页脚插槽时去掉底部内边距：页脚直接贴住内容区底部，表格多出 24px 可用高度。 */
 .starter-page.has-footer { padding-bottom: 0; }
 .starter-page-header {
-  margin-bottom: var(--space-4);
-  padding-bottom: var(--space-3);
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-2);
   border-bottom: var(--rule);
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
-  gap: var(--space-4);
+  gap: var(--space-3);
   flex-shrink: 0;
 }
 .starter-page-header-main {
@@ -89,6 +89,15 @@ const today = todayStr()
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+}
+
+/* 一次编排的入场：页头先到、内容跟 60ms，之后全程静止——不做散点微交互。
+   只动 opacity / transform，不触发布局；reduced-motion 由 style.css 的全局规则关闭。 */
+.starter-page-header { animation: page-rise 300ms var(--ease-out) both; }
+.starter-page-content { animation: page-rise 300ms 60ms var(--ease-out) both; }
+@keyframes page-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
 }
 @media (max-width: 768px) {
   .starter-page { padding: var(--page-pad) var(--page-pad-sm); }

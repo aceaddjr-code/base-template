@@ -1,6 +1,19 @@
 @import "tailwindcss";
 
 /* OpenCode 设计系统。原始规范：docs/design/DESIGN.md。 */
+
+/* 字体自托管：Berkeley Mono 是商业字体，无法随仓库分发；JetBrains Mono 是度量最接近的
+   开源替代（latin + 数字子集，40 KB 可变字重）。中文不加载网络字体——等宽中文字库动辄
+   数 MB，内网部署不值得为首屏付这个代价，落到系统字面即可。
+   只声明 latin 子集，CJK 字符由浏览器按字体栈继续回落，不会出现豆腐块。 */
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jetbrains-mono-latin.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   /* 拉丁字母走等宽；中文没有真正的等宽正文字体，落到无衬线中文字面，避免宋体小字号发飘。 */
   --font-mono: 'Berkeley Mono', 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Noto Sans Mono CJK SC', 'Sarasa Mono SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'HarmonyOS Sans SC', 'Noto Sans SC', sans-serif;
@@ -32,6 +45,8 @@
   /* 表单错误文字用深一档的红：#ff3b30 在暖白底对比度不足，14px 错误文案不达标。 */
   --color-danger-text: #b42318;
   --color-warning: #ff9f0a;
+  /* 亮底警告文字用深一档的橙棕：#ff9f0a 在暖白底不足 3:1（同 --color-danger-text 口径）。 */
+  --color-warning-text: #8a5300;
   --color-accent: #007aff;
   /* 可点击文本用深一档的蓝：#007aff 在暖白底只有 3.92:1，14px 正文不达标。 */
   --color-link: #0056b3;
@@ -59,6 +74,9 @@
   --text-display: 38px;
   --text-display-sm: 28px;
   --text-title: 20px;
+  /* 单字体系统的层级只能靠「字号 + 字重 + 留白」三件套。缺 18px 这一档时，
+     h3 与正文同为 16px 只能靠加粗区分，长文档（帮助、开发者参考）会读不出骨架。 */
+  --text-heading-lg: 18px;
   --text-heading: 16px;
   --text-body: 16px;
   --text-aux: 14px;
@@ -71,14 +89,19 @@
   --rule-strong: 1px solid var(--color-border-strong);
 
   /* ===== 框架尺寸与会话内共用节奏 ===== */
-  --header-h: 56px;
+  --header-h: 52px;
   --sider-w: 220px;
   --sider-w-collapsed: 64px;
-  --row-h: 44px;
-  --page-pad: var(--space-5);
+  /* 台账行高：40px 是「30px 内容 + 上下 5px 呼吸」的密度上限，
+     再压会让标签贴住行线。真正的行高由 td 的上下 padding 决定，height 只是下限。 */
+  --row-h: 40px;
+  /* 页面四周内边距。24px 在 1440 以下会与页头、工具栏的留白叠成一片空场，
+     20px 让内容更贴边，视觉密度提升而呼吸感不丢。 */
+  --page-pad: 20px;
   --page-pad-sm: var(--space-3);
   --control-h: 36px;
-  --control-h-touch: 40px;
+  /* 触摸目标按 44px（iOS HIG / WCAG 2.5.5）：40px 对拇指仍然偏小。 */
+  --control-h-touch: 44px;
 }
 
 html, body, #app { margin: 0; min-height: 100%; background: var(--color-bg-page); }
@@ -135,7 +158,7 @@ a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-v
 }
 .ant-tag-processing { color: var(--color-text-primary); background: var(--color-layer-hover); border-color: var(--color-border-subtle); }
 .ant-tag-success { color: var(--color-success-text); background: var(--color-green-10); border-color: transparent; }
-.ant-tag-warning { color: #8a5300; background: #fff5e5; border-color: transparent; }
+.ant-tag-warning { color: var(--color-warning-text); background: #fff5e5; border-color: transparent; }
 .ant-tag-error { color: #a50011; background: var(--color-red-10); border-color: transparent; }
 .ant-tag-default { color: var(--color-text-secondary); background: var(--color-layer-hover); border-color: var(--color-border-subtle); }
 .ant-input, .ant-input-affix-wrapper, .ant-input-number, .ant-picker, .ant-select:not(.ant-select-customize-input) .ant-select-selector {
@@ -186,6 +209,11 @@ a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-v
 /* 列分隔交给单元格右边框，表头自带的伪元素竖线会与拖拽手柄重叠。 */
 .ant-table-thead > tr > th::before { display: none !important; }
 .ant-table-tbody > tr > td { height: var(--row-h); }
+/* 台账行距：height 只是下限，真正把行撑高的是 antd middle 档的 12px 上下内边距。
+   统一收到 5px 后，30px 内容 + 10px 呼吸 = 40px 一行，一屏能多读 2–3 行。 */
+.page-list .ant-table-thead > tr > th { padding-block: 7px !important; }
+/* 只作用于数据行（.ant-table-row）：测量行没有这个类，不能被撑高。 */
+.page-list .ant-table-tbody > tr.ant-table-row > td { padding-block: 5px !important; }
 .ant-table-tbody > tr.ant-table-row-selected > td,
 .ant-table-tbody > tr.ant-table-row-selected:hover > td {
   background: var(--color-layer-hover) !important;
@@ -198,6 +226,10 @@ a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-v
   padding: var(--space-7) var(--space-4) !important;
   background: transparent !important;
 }
+
+/* 勾选列（rowSelection）：列宽由 rowSelection.columnWidth 给定，这里去掉 antd 的
+   单元格左右内边距，让 16px 复选框在 28px 列里居中、两侧留白均匀。 */
+.ant-table-selection-column { padding-inline: 0 !important; text-align: center; }
 
 /* 空态：去掉插画，改用方括号文案，与全站标记语言一致。 */
 .ant-empty { margin: var(--space-4) 0; }
@@ -228,6 +260,19 @@ a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-v
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* ===== 列表页正文容器 =====
+   Page + PageToolbar + a-table 的标准竖向 flex 链：表格占满剩余高度并在内部滚动。
+   原先每个页面各写一份，四个副本已经漂移，附件页漏写导致表格高度链断掉。
+   新列表页直接用 class="page-body"，不要再在页面里重复定义。 */
+.page-body {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+}
+.page-body > .ant-table-wrapper { min-height: 0; overflow: hidden; }
 
 .page-list .ant-card {
   display: flex;
@@ -454,6 +499,15 @@ a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-v
   border: 0 !important;
   overflow: hidden !important;
 }
+/* 测量行是 antd 用来同步列宽的隐藏行，高度必须真的是 0。
+   上面那条选择器只有 (0,1,1)，压不住按行设置的 padding（.page-list / 抽屉里都是 (0,2,2)），
+   结果它就变成表头与表体之间的一条空白带——用更高优先级再兜一次。 */
+.ant-table .ant-table-tbody > tr.ant-table-measure-row > td {
+  height: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  line-height: 0 !important;
+}
 
 .ant-table-sticky-scroll,
 .ant-table-sticky-scroll-bar {
@@ -497,11 +551,13 @@ body:has(.ant-drawer-open) .sticky-h-scroll {
   border-left: var(--rule);
 }
 
-/* 描述、说明和通知内容完整换行；编码、状态、日期等结构化短字段保持原布局。 */
+/* 描述、说明和通知内容完整换行；编码、状态、日期等结构化短字段保持原布局。
+   中文没有词间空格，1.5 在 14–16px 下偏密：长段落统一 1.7，短字段不动。 */
 .table-long-text {
   display: block;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  line-height: var(--lh-relaxed);
 }
 
 .ant-btn .anticon {

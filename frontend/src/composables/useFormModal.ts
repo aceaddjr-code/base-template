@@ -1,6 +1,7 @@
 import { computed, reactive, ref } from 'vue'
 import { useFormFeedback } from './useFormFeedback'
 import { useUnsavedChanges } from './useUnsavedChanges'
+import type { RouteLocationNormalized } from 'vue-router'
 
 /** save 返回 'continue' 时保留弹窗并重置表单（连续录入），其余返回值关闭本次会话 */
 export type FormModalSaveResult = 'continue' | void
@@ -25,6 +26,7 @@ export function useFormModal<TForm extends object, TId extends string | number =
   snapshot?: (form: TForm) => unknown
   /** 会话结束（关闭或保存成功）后的回调，受控组件在此透传 update:open */
   onClosed?: () => void
+  preserveNavigation?: (to: RouteLocationNormalized, from: RouteLocationNormalized) => boolean
 }) {
   const visible = ref(false)
   const loading = ref(false)
@@ -40,6 +42,7 @@ export function useFormModal<TForm extends object, TId extends string | number =
     active: () => (options.active ? options.active() && visible.value : visible.value),
     dirty: () => snapshotOf() !== baseline,
     saving: () => loading.value,
+    preserveNavigation: options.preserveNavigation,
   })
 
   /** 重置为默认值（可带初始值）：先清残留键再赋值，支持字段集动态变化的表单（如详情抽屉按配置生成编辑字段） */

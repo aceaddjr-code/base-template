@@ -10,7 +10,7 @@ vi.mock('@/utils/print-document', async (importOriginal) => {
   return { ...actual, printHtml: vi.fn() }
 })
 
-vi.mock('ant-design-vue', () => ({ message: { success: vi.fn(), warning: vi.fn() }, Modal: { confirm: vi.fn(options => { options.onOk(); return { destroy: vi.fn() } }) } }))
+vi.mock('ant-design-vue', () => ({ message: { success: vi.fn(), warning: vi.fn(), error: vi.fn() }, Modal: { confirm: vi.fn(options => { options.onOk(); return { destroy: vi.fn() } }) } }))
 const Pass = defineComponent({ setup(_, { slots }) { return () => h('div', slots.default?.()) } })
 const Drawer = defineComponent({ props: ['maskClosable', 'closable', 'keyboard'], setup(_, { slots }) { return () => h('aside', [h('header', slots.extra?.()), slots.default?.()]) } })
 const Item = defineComponent({ props: ['label'], setup(props, { slots }) { return () => h('div', { 'data-field': props.label }, [h('label', props.label), slots.default?.()]) } })
@@ -181,6 +181,38 @@ describe('详情抽屉原地编辑', () => {
     // 编辑态不提供打印
     await button('编辑').trigger('click')
     expect(button('打印')).toBeUndefined()
+    wrapper.unmount()
+  })
+  it('打印等待业务受理，仅打印返回的服务端快照，登记失败不调用打印', async () => {
+    vi.mocked(printHtml).mockClear()
+    let accept!: (record: Record<string, unknown>) => void
+    const prepare = vi.fn(() => new Promise<Record<string, unknown>>(resolve => { accept = resolve }))
+    const { wrapper, button } = setup(undefined, undefined, { printable: true, preparePrint: prepare })
+    await button('打印').trigger('click')
+    expect(printHtml).not.toHaveBeenCalled()
+    accept({ id: 1, title: '本次受理快照', description: '<script>bad()</script>', secret: '不打印的秘密' })
+    await flushPromises()
+    expect(printHtml).toHaveBeenCalledOnce()
+    const html = vi.mocked(printHtml).mock.calls[0]![0]
+    expect(html).toContain('本次受理快照'); expect(html).toContain('&lt;script&gt;'); expect(html).not.toContain('不打印的秘密'); expect(html).not.toContain('服务端标题')
+    await wrapper.setProps({ preparePrint: vi.fn().mockRejectedValue(new Error('登记失败')) })
+    await button('打印').trigger('click'); await flushPromises()
+    expect(printHtml).toHaveBeenCalledOnce()
+    wrapper.unmount()
+  })
+  it('打印按服务端快照隐藏字段：hidden 判定的字段不进入打印文档（ID10）', async () => {
+    vi.mocked(printHtml).mockClear()
+    const costFields: DetailField[] = [
+      { label: '标题', dataIndex: 'title' },
+      { label: '成本', dataIndex: 'cost', hidden: record => Number(record?.cost ?? 0) > 0 },
+    ]
+    const prepare = vi.fn().mockResolvedValue({ id: 1, title: '快照标题', cost: 99 })
+    const { wrapper, button } = setup(undefined, undefined, { printable: true, preparePrint: prepare, fields: costFields })
+    await button('打印').trigger('click'); await flushPromises()
+    const html = vi.mocked(printHtml).mock.calls[0]![0] as string
+    expect(html).toContain('快照标题')
+    expect(html).not.toContain('成本')
+    expect(html).not.toContain('99')
     wrapper.unmount()
   })
 });

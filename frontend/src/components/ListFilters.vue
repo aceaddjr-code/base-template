@@ -10,8 +10,9 @@
       </div>
     </div>
     <div v-if="$slots.more" v-show="expanded" class="filter-more"><slot name="more" /></div>
-    <div class="filter-summary" aria-live="polite">
-      <span>{{ loading ? '查询中…' : failed ? '查询失败' : `匹配 ${total} 条` }}</span>
+    <!-- 只在真正有信息时占一行：筛选标签、未查询的输入。命中总数由页脚「共 X 条」承担，
+         这里不再重复——重复既费一行高度，也和当前页行数对不上容易误读。 -->
+    <div v-if="tags.length || dirty" class="filter-summary" aria-live="polite">
       <a-tag v-for="tag in tags" :key="tag.key">{{ tag.label }}<button type="button" class="filter-remove" :aria-label="`移除${tag.label}`" @click="remove(tag.key)">×</button></a-tag>
       <span v-if="dirty" class="filter-dirty">有未查询的输入</span>
     </div>
@@ -23,7 +24,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { Modal } from 'ant-design-vue'
-const props = defineProps<{ tags: { key: string; label: string }[]; total: number; dirty: boolean; loading: boolean; failed: boolean }>()
+// total / loading 已移除：命中数由页脚统一展示，这里不再重复一份。
+const props = defineProps<{ tags: { key: string; label: string }[]; dirty: boolean; failed: boolean }>()
 const emit = defineEmits<{ apply: []; reset: []; remove: [key: string]; retry: [] }>()
 const expanded = ref(false)
 function remove(key: string) {
@@ -32,13 +34,16 @@ function remove(key: string) {
 }
 </script>
 <style scoped>
-.list-filters { flex-shrink: 0; padding: 0 0 var(--space-3); }
+.list-filters { flex-shrink: 0; padding: 0 0 var(--space-2); }
 .filter-common, .filter-more, .filter-actions, .filter-summary { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); min-width: 0; }
 .filter-more { margin-top: var(--space-3); padding-top: var(--space-3); border-top: var(--rule); }
 .filter-summary { margin-top: var(--space-2); color: var(--color-text-tertiary); font-size: var(--text-aux); }
 .filter-summary :deep(.ant-tag) { white-space: normal; overflow-wrap: anywhere; margin: 0; }
 .filter-dirty { color: var(--color-text-secondary); }
-.filter-remove { border: 0; background: transparent; color: inherit; padding: 0 var(--space-1); cursor: pointer; font-size: inherit; }
+/* 标签里的小 ×：视觉保持 16px，用伪元素把可点区域撑到 28px，
+   避免手指点不中而误删不了筛选条件。 */
+.filter-remove { position: relative; border: 0; background: transparent; color: inherit; padding: 0 var(--space-1); cursor: pointer; font-size: inherit; }
+.filter-remove::after { content: ''; position: absolute; inset: -8px -6px; }
 .filter-remove:focus-visible { outline: 2px solid var(--color-primary); }
 .list-filters :deep(.filter-field) { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-aux); }
 @media(max-width:640px) {

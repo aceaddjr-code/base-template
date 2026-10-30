@@ -1,5 +1,5 @@
 import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenException, UnauthorizedException, ConflictException } from '@nestjs/common';
-import { Repository, ObjectLiteral, SelectQueryBuilder } from 'typeorm';
+import { Repository, ObjectLiteral, SelectQueryBuilder, EntityManager } from 'typeorm';
 import { generateDocNo } from '../utils/doc-no-generator';
 import { getUserId, formatDate, withDocNoRetry } from '../utils/service-helpers';
 import { buildDataScope, canEditOwner, assertCanOperateOn, ScopeUser } from '../utils/data-scope';
@@ -85,6 +85,14 @@ export interface CrudOptions {
 export const PROTECTED_FIELDS = ['id', 'createdAt', 'updatedAt', 'deletedAt', 'createdBy', 'updatedBy'];
 /** 更新时额外剥离的字段（docNo 由后端生成，创建时保留生成值、更新时不可改；version 只用于乐观锁条件，客户端不可直接写） */
 export const PROTECTED_FIELDS_UPDATE = [...PROTECTED_FIELDS, 'docNo', 'version'];
+
+/**
+ * 409 冲突结构化原因：reason 经全局异常过滤器透传，前端按 reason 分派处理出口；
+ * message 只做展示，调用方不得通过匹配文案判断冲突类型。
+ */
+export function conflictWithReason(reason: string, message: string): ConflictException {
+  return new ConflictException({ message, reason });
+}
 
 /**
  * 通用 CRUD 服务基类
@@ -269,10 +277,17 @@ export abstract class CrudBaseService<Entity extends ObjectLiteral> {
     /* 默认不追加任何条件 */
   }
 
+  /** 范围读取后的动作裁决：编辑附加查看资格，删除保持独立资格。部门范围的操作开关依赖前置 SQL 过滤，因此与范围读取不拆开开放。 */
+  private assertOperationAllowed(entity: Entity, user: ScopeUser | undefined, operation: 'view' | 'edit' | 'delete'): void {
+    if (this.options.dataScoped !== false && this.repo.metadata?.hasColumnWithPropertyPath?.('ownerId')) {
+      const scopeKey = this.dataScopeKey ?? '__global__';
+      assertCanOperateOn(entity, user, scopeKey, operation);
+      if (operation === 'edit') assertCanOperateOn(entity, user, scopeKey, 'view');
+    }
+  }
+
   /**
-   * 先在当前数据范围内读取，再裁决当前操作；范围外统一视为不存在。
-   * 部门范围的操作开关依赖前置 SQL 过滤，因此两步不向继承方分别开放。
-   * 编辑还要求可查看详情；删除只使用独立删除开关，不要求查看或编辑开关。
+   * 先在当前数据范围内读取，再裁决当前操作；范围外统一视为不存在，不泄露存在性。
    */
   private async findOneForOperation(id: number, user: ScopeUser | undefined, operation: 'view' | 'edit' | 'delete'): Promise<Entity> {
     let entity: Entity | null;
@@ -285,13 +300,27 @@ export abstract class CrudBaseService<Entity extends ObjectLiteral> {
       entity = await qb.getOne();
     }
     if (!entity) throw new NotFoundException('记录不存在');
-
-    if (this.options.dataScoped !== false && this.repo.metadata?.hasColumnWithPropertyPath?.('ownerId')) {
-      const scopeKey = this.dataScopeKey ?? '__global__';
-      assertCanOperateOn(entity, user, scopeKey, operation);
-      if (operation === 'edit') assertCanOperateOn(entity, user, scopeKey, 'view');
-    }
+    this.assertOperationAllowed(entity, user, operation);
     return entity;
+  }
+
+  /**
+   * 事务内的带锁授权读取（写路径 seam）：在当前数据范围内按主键加行锁读取，再裁决操作开关。
+   * 供子类在事务内实现「读取旧值 → 版本/规则校验 → 写入」；行锁保证读到提交前的稳定旧值。
+   */
+  protected async findOneForWrite(manager: EntityManager, id: number, user: ScopeUser | undefined, operation: 'view' | 'edit' | 'delete'): Promise<Entity> {
+    if (this.options.dataScoped !== false && getUserId(user) == null) throw new UnauthorizedException('未登录');
+    const qb = manager.getRepository(this.repo.target).createQueryBuilder('t').where('t.id = :id', { id }).setLock('pessimistic_write');
+    if (this.options.dataScoped !== false) this.applyScope(qb, 't', user);
+    const entity = await qb.getOne();
+    if (!entity) throw new NotFoundException('记录不存在');
+    this.assertOperationAllowed(entity, user, operation);
+    return entity;
+  }
+
+  /** 乐观锁冲突（F06）：版本已被推进或记录已删除/不在范围内，统一 reason 供前端分派。 */
+  protected versionConflict(): ConflictException {
+    return conflictWithReason('version_stale', '记录已被他人修改或已删除，请刷新后查看最新内容');
   }
 
   /**
@@ -384,7 +413,7 @@ export abstract class CrudBaseService<Entity extends ObjectLiteral> {
           { id, version: expectedVersion } as any,
           { ...patch, version: expectedVersion + 1 } as any,
         );
-        if (!result.affected) throw new ConflictException('记录已被他人修改或已删除，请刷新后查看最新内容');
+        if (!result.affected) throw this.versionConflict();
       } else {
         await manager.update(this.repo.metadata.target as any, id, patch as any);
       }

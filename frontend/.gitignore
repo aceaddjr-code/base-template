@@ -24,3 +24,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# 浏览器验收 user-data 目录（Chromium 运行时文件，勿入库）
+.verify-profile*/

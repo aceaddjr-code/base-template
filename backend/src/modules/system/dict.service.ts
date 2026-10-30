@@ -1,10 +1,18 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { SysDictType } from './entities/sys-dict-type.entity';
 import { SysDictItem } from './entities/sys-dict-item.entity';
 import { getUserId } from '../../common/utils/service-helpers';
 import { SystemLogService } from './system-log.service';
+
+/** 字典标签视图：一次读取、双向翻译的标签簿。翻译尽力而为，查不到返回 undefined，由调用方兜底原值。 */
+export interface DictLabelBook {
+  /** 存储值 → 显示名；停用选项带「（已停用）」后缀 */
+  display(value: string): string | undefined;
+  /** 显示名 → 存储值（内部值、显示名、带停用后缀的显示名均可）；导入反查用 */
+  valueOf(text: string): string | undefined;
+}
 
 @Injectable()
 export class DictService {
@@ -47,6 +55,25 @@ export class DictService {
     const item = await this.itemRepo.findOne({ where: { typeId: type.id, value } });
     if (!item) return 'unknown';
     return item.status === 1 ? 'enabled' : 'disabled';
+  }
+
+  /**
+   * 标签视图（F40 统一翻译口径）：值↔显示名双向翻译，停用选项加「（已停用）」后缀。
+   * 类型停用或不存在时返回空翻译而不抛错——存量记录的回显、导出与修改日志不因字典下线而失败；
+   * 传入 manager 时在事务内读取，供「事件发生时快照」类调用方保证同一时点。
+   */
+  async getLabelBook(code: string, manager?: EntityManager): Promise<DictLabelBook> {
+    const run = manager ?? this.typeRepo.manager;
+    const type = await run.getRepository(SysDictType).findOne({ where: { code } });
+    const items = type ? await run.getRepository(SysDictItem).find({ where: { typeId: type.id }, order: { sort: 'ASC', id: 'ASC' } }) : [];
+    const displayMap = new Map(items.map(item => [item.value, item.status === 1 ? item.label : `${item.label}（已停用）`]));
+    const valueMap = new Map<string, string>();
+    for (const item of items) {
+      valueMap.set(item.value, item.value);
+      valueMap.set(item.label, item.value);
+      if (item.status !== 1) valueMap.set(`${item.label}（已停用）`, item.value);
+    }
+    return { display: value => displayMap.get(value), valueOf: text => valueMap.get(text) };
   }
 
   async findTypes(page = 1, pageSize = 20, keyword?: string) {

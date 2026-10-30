@@ -5,7 +5,7 @@ import { Modal } from 'ant-design-vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useUnsavedChanges } from './useUnsavedChanges'
 
-async function setup() {
+async function setup(preserveNavigation?: Parameters<typeof useUnsavedChanges>[0]['preserveNavigation']) {
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { render: () => null } }, { path: '/next', component: { render: () => null } }] })
   await router.push('/')
   const active = ref(true), dirty = ref(false), saving = ref(false)
@@ -14,13 +14,22 @@ async function setup() {
   const destroy = vi.fn()
   vi.spyOn(Modal, 'confirm').mockImplementation(options => { dialogs.push(options); return { destroy, update: vi.fn() } })
   const wrapper = mount(defineComponent({ setup() {
-    guard = useUnsavedChanges({ active: () => active.value, dirty: () => dirty.value, saving: () => saving.value })
+    guard = useUnsavedChanges({ active: () => active.value, dirty: () => dirty.value, saving: () => saving.value, preserveNavigation })
     return () => h('input')
   } }), { attachTo: document.body, global: { plugins: [router] } })
   return { router, active, dirty, saving, guard, dialogs, wrapper, destroy }
 }
 afterEach(() => vi.restoreAllMocks())
 describe('未保存输入保护', () => {
+  it('同一记录切页签保留草稿且不确认，切换记录仍确认；取消前进后退保持原位置', async () => {
+    const value = await setup((to, from) => to.path === from.path && to.query.detail === from.query.detail)
+    await value.router.push('/?detail=1&tab=detail'); value.dirty.value = true
+    await value.router.push('/?detail=1&tab=operations'); expect(value.dialogs).toHaveLength(0)
+    const navigation = value.router.push('/?detail=2&tab=detail'); await flushPromises()
+    expect(value.dialogs).toHaveLength(1); value.dialogs[0]!.onCancel?.(); await navigation
+    expect(value.router.currentRoute.value.query.detail).toBe('1'); expect(value.dirty.value).toBe(true)
+    value.wrapper.unmount()
+  })
   it('无修改可直接关闭；有修改取消后保留，并恢复原焦点', async () => {
     const value = await setup()
     const close = vi.fn()

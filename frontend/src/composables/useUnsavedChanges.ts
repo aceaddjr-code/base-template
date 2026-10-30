@@ -1,9 +1,10 @@
 import { inject, onBeforeUnmount, onMounted } from 'vue'
 import { routerKey } from 'vue-router'
+import type { RouteLocationNormalized } from 'vue-router'
 import { Modal } from 'ant-design-vue'
 
 /** 确认只影响导航/关闭，不保存表单，也不把密码等内容写入浏览器存储。 */
-export function useUnsavedChanges(options: { active: () => boolean; dirty: () => boolean; saving: () => boolean }) {
+export function useUnsavedChanges(options: { active: () => boolean; dirty: () => boolean; saving: () => boolean; preserveNavigation?: (to: RouteLocationNormalized, from: RouteLocationNormalized) => boolean }) {
   const router = inject(routerKey, undefined)
   let pending: Promise<boolean> | undefined
   let cancelPending: (() => void) | undefined
@@ -29,7 +30,7 @@ export function useUnsavedChanges(options: { active: () => boolean; dirty: () =>
   async function attempt(action: () => void | Promise<void>) {
     if (await canLeave() && !disposed && !options.saving()) await action()
   }
-  const stopNavigationGuard = router?.beforeEach((to, from) => to.fullPath === from.fullPath ? true : canLeave())
+  const stopNavigationGuard = router?.beforeEach((to, from) => to.fullPath === from.fullPath || options.preserveNavigation?.(to, from) ? true : canLeave())
   function beforeUnload(event: BeforeUnloadEvent) {
     if (options.active() && (options.dirty() || options.saving())) { event.preventDefault(); event.returnValue = '' }
   }

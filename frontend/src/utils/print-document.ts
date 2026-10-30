@@ -129,7 +129,7 @@ export function printHtml(html: string): void {
   frame.style.border = '0'
   document.body.appendChild(frame)
   const win = frame.contentWindow
-  if (!win) return
+  if (!win) { frame.remove(); activeFrame = null; throw new Error('浏览器未能准备打印文档，请重试') }
   const doc = win.document
   doc.open()
   doc.write(html)

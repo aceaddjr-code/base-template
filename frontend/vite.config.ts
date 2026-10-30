@@ -50,6 +50,11 @@ export default defineConfig({
     port: 5174,
     // 2026-08-27 手机调试：允许局域网访问（手机连同一 WiFi 直接看移动端）
     host: true,
+    watch: {
+      // 2026-10-26 浏览器验收的 user-data 目录（.verify-profile、-2、-3…）留在 frontend/ 内时，
+      // 被占用的 Cookies/Tabs 等文件会让 chokidar 抛 EBUSY、dev server 整个退出，必须排除在监听之外
+      ignored: ['**/.verify-profile*/**'],
+    },
     proxy: {
       '/api': {
         target: proxyTarget,

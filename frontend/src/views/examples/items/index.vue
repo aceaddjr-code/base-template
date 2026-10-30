@@ -1,6 +1,9 @@
 <template>
   <Page class="page-list" title="示例事项" description="展示列表、筛选、列设置、Excel、表单、详情和数据范围的完整接入方式。">
     <div ref="bodyRef" class="page-body">
+      <!-- 多选态：批量操作覆盖在工具栏原位（工具栏只 visibility 隐身、不塌陷），
+           下方表格的位置和高度都不变；动作紧跟计数靠左排。 -->
+      <div class="toolbar-slot" :class="{ 'is-batch': selectedIds.length > 0 }">
       <PageToolbar
         :show-search="false"
         :show-create="true"
@@ -21,26 +24,35 @@
         @create="openCreate"
         @imported="onImported"
         @update:columns="columns = $event"
-      />
-      <ListFilters :tags="filterTags" :total="pagination.total" :dirty="dirty" :loading="loading" :failed="failed" @apply="apply()" @reset="reset" @remove="removeFilter" @retry="fetchRows">
-        <label class="filter-field">关键词<a-input v-model:value="draft.keyword" placeholder="搜索标题或说明" allow-clear style="width:220px" @press-enter="onSearchEnter" /></label>
-        <label class="filter-field">状态<a-select v-model:value="draft.statuses" mode="multiple" :options="statusOptions" allow-clear placeholder="全部状态" style="min-width:180px;max-width:300px" /></label>
-        <label class="filter-field">更新时间<a-range-picker v-model:value="draft.updated" value-format="YYYY-MM-DD" :presets="filterDatePresets()" style="width:250px" /></label>
-        <template #more><label class="filter-field">创建时间<a-range-picker v-model:value="draft.created" value-format="YYYY-MM-DD" :presets="filterDatePresets()" style="width:250px" /></label></template>
-        <template #views><FilterViews module-key="example-items" :applied="appliedRecord" :sort="sort" :known-fields="['keyword', 'statuses', 'updated', 'created']" :date-fields="['updated', 'created']" :disabled="loading" @apply-view="onApplyView" /></template>
-      </ListFilters>
-      <div v-if="selectedIds.length" class="batch-bar">
-        <span class="batch-count">已选 <strong>{{ selectedIds.length }}</strong> 条（当前页）</span>
-        <a-button v-access="['example-items:export']" size="small" :disabled="batchSaving" @click="exportSelected">导出选中</a-button>
-        <a-popconfirm :title="`确认删除选中的 ${selectedIds.length} 条记录？每条独立处理，失败会给出原因。`" ok-text="确认删除" cancel-text="取消" :disabled="batchSaving" @confirm="removeSelected">
-          <a-button v-access="['example-items:delete']" size="small" danger :loading="batchSaving">批量删除</a-button>
-        </a-popconfirm>
-        <a-button size="small" type="link" :disabled="batchSaving" @click="selectedIds = []">取消选择</a-button>
+      >
+        <!-- 筛选行放进工具栏左区：查询条件与「新增 / 功能」同处一行，右侧不再空一大片。 -->
+        <template #left>
+          <ListFilters :tags="filterTags" :dirty="dirty" :failed="failed" @apply="apply()" @reset="reset" @remove="removeFilter" @retry="fetchRows">
+            <label class="filter-field">关键词<a-input v-model:value="draft.keyword" placeholder="搜索标题或说明" allow-clear style="width:220px" @press-enter="onSearchEnter" /></label>
+            <label class="filter-field">状态<a-select v-model:value="draft.statuses" mode="multiple" :options="statusOptions" allow-clear placeholder="全部状态" style="min-width:180px;max-width:300px" /></label>
+            <label class="filter-field">更新时间<a-range-picker v-model:value="draft.updated" value-format="YYYY-MM-DD" :presets="filterDatePresets()" style="width:250px" /></label>
+            <template #more><label class="filter-field">创建时间<a-range-picker v-model:value="draft.created" value-format="YYYY-MM-DD" :presets="filterDatePresets()" style="width:250px" /></label></template>
+            <template #views><FilterViews module-key="example-items" :applied="appliedRecord" :sort="sort" :known-fields="['keyword', 'statuses', 'updated', 'created']" :date-fields="['updated', 'created']" :disabled="loading" @apply-view="onApplyView" /></template>
+          </ListFilters>
+        </template>
+      </PageToolbar>
+      <Transition name="batch-fade">
+        <div v-if="selectedIds.length" class="batch-bar" role="region" aria-label="批量操作">
+          <span class="batch-count">已选 <strong>{{ selectedIds.length }}</strong> 条<span class="batch-scope">（当前页）</span></span>
+          <div class="batch-bar-actions">
+            <a-button v-access="['example-items:export']" size="small" :disabled="batchSaving" @click="exportSelected">导出选中</a-button>
+            <a-popconfirm :title="`确认删除选中的 ${selectedIds.length} 条记录？每条独立处理，失败会给出原因。`" ok-text="确认删除" cancel-text="取消" :disabled="batchSaving" @confirm="removeSelected">
+              <a-button v-access="['example-items:delete']" size="small" danger :loading="batchSaving">批量删除</a-button>
+            </a-popconfirm>
+            <a-button size="small" type="link" :disabled="batchSaving" @click="selectedIds = []">取消选择</a-button>
+          </div>
+        </div>
+      </Transition>
       </div>
       <a-table :ref="setTableRef" :columns="tableColumns" :data-source="rows" :loading="loading" :row-selection="rowSelection" row-key="id" :pagination="false" :scroll="{ x: 900, y: tableScrollY }" size="middle" @change="changeTable">
         <template #headerCell="{ column }">
           <span>{{ column.title }}</span>
-          <span v-if="column.key !== 'actions'" class="resize-handle" @click.stop @mousedown.stop.prevent="resizeStart(column.key ?? '', $event)" />
+          <span v-if="column.key !== 'actions' && !isFlexible(column.key ?? '')" class="resize-handle" @click.stop @mousedown.stop.prevent="resizeStart(column.key ?? '', $event)" />
         </template>
         <template #bodyCell="{ column, record }">
           <!-- 标题允许长内容换行，同时保留按钮的详情入口和键盘操作。 -->
@@ -74,7 +86,7 @@
     </div>
   </a-modal>
 
-  <ExampleDetailDrawer v-model:open="detailOpen" :record-id="detailId" :start-in-edit="detailEditRequested" @updated="fetchRows" />
+  <ExampleDetailDrawer ref="detailDrawer" :open="detailOpen" :record-id="detailId" :tab="detailTab" :start-in-edit="detailEditRequested" @update:open="closeDetail" @tab="changeDetailTab" @updated="fetchRows" />
   <a-modal v-model:open="batchResultOpen" title="批量删除结果" :footer="null" width="560px">
     <template v-if="batchUnknown">
       <a-alert type="warning" show-icon message="结果待确认" description="请求没有返回逐条结果（网络中断或服务端异常），无法判断哪些记录已删除。请刷新列表核对后再决定是否重新勾选删除，未知项不作为失败清单重试。" />
@@ -94,7 +106,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { formatDateTime } from '@/utils/format'
 import Page from '@/components/Page.vue'
@@ -111,12 +124,12 @@ import ExampleDetailDrawer from './ExampleDetailDrawer.vue'
 import { statusOptions, statusLabel } from './example-options'
 import { useDict } from '@/composables/useDict'
 import { makeOnApplyView } from '@/composables/useSavedFilterViews'
-import { useDetailDeepLink } from '@/composables/useDetailDeepLink'
 import { useListPage } from '@/composables/useListPage'
 import { useTableScrollY } from '@/composables/useTableScrollY'
 import { useResizableColumns } from '@/composables/useResizableColumns'
 import { downloadCsv } from '@/utils/csv-download'
 import { batchDeleteExamples, createExample, deleteExample, exampleImportTemplateUrl, getExampleExportUrl, importExamples, listExamples, precheckExamples, type ExampleBatchResult, type ExampleItem, type ExampleListQuery } from '@/api/example'
+import type { HistoryTab } from '@/api/example'
 
 // 表头固定 + body 内部滚动：高度由容器实测，工具栏换行时自动重算。
 const bodyRef = ref<HTMLElement | null>(null)
@@ -124,6 +137,10 @@ const tableScrollY = useTableScrollY(bodyRef)
 const detailOpen = ref(false)
 const detailId = ref<number | null>(null)
 const detailEditRequested = ref(false)
+const route = useRoute(), router = useRouter()
+const detailDrawer = ref<InstanceType<typeof ExampleDetailDrawer>>()
+const detailTab = ref<HistoryTab>('detail')
+let requestedEdit = false
 const selectedIds = ref<number[]>([])
 const batchSaving = ref(false)
 const batchResultOpen = ref(false)
@@ -162,7 +179,7 @@ const exampleResizable = computed(() => ({ colWidths, setColumnWidth }))
 // 应用保存的视图：失效字段提示、排序恢复与默认值补齐统一走共享处理器
 const onApplyView = makeOnApplyView<Filters>({ sort, apply, defaults: exampleFilterDefaults })
 const appliedRecord = computed(() => ({ ...applied.value }) as Record<string, unknown>)
-const rowSelection = computed(() => ({ selectedRowKeys: selectedIds.value, onChange: (keys: (string | number)[]) => { selectedIds.value = keys.map(Number) }, getCheckboxProps: () => ({ disabled: batchSaving.value }) }))
+const rowSelection = computed(() => ({ selectedRowKeys: selectedIds.value, columnWidth: 36, onChange: (keys: (string | number)[]) => { selectedIds.value = keys.map(Number) }, getCheckboxProps: () => ({ disabled: batchSaving.value }) }))
 const allColumns = ref([
   { title: '标题', dataIndex: 'title', key: 'title', width: 220, sorter: true },
   { title: '状态', dataIndex: 'status', key: 'status', width: 110 },
@@ -175,7 +192,9 @@ const allColumns = ref([
 let columns = ref([...allColumns.value])
 const tableColumns = computed(() => columns.value.map(column => ({ ...column, sortOrder: column.key === sort.value.sortBy ? sort.value.sortOrder === 'ASC' ? 'ascend' as const : 'descend' as const : null })))
 // v2：列结构变过（说明列改弹性、操作列收窄），旧 key 里保存的宽度会让整表被按比例撑开。
-const { resizeStart, colWidths, setColumnWidth } = useResizableColumns('starter-example-widths-v2', columns, { title: 220, status: 110, category: 130, updatedAt: 180 })
+// 「说明」是弹性列：不给宽度，用来吸收表格剩余宽度。它一旦有了固定宽度，
+// 所有列就都变成定宽，fixed 布局会把剩余空间按比例摊给每一列（勾选列也会被撑宽）。
+const { resizeStart, colWidths, setColumnWidth, isFlexible } = useResizableColumns('starter-example-widths-v2', columns, { title: 220, status: 110, category: 130, updatedAt: 180 }, ['description'])
 const exportColumns = computed(() => columns.value.map(column => column.key).filter(key => !['index', 'action', 'actions'].includes(key)).join(','))
 const exportUrl = computed(() => exportColumns.value ? getExampleExportUrl({ ...activeQuery.value, cols: exportColumns.value }) : '')
 // 新增弹窗状态（本页只有"新增并继续录入"；编辑走详情抽屉原地编辑，不经过这里）
@@ -207,11 +226,29 @@ function changeTable(_page: unknown, _filters: Record<string, unknown>, sorter: 
   void changeSort({ sortBy: sorter.order ? sorter.field : undefined, sortOrder: sorter.order === 'ascend' ? 'ASC' : sorter.order === 'descend' ? 'DESC' : undefined })
 }
 async function remove(id: number) { await deleteExample(id); message.success('删除成功'); await fetchRows() }
-function openDetail(id: number, edit = false) {
-  detailId.value = id
-  detailEditRequested.value = edit
-  detailOpen.value = true
+async function openDetail(id: number, edit = false) {
+  requestedEdit = edit
+  await router.push({ path: route.path, query: { ...route.query, detail: String(id), tab: 'detail' } })
+  if (edit && detailId.value === id) detailDrawer.value?.startEdit()
+  requestedEdit = false
 }
+function closeDetail(open: boolean) {
+  if (open) return
+  const query = { ...route.query }; delete query.detail; delete query.tab
+  void router.push({ path: route.path, query })
+}
+function changeDetailTab(tab: HistoryTab) {
+  if (!detailOpen.value || !detailId.value || route.query.tab === tab) return
+  void router.replace({ path: route.path, query: { ...route.query, detail: String(detailId.value), tab } })
+}
+watch(() => [route.query.detail, route.query.tab], () => {
+  const id = Number(route.query.detail)
+  if (!Number.isSafeInteger(id) || id <= 0) { detailOpen.value = false; detailId.value = null; return }
+  const tab = ['detail', 'activity', 'operations', 'changes'].includes(String(route.query.tab)) ? route.query.tab as HistoryTab : 'detail'
+  if (detailId.value !== id || !detailOpen.value) detailEditRequested.value = requestedEdit
+  detailTab.value = tab; detailId.value = id; detailOpen.value = true
+  if (route.query.tab !== tab) void router.replace({ path: route.path, query: { ...route.query, tab } })
+}, { immediate: true })
 function exportSelected() {
   if (!selectedIds.value.length) return
   if (selectedIds.value.length > 500) { message.warning('一次最多导出 500 条，请减少勾选或使用筛选导出'); return }
@@ -271,12 +308,9 @@ function downloadFailures() {
 }
 /** F30 导入向导：预检不落库;确认导入由服务端重新校验,部分成功语义(错误行跳过并在结果中逐行说明) */
 function onImported() { void fetchRows() }
-const deepLink = useDetailDeepLink(id => openDetail(id))
-onMounted(() => { deepLink.attach() })
 </script>
 
 <style scoped>
-.page-body { height: 100%; display: flex; flex-direction: column; background: var(--color-surface); }
 .row-title {
   display: block;
   width: 100%;
@@ -305,21 +339,42 @@ onMounted(() => { deepLink.attach() })
 .status-tag { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
 .status-tag::before { content: ''; flex: none; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .status-tag.is-pending { color: var(--color-text-secondary); background: var(--color-layer-hover); border-color: transparent; }
-.status-tag.is-doing { color: #0056b3; background: var(--color-blue-10); border-color: transparent; }
+.status-tag.is-doing { color: var(--color-link); background: var(--color-blue-10); border-color: transparent; }
 .status-tag.is-done { color: var(--color-success-text); background: var(--color-green-10); border-color: transparent; }
 /* 批量操作条：左侧墨条标记「当前上下文已切换」，与表格选中行呼应。 */
+/* 工具栏插槽：批量操作条绝对定位盖在它上面，插槽高度始终由工具栏撑出来，
+   所以进入 / 退出多选时下方表格既不位移也不改高。 */
+.toolbar-slot { position: relative; flex: none; }
+.toolbar-slot.is-batch :deep(.page-toolbar) { visibility: hidden; }
+
+/* 批量操作条：填满工具栏原本的区块——色带 + 左侧 2px 墨条标记「已切到多选模式」。
+   不加完整边框：会和下方表格的外框形成「双框」杂音，而页面里的工具栏本身也是无框的。
+   操作项紧跟计数靠左排，不甩到右边界。 */
 .batch-bar {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  background: var(--color-layer-01);
+  padding: 0 var(--space-3) 0 calc(var(--space-3) - 2px);
+  background: var(--color-layer-hover);
   border-left: 2px solid var(--color-primary);
-  border-bottom: var(--rule);
 }
 .batch-count { font-size: var(--text-aux); color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
 .batch-count strong { color: var(--color-text-primary); font-weight: 700; }
+.batch-scope { margin-left: var(--space-1); color: var(--color-text-tertiary); }
+/* 注意别写成 .batch-actions：那个类名已被下方「批量删除结果」弹窗占用，
+   那边带 margin-top: 12px，会把操作栏里的按钮往下顶 6px。 */
+.batch-bar-actions { display: flex; align-items: center; gap: var(--space-2); margin-left: var(--space-3); }
+
+/* 交叉淡入：工具栏先淡出 140ms，批量条延迟 40ms 淡入 180ms，
+   两者交叉而不是硬切；只动 opacity / transform。 */
+.toolbar-slot :deep(.page-toolbar) { transition: opacity 140ms var(--ease-out), visibility 0s; }
+.toolbar-slot.is-batch :deep(.page-toolbar) { opacity: 0; visibility: hidden; transition: opacity 140ms var(--ease-out), visibility 0s 140ms; }
+.batch-fade-enter-active { transition: opacity 180ms var(--ease-out) 40ms, transform 180ms var(--ease-out) 40ms; }
+.batch-fade-leave-active { transition: opacity 120ms var(--ease-out), transform 120ms var(--ease-out); }
+.batch-fade-enter-from, .batch-fade-leave-to { opacity: 0; transform: translateY(-4px); }
 .batch-failures { margin: 12px 0 0; padding-left: 20px; max-height: 300px; overflow-y: auto; overflow-wrap: anywhere; }
 .batch-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .batch-done-note { margin: 12px 0 0; color: var(--color-text-secondary); font-size: var(--text-aux); }

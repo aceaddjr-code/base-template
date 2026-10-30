@@ -1,11 +1,15 @@
 <template>
   <Page class="page-list" title="系统公告" description="站点公告的草稿、发布与撤回管理；发布后登录用户可见。">
     <div ref="bodyRef" class="page-body">
-      <PageToolbar :show-search="false" :show-create="true" create-label="新建公告" @create="openCreate" />
-      <ListFilters :tags="filterTags" :total="total" :dirty="dirty" :loading="loading" :failed="failed" @apply="applyFilters()" @reset="resetFilters" @remove="removeFilter" @retry="fetchList">
-        <label class="filter-field">状态<a-select v-model:value="draft.status" :options="statusOptions" allow-clear placeholder="全部状态" style="min-width:150px" /></label>
-        <label class="filter-field">关键词<a-input v-model:value="draft.keyword" placeholder="搜索标题" allow-clear style="width:220px" @press-enter="onSearchEnter" /></label>
-      </ListFilters>
+      <PageToolbar :show-search="false" :show-create="true" create-label="新建公告" @create="openCreate">
+        <!-- 筛选行放进工具栏左区：查询条件与「新建公告」同处一行。 -->
+        <template #left>
+          <ListFilters :tags="filterTags" :dirty="dirty" :failed="failed" @apply="applyFilters()" @reset="resetFilters" @remove="removeFilter" @retry="fetchList">
+            <label class="filter-field">状态<a-select v-model:value="draft.status" :options="statusOptions" allow-clear placeholder="全部状态" style="min-width:150px" /></label>
+            <label class="filter-field">关键词<a-input v-model:value="draft.keyword" placeholder="搜索标题" allow-clear style="width:220px" @press-enter="onSearchEnter" /></label>
+          </ListFilters>
+        </template>
+      </PageToolbar>
       <a-table
         :ref="setTableRef"
         :columns="columns"
@@ -223,8 +227,7 @@ function openDetail(record: AnnouncementItem) {
 
 <style scoped>
 /* 列表滚动链：标题与页脚固定，表体内部滚动（min-height: 0 必须保留）。 */
-.page-body { height: 100%; display: flex; flex-direction: column; min-height: 0; background: var(--color-surface); }
-.page-body > .ant-table-wrapper { min-height: 0; overflow: hidden; }
+.page-list .ant-table-wrapper { min-height: 0; }
 .announcement-note {
   margin: 0;
   color: var(--color-text-tertiary);

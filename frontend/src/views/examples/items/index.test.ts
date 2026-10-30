@@ -6,6 +6,7 @@ import { batchDeleteExamples, listExamples } from '@/api/example'
 import { createPinia, setActivePinia } from 'pinia'
 import { useAppStore } from '@/stores/app'
 import { clearListQueryState } from '@/composables/useListQuery'
+import { createMemoryHistory, createRouter } from 'vue-router'
 
 vi.mock('ant-design-vue', () => ({ message: { success: vi.fn(), warning: vi.fn() } }))
 vi.mock('@/composables/useDetailDeepLink', () => ({ useDetailDeepLink: () => ({ attach: vi.fn() }) }))
@@ -15,7 +16,8 @@ vi.mock('@/api/example', async importOriginal => {
 })
 const Pass = defineComponent({ setup(_, { slots }) { return () => h('div', [slots.default?.(), slots.footer?.()]) } })
 const Alert = defineComponent({ props: ['message', 'description', 'type'], setup(props) { return () => h('div', [String(props.message ?? ''), String(props.description ?? '')]) } })
-const Toolbar = defineComponent({ props: ['exportUrl', 'columns', 'allColumns', 'keyword'], emits: ['update:columns', 'update:keyword'], setup() { return () => h('div') } })
+// 工具栏 stub 必须渲染 #left 插槽：筛选区已并入工具栏左区，否则测试拿不到 ListFilters。
+const Toolbar = defineComponent({ props: ['exportUrl', 'columns', 'allColumns', 'keyword'], emits: ['update:columns', 'update:keyword'], setup(_, { slots }) { return () => h('div', [slots.left?.(), slots.default?.()]) } })
 const Table = defineComponent({ props: ['rowSelection'], emits: ['change'], setup() { return () => h('div') } })
 const Footer = defineComponent({ props: ['pagination'], emits: ['change'], setup() { return () => h('div') } })
 const Confirm = defineComponent({ emits: ['confirm'], setup(_, { slots }) { return () => h('div', slots.default?.()) } })
@@ -27,8 +29,10 @@ const Range = defineComponent({ props: ['value'], emits: ['update:value'], rende
 function setup() {
   const pinia = createPinia()
   setActivePinia(pinia)
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:pathMatch(.*)*', component: Pass }] })
+  void router.push('/examples/items')
   useAppStore().userInfo = { id: 1, username: 'admin', role: 'admin', displayName: null, avatar: null, deptId: null, deptName: null }
-  return mount(Items, { global: { plugins: [pinia], directives: { access: {} }, stubs: {
+  return mount(Items, { global: { plugins: [pinia, router], directives: { access: {} }, stubs: {
     Page: Pass, PageToolbar: Toolbar, ListFooter: Footer, ExampleDetailDrawer: true,
     ListFilters: Filters, ARangePicker: Range,
     ATable: Table, AButton: Button, APopconfirm: Confirm, AModal: Pass, AAlert: Alert, ATag: Pass, ASpace: Pass,

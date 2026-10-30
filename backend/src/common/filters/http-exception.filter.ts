@@ -27,6 +27,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     let status: number;
     let message: string;
     let fieldErrors: FieldError[] | undefined;
+    let reason: string | undefined;
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -39,9 +40,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
         typeof exceptionResponse === 'object' &&
         exceptionResponse !== null
       ) {
-        // 处理 ValidationPipe 的错误（包含 message 数组）
-        const resp = exceptionResponse as { message?: string | string[]; fieldErrors?: unknown };
+        // 处理 ValidationPipe 的错误（包含 message 数组）；reason 为结构化冲突原因（如 409 乐观锁），前端按码分派、不匹配文案
+        const resp = exceptionResponse as { message?: string | string[]; fieldErrors?: unknown; reason?: unknown };
         if (status >= 400 && status < 500) fieldErrors = publicFieldErrors(resp.fieldErrors);
+        if (typeof resp.reason === 'string' && resp.reason) reason = resp.reason;
         if (Array.isArray(resp.message)) {
           message = resp.message.join('; ');
         } else {
@@ -66,6 +68,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       data: null,
       requestId,
       ...(fieldErrors?.length ? { fieldErrors } : {}),
+      ...(reason ? { reason } : {}),
     });
   }
 }

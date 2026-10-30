@@ -3,10 +3,13 @@
     <div class="history-page">
       <a-spin :spinning="loading">
         <div v-if="list.length" class="announcement-list">
-          <button v-for="item in list" :key="item.id" type="button" class="announcement-row" @click="openDetail(item)">
-            <span class="row-title">{{ item.title }}</span>
-            <span class="row-time">{{ formatDateTime(item.publishedAt) }}</span>
-          </button>
+          <AnnouncementRow
+            v-for="item in list"
+            :key="item.id"
+            :title="item.title"
+            :time="formatDateTime(item.publishedAt)"
+            @open="openDetail(item)"
+          />
         </div>
         <a-empty v-else-if="!loading" description="还没有已发布的公告" />
         <div class="history-footer">
@@ -29,6 +32,7 @@
 import { onMounted, ref } from 'vue'
 import { getPublishedAnnouncements, type AnnouncementBrief } from '@/api/announcement'
 import AnnouncementDetailModal from '@/components/AnnouncementDetailModal.vue'
+import AnnouncementRow from '@/components/AnnouncementRow.vue'
 import { formatDateTime } from '@/utils/format'
 
 const loading = ref(false)
@@ -64,22 +68,5 @@ onMounted(() => fetchList(1))
 <style scoped>
 .history-page { max-width: 760px; }
 .announcement-list { display: flex; flex-direction: column; }
-.announcement-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 16px;
-  width: 100%;
-  padding: 12px 8px;
-  border: 0;
-  border-bottom: 1px solid var(--color-border-subtle);
-  background: transparent;
-  color: var(--color-text-primary);
-  text-align: left;
-  cursor: pointer;
-}
-.announcement-row:hover { background: var(--color-layer-01); }
-.row-title { overflow-wrap: anywhere; }
-.row-time { color: var(--color-text-tertiary); font-size: var(--text-aux); white-space: nowrap; }
-.history-footer { display: flex; justify-content: flex-end; margin-top: 16px; }
+.history-footer { display: flex; justify-content: flex-end; margin-top: var(--space-3); }
 </style>

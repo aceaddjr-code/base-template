@@ -12,7 +12,7 @@
       :class="{ 'is-mobile-open': mobileOpen }"
     >
       <button type="button" class="brand" aria-label="返回首页" @click="router.push('/')">
-        <span class="brand-symbol" aria-hidden="true">[=]</span>
+        <span class="brand-symbol" aria-hidden="true"><BrandMark :size="16" /></span>
         <span v-if="!siderCollapsed" class="brand-text">
           <strong>{{ appName }}</strong>
         </span>
@@ -137,6 +137,7 @@ import {
 import { useAppStore } from '@/stores/app'
 import { getNotifications, getUnreadCount, markAllRead, markRead, NOTIFICATIONS_CHANGED, type NotificationItem } from '@/api/notifications'
 import ProfileDrawer from '@/components/ProfileDrawer.vue'
+import BrandMark from '@/components/BrandMark.vue'
 import MenuSearch from '@/components/MenuSearch.vue'
 import { recordVisit } from '@/composables/useRecentVisits'
 import { menuIcon } from '@/utils/menu-icons'
@@ -461,6 +462,8 @@ onBeforeUnmount(() => {
   .main-sider.is-mobile-open { transform: none; }
   .sider-mask { display: block; position: fixed; inset: 0; z-index: 99; background: rgba(15, 0, 0, 0.32); }
   .header-bar { padding: 0 var(--space-3); }
+  /* 窄屏图标按钮抬到 44px 触摸目标，视觉尺寸靠透明边框补足，不影响排版。 */
+  .header-bar .trigger { width: var(--control-h-touch); height: var(--control-h-touch); }
   .header-left, .header-right { gap: var(--space-1); }
   .header-bar :deep(.ant-breadcrumb), .header-bar :deep(.ant-tag) { display: none; }
   .header-divider { display: none; }

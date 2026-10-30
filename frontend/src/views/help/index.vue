@@ -71,36 +71,39 @@ onMounted(() => {
 .from-banner {
   display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border-color, rgba(15, 0, 0, 0.12)); background: var(--bg-elevated, #fdfcfc);
+  border: var(--rule); background: var(--color-layer-01);
 }
 .section-nav { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 .nav-item {
-  padding: 4px 12px; border: 1px solid var(--border-color, rgba(15, 0, 0, 0.12));
-  background: transparent; cursor: pointer; min-height: 32px;
+  padding: 0 var(--space-3); height: var(--control-h);
+  border: var(--rule); background: transparent;
+  font-family: inherit; font-size: var(--text-aux); color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
-.nav-item:hover { background: var(--bg-hover, #f1eeee); }
+.nav-item:hover { background: var(--color-layer-hover); border-color: var(--color-border-strong); color: var(--color-text-primary); }
 .help-section { scroll-margin-top: 64px; }
-.section-title { font-size: 18px; margin: 0 0 var(--space-2); scroll-margin-top: 64px; }
-.section-body { line-height: 1.7; }
-.section-body :deep(h3) { font-size: 16px; margin: var(--space-4) 0 var(--space-2); scroll-margin-top: 64px; }
-.section-body :deep(ul), .section-body :deep(ol) { padding-left: 22px; margin: var(--space-2) 0; }
-.section-body :deep(li) { margin: 4px 0; }
+.section-title { font-size: var(--text-heading-lg); line-height: var(--lh-tight); margin: 0 0 var(--space-2); scroll-margin-top: 64px; }
+.section-body { line-height: var(--lh-relaxed); }
+.section-body :deep(h3) { font-size: var(--text-heading); margin: var(--space-4) 0 var(--space-2); scroll-margin-top: 64px; }
+.section-body :deep(ul), .section-body :deep(ol) { padding-left: var(--space-5); margin: var(--space-2) 0; }
+.section-body :deep(li) { margin: var(--space-1) 0; }
 .section-body :deep(code) {
   font-family: inherit; font-size: 0.92em;
-  padding: 1px 6px; background: var(--bg-fill, #f1eeee);
+  padding: 1px var(--space-1); background: var(--color-layer-01);
 }
 .section-body :deep(blockquote) {
   margin: var(--space-2) 0; padding: var(--space-2) var(--space-3);
-  border-left: 3px solid var(--border-color, rgba(15, 0, 0, 0.12)); color: var(--text-secondary, #424245);
+  border-left: 2px solid var(--color-border-strong); color: var(--color-text-secondary);
 }
 .section-body :deep(a) { color: inherit; text-decoration: underline; }
+/* 定位高亮：不用底色块，用 1px 墨色描边圈出目标，视觉上像被框选。 */
 .section-body :deep(.is-target) {
-  background: var(--bg-fill, #f1eeee);
-  outline: 2px solid var(--border-strong, rgba(15, 0, 0, 0.4));
+  background: var(--color-layer-01);
+  outline: 1px solid var(--color-primary);
   outline-offset: 4px;
-  border-radius: 2px;
 }
 @media (max-width: 768px) {
-  .section-body :deep(ul), .section-body :deep(ol) { padding-left: 18px; }
+  .section-body :deep(ul), .section-body :deep(ol) { padding-left: var(--space-4); }
 }
 </style>

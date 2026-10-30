@@ -437,8 +437,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* 布局外壳：Page 内容区 100% 高，工具栏在上、左右分栏在下共享纵向空间 */
-.page-body { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+/* 布局外壳：.page-body 由 style.css 统一提供，工具栏在上、左右分栏在下共享纵向空间 */
 .roles-layout { flex: 1; min-height: 0; display: flex; }
 
 /* ===== 左：角色列表 ===== */

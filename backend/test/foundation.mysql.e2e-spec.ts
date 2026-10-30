@@ -23,6 +23,7 @@ import { UserRole } from '../src/modules/user/user-role.entity';
 import { UserDataScope } from '../src/modules/user/user-data-scope.entity';
 import { UserDataScopeTarget } from '../src/modules/user/user-data-scope-target.entity';
 import { ExampleItem } from '../src/modules/example/example-item.entity';
+import { ExampleEvent, ExampleChange } from '../src/modules/example/example-event.entity';
 import { ExampleService, EXAMPLE_ITEMS_SCOPE_KEY } from '../src/modules/example/example.service';
 import { UserDataScopeService } from '../src/modules/user/user-data-scope.service';
 import { SystemLog } from '../src/modules/system/entities/system-log.entity';
@@ -59,7 +60,7 @@ suite('独立 MySQL：删除回滚、通知分页和原生备份', () => {
     if ((existing as unknown[]).length) throw new Error('测试库已经存在，拒绝覆盖');
     await admin.query(`CREATE DATABASE \`${database}\` CHARACTER SET utf8mb4`);
     created = true;
-    data = new DataSource({ type: 'mysql', ...connection, username: connection.user, database, entities: [Parent, Child, Notification, User, Role, Menu, Department, UserRole, UserDataScope, UserDataScopeTarget, ExampleItem, SystemLog], synchronize: true });
+    data = new DataSource({ type: 'mysql', ...connection, username: connection.user, database, entities: [Parent, Child, Notification, User, Role, Menu, Department, UserRole, UserDataScope, UserDataScopeTarget, ExampleItem, ExampleEvent, ExampleChange, SystemLog], synchronize: true });
     await data.initialize();
     process.env.DB_DATABASE = database;
     backupDir = await mkdtemp(join(tmpdir(), 'base-foundation-mysql-'));

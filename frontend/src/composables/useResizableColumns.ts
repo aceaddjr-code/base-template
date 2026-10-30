@@ -5,6 +5,14 @@ export function useResizableColumns(
   storageKey: string,
   columns: Ref<any[]>,
   defaults: Record<string, number> = {},
+  /**
+   * 弹性列：保持「无固定宽度」，用来吸收表格的剩余宽度。
+   *
+   * 必须始终留至少一列不给宽度。`table-layout: fixed` 下若所有列都有固定宽度，
+   * 浏览器会把表格宽于列宽之和的部分**按比例**摊给每一列——勾选框、状态这类窄列
+   * 会被一起放大（实测 32px 的勾选列能被放到 56px，宽屏更多），而且改不回来。
+   */
+  flexKeys: string[] = [],
 ) {
   // 列宽与显隐/排序同一账号隔离策略；列表页仅在会话就绪后挂载。
   const scopedKey = accountStorageKey(storageKey)
@@ -14,10 +22,14 @@ export function useResizableColumns(
     const saved = localStorage.getItem(scopedKey)
     if (saved) Object.assign(colWidths, JSON.parse(saved))
   } catch { /* 存储损坏忽略 */ }
+  // 旧数据里可能存过弹性列的宽度，一律丢弃，否则表格会重新进入等比放大。
+  for (const key of flexKeys) delete colWidths[key]
   // 同步到列对象（columns 定义已用 defaults 初始化，这里用恢复值覆盖）
   for (const col of columns.value as any[]) {
+    if (flexKeys.includes(String(col.key))) { delete col.width; continue }
     if (colWidths[col.key] != null) col.width = colWidths[col.key]
   }
+  const isFlexible = (key: string | number) => flexKeys.includes(String(key))
 
   const resizingCol = ref<string | null>(null)
   let resizeStartX = 0
@@ -57,6 +69,7 @@ export function useResizableColumns(
 
   function resizeStart(key: string | number, e: MouseEvent) {
     const k = String(key)
+    if (isFlexible(k)) return
     clearResizeClick()
     document.addEventListener('click', stopResizeClick, true)
     resizingCol.value = k
@@ -72,6 +85,7 @@ export function useResizableColumns(
   /** 非拖拽入口（F35）：列设置面板按数值直接改宽，与拖拽同一落盘规则 */
   function setColumnWidth(key: string | number, width: number): void {
     const k = String(key)
+    if (isFlexible(k)) return
     if (!Number.isFinite(width) || width < 60 || width > 1000) return
     colWidths[k] = width
     const col = (columns.value as any[]).find((c) => c.key === k)
@@ -88,5 +102,5 @@ export function useResizableColumns(
     document.removeEventListener('mouseup', onColUp)
   })
 
-  return { colWidths, resizeStart, setColumnWidth }
+  return { colWidths, resizeStart, setColumnWidth, isFlexible }
 }
