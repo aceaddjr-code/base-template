@@ -1,0 +1,15 @@
+{
+  "runs": [
+    {
+      "date": "2026-10-27T07:51:04.786294+00:00",
+      "input_tokens": null,
+      "output_tokens": null,
+      "files": 427,
+      "token_usage_available": false
+    }
+  ],
+  "total_input_tokens": 0,
+  "total_output_tokens": 0,
+  "token_usage_available": false,
+  "note": "Actual host-agent token usage was unavailable; legacy totals are unmeasured placeholders."
+}
