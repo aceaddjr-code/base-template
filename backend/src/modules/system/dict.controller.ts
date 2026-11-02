@@ -3,14 +3,14 @@ import {
   Body, Param, Query, Req,
 } from '@nestjs/common';
 import type { Request } from 'express';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { DictService } from './dict.service';
 import { CreateDictTypeDto, UpdateDictTypeDto, CreateDictItemDto, UpdateDictItemDto } from './dto/dict.dto';
 
 /**
  * 数据字典接口
  * 查询（按编码）：全员可用（下拉数据源）
- * 管理（类型/选项 CRUD）：仅 admin
+ * 管理（类型/选项 CRUD）：按查看、新增、编辑、删除权限
  * 注意：/system/dicts/:typeCode 通配路由声明在 types/items 之后（Express 顺序匹配）
  */
 @Controller('system/dicts')
@@ -19,7 +19,7 @@ export class DictController {
 
   // ===== 管理：类型 =====
 
-  @Roles('admin')
+  @RequirePermission('dicts:view')
   @Get('types')
   findTypes(@Query('page') page?: string, @Query('pageSize') pageSize?: string, @Query('keyword') keyword?: string) {
     const p = page ? parseInt(page, 10) : 1;
@@ -31,19 +31,19 @@ export class DictController {
     );
   }
 
-  @Roles('admin')
+  @RequirePermission('dicts:create')
   @Post('types')
   createType(@Body() dto: CreateDictTypeDto, @Req() req: Request) {
     return this.dictService.createType(dto, (req as any).user);
   }
 
-  @Roles('admin')
+  @RequirePermission('dicts:update')
   @Put('types/:id')
   updateType(@Param('id') id: string, @Body() dto: UpdateDictTypeDto, @Req() req: Request) {
     return this.dictService.updateType(parseInt(id, 10), dto, (req as any).user);
   }
 
-  @Roles('admin')
+  @RequirePermission('dicts:delete')
   @Delete('types/:id')
   deleteType(@Param('id') id: string, @Req() req: Request) {
     return this.dictService.deleteType(parseInt(id, 10), (req as any).user);
@@ -51,25 +51,25 @@ export class DictController {
 
   // ===== 管理：选项 =====
 
-  @Roles('admin')
+  @RequirePermission('dicts:view')
   @Get('types/:typeId/items')
   findItems(@Param('typeId') typeId: string) {
     return this.dictService.findItemsByTypeId(parseInt(typeId, 10));
   }
 
-  @Roles('admin')
+  @RequirePermission('dicts:create')
   @Post('types/:typeId/items')
   createItem(@Param('typeId') typeId: string, @Body() dto: CreateDictItemDto, @Req() req: Request) {
     return this.dictService.createItem(parseInt(typeId, 10), dto, (req as any).user);
   }
 
-  @Roles('admin')
+  @RequirePermission('dicts:update')
   @Put('items/:id')
   updateItem(@Param('id') id: string, @Body() dto: UpdateDictItemDto, @Req() req: Request) {
     return this.dictService.updateItem(parseInt(id, 10), dto, (req as any).user);
   }
 
-  @Roles('admin')
+  @RequirePermission('dicts:delete')
   @Delete('items/:id')
   deleteItem(@Param('id') id: string, @Req() req: Request) {
     return this.dictService.deleteItem(parseInt(id, 10), (req as any).user);

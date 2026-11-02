@@ -9,6 +9,12 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import request from 'supertest';
 import { randomUUID } from 'node:crypto';
+import { Attachment } from '../src/modules/attachment/attachment.entity';
+import { AttachmentController } from '../src/modules/attachment/attachment.controller';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { AttachmentService } from '../src/modules/attachment/attachment.service';
 import { ExampleItem } from '../src/modules/example/example-item.entity';
 import { ExampleEvent, ExampleChange } from '../src/modules/example/example-event.entity';
 import { User } from '../src/modules/user/user.entity';
@@ -18,6 +24,7 @@ import { Menu } from '../src/modules/menu/menu.entity';
 import { ExampleService } from '../src/modules/example/example.service';
 import { ExampleController } from '../src/modules/example/example.controller';
 import { AuthService } from '../src/modules/auth/auth.service';
+import { CsrfGuard } from '../src/common/guards/csrf.guard';
 import { PermissionGuard } from '../src/modules/auth/guards/permission.guard';
 import { AuditInterceptor } from '../src/common/interceptors/audit.interceptor';
 import { SystemLogService } from '../src/modules/system/system-log.service';
@@ -44,7 +51,7 @@ suite('单据履历：业务 HTTP 与隔离 MySQL', () => {
   const [old] = await connection.query('SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=?',[database]);
   if ((old as any[]).length) throw Error('测试库已存在，拒绝覆盖');
   await connection.query(`CREATE DATABASE \`${database}\` CHARACTER SET utf8mb4`); created=true;
-  const options = {type:'mysql' as const,...config,username:config.user,database,entities:[ExampleItem,SysDictType,SysDictItem]};
+  const options = {type:'mysql' as const,...config,username:config.user,database,entities:[ExampleItem,SysDictType,SysDictItem,Attachment]};
   db = await new DataSource({...options,synchronize:true}).initialize();
   const legacy = await db.getRepository(ExampleItem).save({title:'采集前旧记录',status:'pending',ownerId:7,version:1}); itemId=legacy.id;
   otherId=(await db.getRepository(ExampleItem).save({title:'范围外',status:'pending',ownerId:8,version:1})).id;
@@ -55,16 +62,43 @@ suite('单据履历：业务 HTTP 与隔离 MySQL', () => {
   const migration=readFileSync(resolve('..','docs/sql/20261026-example-document-history.sql'),'utf8');
   await connection.query(migration); await connection.query(migration);
   // User 的快照查询只选 id/displayName/username，但其关联元数据要求 Role/Department/Menu 一并注册。
-  db=await new DataSource({...options,entities:[ExampleItem,ExampleEvent,ExampleChange,SysDictType,SysDictItem,User,Role,Department,Menu],synchronize:false}).initialize();
+  db=await new DataSource({...options,entities:[ExampleItem,ExampleEvent,ExampleChange,Attachment,SysDictType,SysDictItem,User,Role,Department,Menu],synchronize:false}).initialize();
   const dictType=await db.getRepository(SysDictType).save({code:'item_category',name:'类别',status:1});
   await db.getRepository(SysDictItem).save({typeId:dictType.id,value:'a',label:'当时类别',status:1});
   const dict=new DictService(db.getRepository(SysDictType),db.getRepository(SysDictItem),audit as any);
-  const service=new ExampleService(db.getRepository(ExampleItem),dict);
-  const module=await Test.createTestingModule({controllers:[ExampleController],providers:[{provide:ExampleService,useValue:service},{provide:AuthService,useValue:{getUserAccessCodes:async()=>codes}},{provide:SystemLogService,useValue:audit},{provide:APP_GUARD,useClass:PermissionGuard},{provide:APP_INTERCEPTOR,useClass:AuditInterceptor}]}).compile();
+  const privateDir=mkdtempSync(join(tmpdir(),'example-files-e2e-')); process.env.ATTACHMENT_PRIVATE_DIR=privateDir;
+  const configService=new ConfigService({ATTACHMENT_PRIVATE_DIR:privateDir});
+  const attachmentService=new AttachmentService(db.getRepository(Attachment),configService,audit as any);
+  const service=new ExampleService(db.getRepository(ExampleItem),dict,db.getRepository(Attachment),attachmentService);
+  const module=await Test.createTestingModule({controllers:[ExampleController,AttachmentController],providers:[{provide:ConfigService,useValue:configService},{provide:AttachmentService,useValue:attachmentService},{provide:ExampleService,useValue:service},{provide:AuthService,useValue:{getUserAccessCodes:async()=>codes}},{provide:SystemLogService,useValue:audit},{provide:APP_GUARD,useClass:CsrfGuard},{provide:APP_GUARD,useClass:PermissionGuard},{provide:APP_INTERCEPTOR,useClass:AuditInterceptor}]}).compile();
   app=module.createNestApplication<NestExpressApplication>({bodyParser:false});
   app.use((req:any,_res:any,next:()=>void)=>{req.user=user;next()}); configureApplication(app,new ConfigService()); await app.init();
  },30000);
  beforeEach(()=>{codes=['example-items:view'];user={sub:7,roleCode:'user'};audit.write.mockClear()});
+ it('大文件请求接收超时为30分钟',()=>{expect(app.getHttpServer().requestTimeout).toBe(30*60*1000)});
+ it('共同范围与六个开关贯穿 HTTP 详情、履历、编辑、删除，不能替代权限码', async()=>{
+  const item=await db.getRepository(ExampleItem).save({title:'范围HTTP验证',ownerId:8,version:1});
+  const scope={scopeKey:'example-items',scopeType:'by_users',targets:[8],viewOthers:1,editOthers:0,deleteOthers:0,viewSelf:0,editSelf:1,deleteSelf:0};
+  user={sub:7,roleCode:'user',dataScopes:[scope]};
+  codes=['example-items:view','example-items:update','example-items:delete'];
+  await api().get(`/api/v1/examples/items/${item.id}`).expect(200);
+  await history('operations',item.id).expect(200);
+  await api().put(`/api/v1/examples/items/${item.id}`).send({title:'越权修改',version:1}).expect(403);
+  await api().delete(`/api/v1/examples/items/${item.id}`).expect(403);
+  await api().get(`/api/v1/examples/items/${itemId}`).expect(403);
+  await history('operations',itemId).expect(403);
+  await api().delete(`/api/v1/examples/items/${itemId}`).expect(403);
+  scope.editOthers=1;codes=['example-items:view'];
+  await api().put(`/api/v1/examples/items/${item.id}`).send({title:'没有权限码',version:1}).expect(403);
+  codes.push('example-items:update');
+  await api().put(`/api/v1/examples/items/${item.id}`).send({title:'有范围和权限码',version:1}).expect(200);
+  scope.viewOthers=0;
+  await history('operations',item.id).expect(403);
+  await api().put(`/api/v1/examples/items/${item.id}`).send({title:'失去查看资格',version:2}).expect(403);
+  await db.getRepository(ExampleItem).delete(item.id);
+  await db.getRepository(ExampleChange).createQueryBuilder().delete().where('event_id IN (SELECT id FROM example_events WHERE item_id = :id)',{id:item.id}).execute();
+  await events().delete({itemId:item.id});
+ });
  afterAll(async()=>{
   if(db?.isInitialized) {
    const summary=await db.query('SELECT action,result,source,COUNT(*) AS count FROM example_events GROUP BY action,result,source');
@@ -124,7 +158,10 @@ suite('单据履历：业务 HTTP 与隔离 MySQL', () => {
   const preserved=(await history('changes',created.id)).body.data.list[0];expect(preserved.actorName).toBe('原操作人');expect(preserved.changes.find(c=>c.fieldKey==='category').beforeLabel).toBe('当时类别');
   const noChange=(await api().put(`/api/v1/examples/items/${created.id}`).send({title:'  修改事项  ',version:2}).expect(200)).body.data;
   expect(noChange.version).toBe(2);expect(new Date(noChange.updatedAt)).toEqual(new Date(after.updatedAt));
-  expect((await history('activity',created.id)).body.data.list.map(e=>e.action)).toEqual(['update','create']);expect((await history('changes',created.id)).body.data.list).toHaveLength(1);
+  const activity=(await history('activity',created.id)).body.data.list;
+  expect(activity.map(e=>e.action)).toEqual(['update','create']);
+  expect(activity[0].changes).toEqual([expect.objectContaining({fieldKey:'title',beforeValue:'新事项',afterValue:'修改事项'})]);
+  expect(activity[1].changes).toEqual([]);expect((await history('changes',created.id)).body.data.list).toHaveLength(1);
   expect(await events().countBy({itemId:created.id,action:'no_change'})).toBe(1);
   await api().put(`/api/v1/examples/items/${created.id}`).send({title:'x',version:2,password:'secret'}).expect(400);
   await connection.query("UPDATE users SET display_name='原操作人' WHERE id=7");
@@ -225,6 +262,54 @@ suite('单据履历：业务 HTTP 与隔离 MySQL', () => {
   expect((await history('changes',itemId,`?eventId=${located.id}`)).body.data.list).toEqual([]);
   const filtered=(await history('operations',item.id,`?action=update&actorId=7&from=${day}&to=${day}`)).body.data;
   expect(filtered.total).toBe(27);expect(filtered.list.every(e=>e.action==='update'&&e.actorId===7)).toBe(true);
+  const actorName=filtered.list[0].actorName;
+  for(const tab of ['activity','operations','changes']) {
+   const named=(await history(tab,item.id,`?actorName=${encodeURIComponent(actorName.slice(0,1))}`)).body.data;
+   expect(named.list.length).toBeGreaterThan(0);expect(named.list.every(e=>e.actorName.includes(actorName.slice(0,1)))).toBe(true);
+   expect((await history(tab,item.id,'?actorName=%25')).body.data.list).toEqual([]);
+  }
+  const namedFirst=(await history('activity',item.id,`?pageSize=5&actorName=${encodeURIComponent(actorName)}`)).body.data;
+  await history('activity',item.id,`?pageSize=5&actorName=other&cursor=${encodeURIComponent(namedFirst.nextCursor)}`).expect(400);
+ });
+ it('附件子表按单据范围授权、重复挂接幂等、删除与主表级联软删',async()=>{
+  codes=['example-items:create','example-items:update','example-items:view','example-items:delete'];
+  const item=(await api().post('/api/v1/examples/items').send({title:'附件事项'}).expect(201)).body.data;
+  const repo=db.getRepository(Attachment);
+  const seed=(owner=7)=>repo.save({originalName:'测试.pdf',storagePath:'not-present.pdf',mimeType:'application/pdf',size:5,status:'temp',createdBy:owner});
+  const file=await seed(), foreign=await seed(8);
+  const otherType=await repo.save({originalName:'别的业务.pdf',storagePath:'other.pdf',mimeType:'application/pdf',size:5,status:'bound',entityType:'other-type',entityId:item.id,createdBy:7});
+  const endpoint=`/api/v1/examples/items/${item.id}/attachments`;
+  await api().post(endpoint).send({attachmentId:foreign.id}).expect(404);
+  await api().post(endpoint).send({attachmentId:file.id}).expect(201);
+  await api().post(endpoint).send({attachmentId:file.id}).expect(201);
+  const list=(await api().get(endpoint).expect(200)).body.data;
+  expect(list).toHaveLength(1);expect(list[0]).toMatchObject({name:'测试.pdf',image:false});expect(list[0]).not.toHaveProperty('storagePath');
+  const imageBuffer=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aBZkAAAAASUVORK5CYII=','base64');
+  await api().post('/api/v1/examples/items/attachments/upload').set('Host','127.0.0.1:5174').set('Origin','https://untrusted.example').attach('file',imageBuffer,{filename:'blocked.png',contentType:'image/png'}).expect(403);
+  const upload=(await api().post('/api/v1/examples/items/attachments/upload').set('Host','127.0.0.1:5174').set('Origin','http://127.0.0.1:5174').set('Referer','http://127.0.0.1:5174/examples/items').attach('file',imageBuffer,{filename:'测试图片.png',contentType:'image/png'}).expect(201)).body.data;
+  expect(upload.name).toBe('测试图片.png');
+  await api().post(endpoint).send({attachmentId:upload.id}).expect(201);
+  const preview=await api().get(`${endpoint}/${upload.id}/download?preview=1`).expect(200);expect(preview.headers['content-type']).toContain('image/png');expect(preview.headers['content-disposition']).toBe('inline');expect(preview.body).toEqual(imageBuffer);
+  await api().get(`/api/v1/attachments/${upload.id}/download`).expect(403);
+  codes.push('attachments:download');
+  await api().get(`/api/v1/attachments/${upload.id}/download`).expect(404);
+  codes = codes.filter(code => code !== 'attachments:download');
+  for(const [filename,image] of [['工程图.dwg',false],['照片.heic',true],['扫描.tiff',true],['矢量.svg',true]] as const) {
+   const uploaded=(await api().post('/api/v1/examples/items/attachments/upload').attach('file',Buffer.from('format-test'),{filename,contentType:'application/octet-stream'}).expect(201)).body.data;
+   await api().post(endpoint).send({attachmentId:uploaded.id}).expect(201);
+   const listed=(await api().get(endpoint).expect(200)).body.data.find(f=>f.id===uploaded.id);
+   expect(listed).toMatchObject({name:filename,image,previewable:false});
+   const download=await api().get(`${endpoint}/${uploaded.id}/download?preview=1`).expect(200);
+   expect(download.headers['content-disposition']).toMatch(/^attachment;/);
+  }
+
+  codes=['example-items:view'];await api().post(endpoint).send({attachmentId:file.id}).expect(403);await api().delete(`${endpoint}/${file.id}`).expect(403);
+  user={sub:8,roleCode:'user'};await api().get(endpoint).expect(404);await api().get(`${endpoint}/${file.id}/download`).expect(404);
+  user={sub:7,roleCode:'user'};codes=['example-items:view','example-items:update','example-items:delete'];
+  await api().delete(`${endpoint}/${file.id}`).expect(200);expect(await repo.findOneBy({id:file.id})).toBeNull();
+  const image=await seed();await api().post(endpoint).send({attachmentId:image.id}).expect(201);
+  await api().delete(`/api/v1/examples/items/${item.id}`).expect(200);expect(await repo.findOneBy({id:image.id})).toBeNull();
+  expect(await repo.findOneBy({id:foreign.id})).not.toBeNull();expect(await repo.findOneBy({id:otherType.id})).not.toBeNull();
  });
  it('A17 停用原类别可保留，非法改选拒绝，类型停用仍能清空，旧差异快照不被字典改名改变',async()=>{
   codes=['example-items:create','example-items:update','example-items:view'];

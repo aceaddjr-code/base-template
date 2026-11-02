@@ -45,11 +45,16 @@ function records(options: CrudOptions = {}, hasOwner = true) {
           return query.andWhere(sql, params);
         },
         andWhere: (sql: string, params: Record<string, any> = {}) => {
+          const combined = /^\((.*)\) AND \((.*)\)$/s.exec(sql);
+          if (combined) { query.andWhere(combined[1], params); return query.andWhere(combined[2], params); }
           if (sql === 't.deletedAt IS NULL') predicates.push(row => row.deletedAt === null);
           else if (sql === 't.id = :id') predicates.push(row => row.id === params.id);
           else if (sql === '1 = 0') predicates.push(() => false);
           else if (sql === 't.ownerId = :scopeUserId') predicates.push(row => row.ownerId === params.scopeUserId);
           else if (sql === 't.ownerId IN (:...scopeUserIds)') predicates.push(row => params.scopeUserIds.includes(row.ownerId));
+          else if (sql === 't.ownerId IS NOT NULL') predicates.push(row => row.ownerId != null);
+          else if (sql === 't.ownerId = :scopeOpUserId') predicates.push(row => row.ownerId === params.scopeOpUserId);
+          else if (sql === 't.ownerId <> :scopeOpUserId') predicates.push(row => row.ownerId != null && row.ownerId !== params.scopeOpUserId);
           else if (sql === 't.title IS NOT NULL' || sql === "t.title != ''") predicates.push(row => !!row.title);
           else throw new Error(`仓储替身不支持该谓词: ${sql}`);
           return query;
@@ -105,13 +110,13 @@ describe('CrudBaseService 受限读取与当前操作（公开 interface 回归�
     expect(repo.softDelete).not.toHaveBeenCalled();
   });
 
-  it('列表、distinct、Excel 共享数据范围，列表可见不代表详情可见', async () => {
+  it('列表、distinct 共享范围；Excel 还要求查看详情资格', async () => {
     const { service } = records();
     const actor = user({ viewOthers: 0 });
     expect((await service.list({}, actor)).list.map(row => row.title)).toEqual(['本人', '目标用户']);
     expect(await service.distinctValues('title', actor)).toEqual(['本人', '目标用户']);
     const exported = await service.exportExcel(actor);
-    expect(await excelToData(exported.buffer, { title: ['标题'] })).toEqual([{ title: '本人' }, { title: '目标用户' }]);
+    expect(await excelToData(exported.buffer, { title: ['标题'] })).toEqual([{ title: '本人' }]);
     await expect(service.findOne(2, actor)).rejects.toThrow('没有查看他人单据的权限');
   });
 
@@ -143,13 +148,13 @@ describe('CrudBaseService 受限读取与当前操作（公开 interface 回归�
     await expect(service.remove(1, actor)).resolves.toEqual({ success: true });
   });
 
-  it('表单范围及操作开关优先全局，缺少表单配置时回退全局', async () => {
+  it('表单独立配置，缺少表单配置时仅本人', async () => {
     const { service, repo } = records();
     const global: UserScopeEntry = { scopeKey: '__global__', scopeType: 'all', viewOthers: 1, editOthers: 1, deleteOthers: 1 };
     const actor = user({ scopeType: 'self', viewOthers: 0 }, [global]);
     await expect(service.findOne(2, actor)).rejects.toBeInstanceOf(NotFoundException);
     await expect(service.findOne(2, user({ scopeType: 'all', viewOthers: 0 }, [global]))).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(service.findOne(3, { sub: 2, dataScopes: [global] })).resolves.toMatchObject({ id: 3 });
+    await expect(service.findOne(3, { sub: 2, dataScopes: [global] })).rejects.toBeInstanceOf(NotFoundException);
     expect(repo.softDelete).not.toHaveBeenCalled();
   });
 

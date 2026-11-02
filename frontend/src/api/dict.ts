@@ -47,7 +47,7 @@ export function getDictAll(typeCode: string): Promise<DictData & { options: (Dic
   return request.get(`/system/dicts/${typeCode}/all`)
 }
 
-/** 字典类型列表（admin） */
+/** 字典类型列表（dicts:view） */
 export function getDictTypes(params: { page?: number; pageSize?: number; keyword?: string }) {
   return request.get('/system/dicts/types', { params }) as Promise<{
     list: DictTypeItem[]

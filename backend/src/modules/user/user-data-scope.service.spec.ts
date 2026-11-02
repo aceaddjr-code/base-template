@@ -3,7 +3,7 @@ import { UserDataScopeService } from './user-data-scope.service';
 
 /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/unbound-method */
 
-const defaultRow = { scopeKey: '__global__', scopeType: 'self', viewOthers: 1, editOthers: 0, deleteOthers: 0, targets: [] as number[] };
+const selfFlags = { viewSelf: 1, editSelf: 1, deleteSelf: 1 };
 
 describe('数据范围配置：读侧与写侧共用一个拥有者', () => {
   let service: UserDataScopeService;
@@ -23,8 +23,8 @@ describe('数据范围配置：读侧与写侧共用一个拥有者', () => {
     service = new UserDataScopeService(scopeRepo, targetRepo, userRepo, deptRepo);
   });
 
-  it('loadForSession：无配置回退 __global__ self（与面板兜底同口径）', async () => {
-    await expect(service.loadForSession(7)).resolves.toEqual([defaultRow]);
+  it('loadForSession：无配置返回空数组（读侧对未配置表单按仅本人回退）', async () => {
+    await expect(service.loadForSession(7)).resolves.toEqual([]);
   });
 
   it('loadForSession：行 + targets 映射，会话条目不携带行 id', async () => {
@@ -37,15 +37,15 @@ describe('数据范围配置：读侧与写侧共用一个拥有者', () => {
       { userDataScopeId: 99, targetId: 1 },
     ]);
     await expect(service.loadForSession(7)).resolves.toEqual([
-      { scopeKey: 'example-items', scopeType: 'by_users', viewOthers: 1, editOthers: 1, deleteOthers: 0, targets: [7, 8] },
+      { ...selfFlags, scopeKey: 'example-items', scopeType: 'by_users', viewOthers: 1, editOthers: 1, deleteOthers: 0, targets: [7, 8] },
     ]);
   });
 
-  it('getPanelRows：无配置补默认行（id: 0），有配置保留行 id 供编辑回显', async () => {
-    await expect(service.getPanelRows(1)).resolves.toEqual([{ id: 0, ...defaultRow }]);
+  it('getPanelRows：无配置返回空数组，有配置保留行 id 且开关已归一化', async () => {
+    await expect(service.getPanelRows(1)).resolves.toEqual([]);
     scopeRepo.find.mockResolvedValue([{ id: 11, scopeKey: 'example-items', scopeType: 'all', viewOthers: 1, editOthers: 0, deleteOthers: 0 }]);
     await expect(service.getPanelRows(1)).resolves.toEqual([
-      { id: 11, scopeKey: 'example-items', scopeType: 'all', viewOthers: 1, editOthers: 0, deleteOthers: 0, targets: [] },
+      { ...selfFlags, id: 11, scopeKey: 'example-items', scopeType: 'all', viewOthers: 1, editOthers: 0, deleteOthers: 0, targets: [] },
     ]);
   });
 
@@ -54,13 +54,14 @@ describe('数据范围配置：读侧与写侧共用一个拥有者', () => {
     await expect(service.getPanelRows(99)).rejects.toThrow(NotFoundException);
   });
 
-  it('saveRows：未登记表单或非法类型拒绝；重复表单拒绝', async () => {
+  it('saveRows：未登记表单、非法类型或遗留 __global__ 行拒绝；重复表单拒绝', async () => {
     await expect(service.saveRows(1, [{ scopeKey: 'not-registered', scopeType: 'self' }], 1)).rejects.toThrow(BadRequestException);
-    await expect(service.saveRows(1, [{ scopeKey: '__global__', scopeType: 'wild' }], 1)).rejects.toThrow(BadRequestException);
+    await expect(service.saveRows(1, [{ scopeKey: 'example-items', scopeType: 'wild' }], 1)).rejects.toThrow(BadRequestException);
+    await expect(service.saveRows(1, [{ scopeKey: '__global__', scopeType: 'self' }], 1)).rejects.toThrow('不再支持所有表单默认值');
     await expect(
       service.saveRows(1, [
-        { scopeKey: '__global__', scopeType: 'self' },
-        { scopeKey: '__global__', scopeType: 'all' },
+        { scopeKey: 'example-items', scopeType: 'self' },
+        { scopeKey: 'example-items', scopeType: 'all' },
       ], 1),
     ).rejects.toThrow('数据范围表单不能重复');
   });
@@ -75,7 +76,7 @@ describe('数据范围配置：读侧与写侧共用一个拥有者', () => {
     ).rejects.toThrow('数据范围包含不存在的目标');
   });
 
-  it('saveRows：缺 __global__ 自动补齐，全量替换落库并递增 tokenVersion', async () => {
+  it('saveRows：按表单全量替换落库并递增 tokenVersion，不补写 __global__ 遗留行', async () => {
     deptRepo.find.mockResolvedValue([{ id: 5 }]);
     const result = await service.saveRows(
       1,
@@ -84,10 +85,15 @@ describe('数据范围配置：读侧与写侧共用一个拥有者', () => {
     );
     expect(manager.delete).toHaveBeenCalled();
     const savedRows = manager.save.mock.calls.map((call: any[]) => call[1]).filter((d: any) => !Array.isArray(d));
-    expect(savedRows.map((r: any) => r.scopeKey)).toEqual(['__global__', 'example-items']);
+    expect(savedRows.map((r: any) => r.scopeKey)).toEqual(['example-items']);
     const targetBatches = manager.save.mock.calls.map((call: any[]) => call[1]).filter(Array.isArray);
     expect(targetBatches).toEqual([[{ userDataScopeId: 11, targetType: 'dept', targetId: 5, ownerId: 1, createdBy: 2 }]]);
     expect(manager.increment).toHaveBeenCalled();
-    expect(result).toEqual([{ id: 0, ...defaultRow }]);
+    expect(result).toEqual([]);
+  });
+
+  it.each(['viewSelf', 'editSelf', 'deleteSelf', 'viewOthers', 'editOthers', 'deleteOthers'])('%s 非 0/1 时不写入', async key => {
+    await expect(service.saveRows(1, [{ scopeKey: 'example-items', scopeType: 'self', [key]: 2 }], 2)).rejects.toThrow('操作开关必须为 0 或 1');
+    expect(manager.delete).not.toHaveBeenCalled();
   });
 });

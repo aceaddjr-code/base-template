@@ -1,7 +1,7 @@
 <template>
   <Page class="page-list" title="系统公告" description="站点公告的草稿、发布与撤回管理；发布后登录用户可见。">
     <div ref="bodyRef" class="page-body">
-      <PageToolbar :show-search="false" :show-create="true" create-label="新建公告" @create="openCreate">
+      <PageToolbar :show-search="false" :show-create="true" :create-access="['announcements:create']" create-label="新建公告" @create="openCreate">
         <!-- 筛选行放进工具栏左区：查询条件与「新建公告」同处一行。 -->
         <template #left>
           <ListFilters :tags="filterTags" :dirty="dirty" :failed="failed" @apply="applyFilters()" @reset="resetFilters" @remove="removeFilter" @retry="fetchList">
@@ -39,12 +39,12 @@
           </template>
           <template v-if="column.key === 'action'">
             <a-space :size="0">
-              <a-button v-if="record.status === 'draft'" type="link" size="small" @click="openEdit(record as AnnouncementItem)">编辑</a-button>
-              <a-button type="link" size="small" @click="openDetail(record as AnnouncementItem)">查看</a-button>
-              <a-button v-if="record.status === 'draft' || record.status === 'withdrawn'" type="link" size="small" @click="handlePublish(record as AnnouncementItem)">发布</a-button>
-              <a-button v-if="record.status === 'published'" type="link" size="small" @click="handleWithdraw(record as AnnouncementItem)">撤回</a-button>
+              <a-button v-if="record.status === 'draft'" v-access="['announcements:update']" type="link" size="small" @click="openEdit(record as AnnouncementItem)">编辑</a-button>
+              <a-button v-access="['announcements:view']" type="link" size="small" @click="openDetail(record as AnnouncementItem)">查看</a-button>
+              <a-button v-if="record.status === 'draft' || record.status === 'withdrawn'" v-access="['announcements:publish']" type="link" size="small" @click="handlePublish(record as AnnouncementItem)">发布</a-button>
+              <a-button v-if="record.status === 'published'" v-access="['announcements:withdraw']" type="link" size="small" @click="handleWithdraw(record as AnnouncementItem)">撤回</a-button>
               <a-popconfirm v-if="record.status !== 'published'" title="确定删除该公告？" ok-text="确定" cancel-text="取消" @confirm="handleDelete(record as AnnouncementItem)">
-                <a-button type="link" size="small" danger>删除</a-button>
+                <a-button v-access="['announcements:delete']" type="link" size="small" danger>删除</a-button>
               </a-popconfirm>
             </a-space>
           </template>
@@ -97,7 +97,7 @@
     </div>
   </a-modal>
 
-  <AnnouncementDetailModal :open="detailOpen" :announcement-id="detailId" @close="detailOpen = false" />
+  <AnnouncementDetailModal management :open="detailOpen" :announcement-id="detailId" @close="detailOpen = false" />
 </template>
 
 <script setup lang="ts">

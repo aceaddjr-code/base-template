@@ -14,6 +14,8 @@ import { validationException } from './common/utils/validation-errors';
 
 /** 启动和 HTTP 测试使用相同的协议、验证和错误处理。 */
 export function configureApplication(app: NestExpressApplication, config: ConfigService) {
+  // 与附件上传客户端保持一致，允许慢网接收 500MB multipart 请求。
+  app.getHttpServer().requestTimeout = 30 * 60 * 1000;
   const docsEnabled = config.get<string>('API_DOCS_ENABLED') === 'true';
   // Swagger UI 依赖内联脚本/样式；文档仅在受控环境开启，此时放宽 CSP，生产（文档关闭）保持默认
   app.use(helmet({ contentSecurityPolicy: !docsEnabled }));
@@ -49,7 +51,7 @@ function setupApiDocs(app: NestExpressApplication, config: ConfigService) {
   let version = '1.0.0'
   try { version = String(JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')).version) || version } catch { /* 版本回退默认值 */ }
   const docConfig = new DocumentBuilder()
-    .setTitle('企业管理系统 API')
+    .setTitle('BaseSuite平台 API')
     .setVersion(version)
     .setDescription([
       '内部管理系统的接口文档。接口统一前缀 `/api/v1`。',

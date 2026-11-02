@@ -102,7 +102,7 @@
           <a-tag color="processing">V{{ appVersion }}</a-tag>
           <a-dropdown>
             <button type="button" class="user" aria-label="账号菜单" aria-haspopup="menu">
-              <a-avatar :src="appStore.userInfo?.avatar || undefined">{{ displayName.charAt(0) }}</a-avatar>
+              <a-avatar :size="24" :src="appStore.userInfo?.avatar || undefined">{{ displayName.charAt(0) }}</a-avatar>
               <span class="user-name">{{ displayName }}</span>
               <down-outlined class="user-caret" />
             </button>
@@ -178,7 +178,7 @@ function toggleSidebar() {
 // 抽屉打开时锁滚动，避免背景跟随滑动
 watch(mobileOpen, (open) => { document.body.style.overflow = open ? 'hidden' : '' })
 
-/* 面包屑补齐模块层级：首页 / 系统管理 / 用户管理 */
+/* 面包屑补齐模块层级：首页 / 工作协同 / 系统公告 */
 const breadcrumb = computed(() => {
   const trail: { name: string }[] = [{ name: '首页' }]
   if (route.path === '/home') return trail
@@ -285,20 +285,16 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 .brand:hover { background: var(--color-layer-01); }
-/* 品牌标记做成墨色方块：终端提示符的第一眼记忆点。 */
+/* 品牌标记裸放：浅色侧栏上彩色渐变即品牌本身，不再垫色块 */
 .brand-symbol {
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
   height: 26px;
-  background: var(--color-primary);
-  color: var(--color-text-on-color);
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1;
 }
+/* 收起态 64px 侧栏只留标记：居中且不裁切宽型 logo（约 32px） */
+.main-sider.ant-layout-sider-collapsed .brand { justify-content: center; padding: 0 10px; }
 .brand-text { min-width: 0; display: flex; flex-direction: column; }
 .brand-text strong { font-size: var(--text-aux); font-weight: 700; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
@@ -356,6 +352,8 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
+  /* antd 给 Header 注入 line-height: 80px，会沿继承撑高内部行内元素，这里归零 */
+  line-height: var(--lh-base);
 }
 .header-left, .header-right { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
 .header-left { gap: var(--space-1); }
@@ -396,6 +394,8 @@ onBeforeUnmount(() => {
   padding: 0 4px;
 }
 .header-bar .user {
+  display: inline-flex;
+  align-items: center;
   gap: var(--space-2);
   padding: 4px var(--space-2);
   border: 1px solid transparent;
@@ -467,7 +467,7 @@ onBeforeUnmount(() => {
   .header-left, .header-right { gap: var(--space-1); }
   .header-bar :deep(.ant-breadcrumb), .header-bar :deep(.ant-tag) { display: none; }
   .header-divider { display: none; }
-  .header-bar .user { padding: 4px; }
+  .header-bar .user { padding: 9px 4px; }
   .header-bar .user-caret { display: none; }
   .header-bar .user-name { max-width: 88px; }
   .brand { padding: 0 var(--space-4); }

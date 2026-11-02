@@ -72,7 +72,7 @@ export function deleteUser(id: number): Promise<void> {
 
 /** 数据范围类型（与后端 common/utils/data-scope 的 SCOPE_TYPES 同一字符串族） */
 export type ScopeType = 'self' | 'all' | 'by_users' | 'by_depts'
-
+/** 配置行：六个开关由后端按缺省口径归一化后下发，前端不自行复刻缺省值 */
 export interface UserDataScopeRow {
   id?: number
   scopeKey: string
@@ -81,9 +81,12 @@ export interface UserDataScopeRow {
   editOthers: number
   deleteOthers: number
   targets: number[]
+  viewSelf: number
+  editSelf: number
+  deleteSelf: number
 }
 
-/** 查询用户业务数据范围配置（全量行；无配置返回默认 __global__ self 行） */
+/** 查询用户业务数据范围配置（全量行；无配置返回空数组，未配置表单按仅本人处理） */
 export function getUserDataScopes(id: number): Promise<UserDataScopeRow[]> {
   return request.get(`/users/${id}/data-scopes`)
 }

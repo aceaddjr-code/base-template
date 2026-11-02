@@ -4,7 +4,7 @@
     <!-- ===== 左：深色终端式欢迎区 ===== -->
     <section class="login-brand">
       <div class="brand-mark">
-        <span class="brand-logo" aria-hidden="true"><BrandMark :size="18" /></span>
+        <span class="brand-logo" aria-hidden="true"><BrandMark :size="18" on-dark /></span>
         <div class="brand-text">
           <strong>{{ appName }}</strong>
           <span>{{ appSubtitle }}</span>
@@ -88,7 +88,7 @@ const route = useRoute()
 const appStore = useAppStore()
 const loading = ref(false)
 const errorMsg = ref('')
-const appName = import.meta.env.VITE_APP_NAME || '企业管理系统'
+const appName = import.meta.env.VITE_APP_NAME || 'BaseSuite平台'
 const appSubtitle = import.meta.env.VITE_APP_SUBTITLE || 'Enterprise Management System'
 const appVersion = APP_VERSION
 
@@ -145,18 +145,11 @@ async function handleLogin() {
   border-right: var(--rule);
 }
 .brand-mark { display: flex; align-items: center; gap: var(--space-3); }
+/* 深色面板上 logo 裸放：用 BrandMark 的 on-dark 提亮版，不再垫色块 */
 .brand-logo {
   flex: none;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  background: var(--color-text-on-color);
-  color: var(--color-surface-dark);
-  font-size: var(--text-aux);
-  font-weight: 700;
-  line-height: 1;
 }
 .brand-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .brand-text strong { font-size: var(--text-aux); font-weight: 700; }

@@ -19,21 +19,21 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { getAnnouncementDetail, type AnnouncementItem } from '@/api/announcement'
+import { getAnnouncementDetail, getAnnouncementManagementDetail, type AnnouncementItem } from '@/api/announcement'
 import { formatDateTime } from '@/utils/format'
 
-const props = defineProps<{ open: boolean; announcementId: number | null }>()
+const props = defineProps<{ open: boolean; announcementId: number | null; management?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 
 const detail = ref<AnnouncementItem | null>(null)
 const loading = ref(false)
 
-watch(() => [props.open, props.announcementId] as const, async ([open, id]) => {
+watch(() => [props.open, props.announcementId, props.management] as const, async ([open, id, management]) => {
   if (!open || id == null) return
   loading.value = true
   detail.value = null
   try {
-    detail.value = await getAnnouncementDetail(id)
+    detail.value = await (management ? getAnnouncementManagementDetail(id) : getAnnouncementDetail(id))
   } catch {
     /* 拦截器已提示；保持空态说明 */
   } finally {

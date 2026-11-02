@@ -129,7 +129,7 @@ import { useTableScrollY } from '@/composables/useTableScrollY'
 import { useResizableColumns } from '@/composables/useResizableColumns'
 import { downloadCsv } from '@/utils/csv-download'
 import { batchDeleteExamples, createExample, deleteExample, exampleImportTemplateUrl, getExampleExportUrl, importExamples, listExamples, precheckExamples, type ExampleBatchResult, type ExampleItem, type ExampleListQuery } from '@/api/example'
-import type { HistoryTab } from '@/api/example'
+import type { DocumentTab as HistoryTab } from '@/api/example'
 
 // 表头固定 + body 内部滚动：高度由容器实测，工具栏换行时自动重算。
 const bodyRef = ref<HTMLElement | null>(null)
@@ -244,7 +244,7 @@ function changeDetailTab(tab: HistoryTab) {
 watch(() => [route.query.detail, route.query.tab], () => {
   const id = Number(route.query.detail)
   if (!Number.isSafeInteger(id) || id <= 0) { detailOpen.value = false; detailId.value = null; return }
-  const tab = ['detail', 'activity', 'operations', 'changes'].includes(String(route.query.tab)) ? route.query.tab as HistoryTab : 'detail'
+  const tab = ['detail', 'activity', 'operations', 'changes', 'attachments'].includes(String(route.query.tab)) ? route.query.tab as HistoryTab : 'detail'
   if (detailId.value !== id || !detailOpen.value) detailEditRequested.value = requestedEdit
   detailTab.value = tab; detailId.value = id; detailOpen.value = true
   if (route.query.tab !== tab) void router.replace({ path: route.path, query: { ...route.query, tab } })

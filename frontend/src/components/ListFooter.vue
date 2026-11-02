@@ -39,7 +39,8 @@ const emit = defineEmits<{
 
 <style scoped>
 .list-footer { background: var(--color-surface); border-top: var(--rule); flex-shrink: 0; }
-.list-pagination { display: flex; justify-content: flex-end; padding: var(--space-2) 0; min-width: 0; }
+.list-pagination { display: flex; justify-content: flex-end; padding: 0; min-width: 0; }
+.list-pagination :deep(.ant-pagination-options-size-changer .ant-select-selection-item) { font-size: 12px; }
 @media (max-width: 640px) {
   .list-pagination { overflow-x: auto; justify-content: flex-start; }
   .list-pagination :deep(.ant-pagination-total-text) { display: none; }

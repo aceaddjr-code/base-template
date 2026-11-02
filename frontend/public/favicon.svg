@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <!-- 与 BrandMark.vue 同一套几何：墨底 + 反白方括号夹一枚实心记录块，只用设计系统的 ink / cream 两色 -->
-  <rect width="24" height="24" fill="#201d1d" />
-  <g transform="translate(12 12) scale(0.78) translate(-12 -12)">
-    <path d="M9 3.6H5v16.8h4" fill="none" stroke="#fdfcfc" stroke-width="2" stroke-linecap="butt" stroke-linejoin="miter" />
-    <path d="M15 3.6h4v16.8h-4" fill="none" stroke="#fdfcfc" stroke-width="2" stroke-linecap="butt" stroke-linejoin="miter" />
-    <rect x="9.2" y="9.2" width="5.6" height="5.6" fill="#fdfcfc" />
-  </g>
-</svg>

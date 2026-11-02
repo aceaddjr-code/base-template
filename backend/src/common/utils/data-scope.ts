@@ -8,6 +8,30 @@ import { deptSubtreeIn } from './dept-subtree';
 export const SCOPE_TYPES = ['self', 'all', 'by_users', 'by_depts'] as const;
 export type ScopeType = (typeof SCOPE_TYPES)[number];
 
+/** 操作全集：查看 / 编辑 / 删除；「他人」「本人」两列开关族都由它派生 */
+export const SCOPE_OPERATIONS = ['view', 'edit', 'delete'] as const;
+export type ScopeOperation = (typeof SCOPE_OPERATIONS)[number];
+
+/** 遗留「所有表单」行的 scopeKey：读侧不再按它回退（未配置表单一律仅本人），仅供旧数据辨识 */
+export const GLOBAL_SCOPE_KEY = '__global__';
+
+/** 旧数据未携带开关时的缺省口径：本人开关默认开启，他人开关默认关闭（docs/用户数据范围.md 迁移语义） */
+export const SELF_FLAG_DEFAULT = 1;
+export const OTHERS_FLAG_DEFAULT = 0;
+
+/** 六个操作开关（0/1）的归一化形状 */
+export type ScopeFlags = Record<`${ScopeOperation}Others` | `${ScopeOperation}Self`, number>;
+
+/** 按缺省口径归一化开关：面板回显、写侧兜底与读侧裁决共用，前端不自行复刻缺省值 */
+export function normalizeScopeFlags(raw: Partial<ScopeFlags> | null | undefined): ScopeFlags {
+  const flags = {} as ScopeFlags;
+  for (const op of SCOPE_OPERATIONS) {
+    flags[`${op}Others`] = raw?.[`${op}Others`] ?? OTHERS_FLAG_DEFAULT;
+    flags[`${op}Self`] = raw?.[`${op}Self`] ?? SELF_FLAG_DEFAULT;
+  }
+  return flags;
+}
+
 export interface UserScopeEntry {
   scopeKey: string;
   scopeType: ScopeType;
@@ -15,6 +39,9 @@ export interface UserScopeEntry {
   editOthers?: number;
   deleteOthers?: number;
   targets?: number[];
+  viewSelf?: number;
+  editSelf?: number;
+  deleteSelf?: number;
 }
 
 /** 当前登录用户（JWT payload 或请求 user 对象） */
@@ -29,7 +56,7 @@ export interface ScopeUser {
   dataScopes?: UserScopeEntry[];
 }
 
-/** 取用户某表单的数据范围配置（无该表单行回退 __global__，再回退 null） */
+/** 取表单独立配置；未配置（含只存遗留 __global__ 行）时为 null，调用方回退仅本人。 */
 export function findScopeEntry(
   user: ScopeUser | null | undefined,
   scopeKey?: string,
@@ -38,14 +65,14 @@ export function findScopeEntry(
   if (!list || !list.length) return null;
   if (scopeKey) {
     const exact = list.find((e) => e.scopeKey === scopeKey);
-    if (exact) return exact;
+    return exact ?? null;
   }
-  return list.find((e) => e.scopeKey === '__global__') ?? null;
+  return list.find((e) => e.scopeKey === GLOBAL_SCOPE_KEY) ?? null;
 }
 
 /**
  * 数据级权限隔离条件（owner_id 口径）：
- * 按 scopeKey 取用户配置，缺省回退 __global__，再回退仅本人。
+ * 按 scopeKey 取用户配置，缺省仅本人。
  *    - self → 仅本人；all → 不过滤；by_users → 本人 ∪ 勾选用户；by_depts → 本人 ∪ 勾选部门(含下级部门)
  * 返回 { sql, params }：sql 为 null 表示无过滤（all 档）；调用方自行 andWhere 拼接
  */
@@ -53,11 +80,19 @@ export function scopeWhereClause(
   alias: string,
   user: ScopeUser | null | undefined,
   scopeKey?: string,
+  operation?: ScopeOperation,
 ): { sql: string | null; params: Record<string, any> } {
   const uid = getUserId(user);
   if (uid == null) return { sql:'1 = 0', params:{} };
   if (isSystemAdmin(user)) return { sql: null, params: {} };
 
+  if (operation) {
+    // 列表按共同范围展示；导出还需满足查看详情开关，避免绕过详情限制（docs/用户数据范围.md）。
+    const base = scopeWhereClause(alias, user, scopeKey);
+    const gate = scopeOperationGate(alias, user, scopeKey ?? GLOBAL_SCOPE_KEY, operation);
+    if (gate.sql == null) return base;
+    return { sql: base.sql ? `(${base.sql}) AND (${gate.sql})` : gate.sql, params: { ...base.params, ...gate.params } };
+  }
   const entry = findScopeEntry(user, scopeKey);
   if (entry) {
     switch (entry.scopeType) {
@@ -104,8 +139,43 @@ export function buildDataScope(
   alias: string,
   user: ScopeUser | null | undefined,
   scopeKey?: string,
+  operation?: ScopeOperation,
 ): SelectQueryBuilder<any> {
-  const { sql, params } = scopeWhereClause(alias, user, scopeKey);
+  const { sql, params } = scopeWhereClause(alias, user, scopeKey, operation);
+  if (sql) qb.andWhere(sql, params);
+  return qb;
+}
+
+/**
+ * 操作开关门（owner_id 口径）：只裁决本人/他人开关，不携带共同范围条件。
+ * 供已应用共同范围的查询（如导出复用列表查询）叠加，避免同一范围条件拼两遍；
+ * sql 为 null 表示无需追加（管理员）。
+ */
+export function scopeOperationGate(
+  alias: string,
+  user: ScopeUser | null | undefined,
+  scopeKey: string,
+  operation: ScopeOperation,
+): { sql: string | null; params: Record<string, any> } {
+  const uid = getUserId(user);
+  if (uid == null) return { sql: '1 = 0', params: {} };
+  if (isSystemAdmin(user)) return { sql: null, params: {} };
+  const own = normalizeScopeFlags(findScopeEntry(user, scopeKey))[`${operation}Self`] === 1;
+  const others = canOperateOthers(user, scopeKey, operation);
+  if (!own && !others) return { sql: '1 = 0', params: {} };
+  if (own && others) return { sql: `${alias}.ownerId IS NOT NULL`, params: {} };
+  return { sql: `${alias}.ownerId ${own ? '=' : '<>'} :scopeOpUserId`, params: { scopeOpUserId: uid } };
+}
+
+/** scopeOperationGate 的 QueryBuilder 版本：有条件时 andWhere 拼接。 */
+export function buildOperationGate(
+  qb: SelectQueryBuilder<any>,
+  alias: string,
+  user: ScopeUser | null | undefined,
+  scopeKey: string,
+  operation: ScopeOperation,
+): SelectQueryBuilder<any> {
+  const { sql, params } = scopeOperationGate(alias, user, scopeKey, operation);
   if (sql) qb.andWhere(sql, params);
   return qb;
 }
@@ -132,22 +202,19 @@ export function canEditOwner(user: ScopeUser | null | undefined): boolean {
 export function canOperateOthers(
   user: ScopeUser | null | undefined,
   scopeKey: string,
-  op: 'view' | 'edit' | 'delete',
+  op: ScopeOperation,
 ): boolean {
   if (isSystemAdmin(user)) return true;
   const entry = findScopeEntry(user, scopeKey);
   if (!entry) return false; // 无配置 → 不默认放行他人单据操作
-  if (op === 'view') return entry.viewOthers === 1;
-  if (op === 'edit') return entry.editOthers === 1;
-  if (op === 'delete') return entry.deleteOthers === 1;
-  return false;
+  return entry[`${op}Others`] === 1;
 }
 
 export function assertCanOperateOn(
   entity: { ownerId?: number | null } | null | undefined,
   user: ScopeUser | null | undefined,
   scopeKey: string,
-  op: 'view' | 'edit' | 'delete',
+  op: ScopeOperation,
 ): void {
   const opText = op === 'view' ? '查看' : op === 'edit' ? '编辑' : '删除';
   if (!entity) throw new NotFoundException('记录不存在');
@@ -155,7 +222,10 @@ export function assertCanOperateOn(
   const uid = getUserId(user);
   if (uid == null) throw new UnauthorizedException('未登录');
   if (isSystemAdmin(user)) return;
-  if (entity.ownerId === uid) return; // 本人恒放行
+  if (entity.ownerId === uid) {
+    if (normalizeScopeFlags(findScopeEntry(user, scopeKey))[`${op}Self`] === 1) return;
+    throw new ForbiddenException(`没有${opText}本人单据的权限`);
+  }
   if (entity.ownerId == null) {
     if (!isSystemAdmin(user)) {
       throw new ForbiddenException(`该单据无归属人，仅管理员可${opText}`);

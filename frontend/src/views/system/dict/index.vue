@@ -4,6 +4,7 @@
       <PageToolbar
         :show-search="false"
         :show-create="true"
+        :create-access="['dicts:create']"
         create-label="新增类型"
         @create="showTypeModal()"
       >
@@ -33,10 +34,11 @@
             <a-tag>{{ record.code }}</a-tag>
           </template>
           <template v-if="column.key === 'status'">
-            <a-switch :checked="record.status === 1" @change="(v: any) => handleTypeToggle(record, v)" />
+            <a-switch v-if="canUpdate" v-access="['dicts:update']" :checked="record.status === 1" @change="(v: any) => handleTypeToggle(record, v)" />
+            <a-tag v-else>{{ record.status === 1 ? '启用' : '停用' }}</a-tag>
           </template>
           <template v-if="column.key === 'itemCount'">
-            <a-button type="link" size="small" @click="openItems(record)">
+            <a-button v-access="['dicts:view']" type="link" size="small" @click="openItems(record)">
               选项管理（{{ record.itemCount ?? 0 }}）
             </a-button>
           </template>
@@ -45,14 +47,14 @@
           </template>
           <template v-if="column.key === 'action'">
             <a-space>
-              <a-button type="link" size="small" @click="showTypeModal(record)">编辑</a-button>
+              <a-button v-access="['dicts:update']" type="link" size="small" @click="showTypeModal(record)">编辑</a-button>
               <a-popconfirm
                 title="确定删除该类型？"
                 ok-text="确定"
                 cancel-text="取消"
                 @confirm="handleTypeDelete(record)"
               >
-                <a-button type="link" size="small" danger>删除</a-button>
+                <a-button v-access="['dicts:delete']" type="link" size="small" danger>删除</a-button>
               </a-popconfirm>
             </a-space>
           </template>
@@ -107,7 +109,7 @@
   >
     <div class="flex justify-between items-center mb-4">
       <a-alert type="info" show-icon class="flex-1 mr-3" message="选项的「存储值」是写进业务表的值，改名不影响存量数据" />
-      <a-button type="primary" size="small" @click="showItemModal()">新增选项</a-button>
+      <a-button v-access="['dicts:create']" type="primary" size="small" @click="showItemModal()">新增选项</a-button>
     </div>
     <a-table
       :columns="itemColumns"
@@ -132,18 +134,19 @@
           {{ record.sort }}
         </template>
         <template v-if="column.key === 'status'">
-          <a-switch :checked="record.status === 1" @change="(v: any) => handleItemToggle(record, v)" />
+          <a-switch v-if="canUpdate" v-access="['dicts:update']" :checked="record.status === 1" @change="(v: any) => handleItemToggle(record, v)" />
+          <a-tag v-else>{{ record.status === 1 ? '启用' : '停用' }}</a-tag>
         </template>
         <template v-if="column.key === 'action'">
           <a-space>
-            <a-button type="link" size="small" @click="showItemModal(record)">编辑</a-button>
+            <a-button v-access="['dicts:update']" type="link" size="small" @click="showItemModal(record)">编辑</a-button>
             <a-popconfirm
               title="确定删除该选项？业务表存量值不受影响"
               ok-text="确定"
               cancel-text="取消"
               @confirm="handleItemDelete(record.id)"
             >
-              <a-button type="link" size="small" danger>删除</a-button>
+              <a-button v-access="['dicts:delete']" type="link" size="small" danger>删除</a-button>
             </a-popconfirm>
           </a-space>
         </template>
@@ -223,6 +226,9 @@ import { useResizableColumns } from '@/composables/useResizableColumns'
 import { useListPage } from '@/composables/useListPage'
 import { useTableScrollY } from '@/composables/useTableScrollY'
 import { invalidateDict } from '@/utils/dict-cache'
+import { hasAccessByCodes } from '@/utils/access'
+
+const canUpdate = computed(() => hasAccessByCodes('dicts:update'))
 
 // 字典项颜色标签选项（对应 a-tag 预设：processing 为蓝色）
 const COLOR_OPTIONS = [

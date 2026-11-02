@@ -1,17 +1,24 @@
+import { routerKey } from 'vue-router'
+import { Modal } from 'ant-design-vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia } from 'pinia'
 import ExampleDetailDrawer from './ExampleDetailDrawer.vue'
-import { accessExample, getExample, updateExample } from '@/api/example'
+vi.mock('@/api/dict', () => ({
+  getDict: async () => ({ code: 'item_category', name: '事项类别', options: [] }),
+  getDictAll: async () => ({ code: 'item_category', name: '事项类别', options: [] }),
+}))
+vi.mock('@/api/attachment', () => ({ formatSize: () => '1 KB', ATTACHMENT_MAX_SIZE: 500 * 1024 * 1024 }))
+import { accessExample, getExample, updateExample, getExampleFiles, addExampleFile, uploadExampleAttachment } from '@/api/example'
 
-vi.mock('@/api/example', () => ({ accessExample: vi.fn(), getExample: vi.fn(), updateExample: vi.fn(), getExampleHistory: vi.fn() }))
+vi.mock('@/api/example', () => ({ accessExample: vi.fn(), uploadExampleAttachment: vi.fn(), getExample: vi.fn(), updateExample: vi.fn(), getExampleHistory: vi.fn(), getExampleFiles: vi.fn(), addExampleFile: vi.fn(), exampleFileUrl: () => '/download' }))
 const startEdit = vi.fn()
 const exitEditToView = vi.fn()
 const printDetail = vi.fn()
 const Detail = defineComponent({
-  props: ['record', 'loading', 'saveHandler', 'reloadHandler', 'preparePrint'],
-  setup(props, { expose, slots }) { expose({ startEdit, exitEditToView, printDetail }); return () => h('div', [String(props.record?.title ?? ''), slots.before?.(), slots.panel?.()]) },
+  props: ['record', 'loading', 'saveHandler', 'reloadHandler', 'preparePrint', 'closeBlocked'],
+  setup(props, { expose, slots }) { expose({ startEdit, exitEditToView, printDetail }); return () => h('div', [String(props.record?.title ?? ''), slots.navigation?.(), slots.before?.(), slots.panel?.()]) },
 })
 const row = (id: number, title = `记录${id}`) => ({ id, title, status: 'pending' as const, description: '完整服务端说明', ownerId: 1, version: 1, createdAt: '', updatedAt: '' })
 const Alert = defineComponent({ props: ['message', 'description', 'type', 'showIcon'], setup(props) { return () => h('div', { class: 'alert-stub' }, [String(props.message ?? ''), String(props.description ?? '')]) } })
@@ -127,3 +134,54 @@ describe('示例详情数据生命周期', () => {
     wrapper.unmount()
   })
 });
+
+it('上传期间切换页签保留实例并阻止关闭，完成后仍保存到原单据', async () => {
+  vi.clearAllMocks()
+  vi.mocked(accessExample).mockResolvedValue({ record: row(1), eventId: 1 })
+  vi.mocked(getExampleFiles).mockResolvedValue([])
+  let finish!: (value: any) => void
+  vi.mocked(uploadExampleAttachment).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  vi.mocked(addExampleFile).mockResolvedValue({ id: 9 })
+  const wrapper = mount(ExampleDetailDrawer, { props: { open: true, recordId: 1, tab: 'attachments' }, global: { plugins: [createPinia()], directives: { access: {} }, stubs: { DetailDrawer: Detail, AButton: Btn, AAlert: Alert, AImage: true, APopconfirm: true } } })
+  await flushPromises()
+  const panel = wrapper.getComponent({ name: 'ExampleAttachmentPanel' })
+  const input = panel.get('input[type="file"]')
+  Object.defineProperty(input.element, 'files', { value: [new File(['data'], '测试.pdf')] })
+  await input.trigger('change'); await flushPromises()
+  expect(wrapper.getComponent(Detail).props('closeBlocked')).toBe(true)
+  await wrapper.setProps({ tab: 'detail' })
+  expect(wrapper.getComponent({ name: 'ExampleAttachmentPanel' }).vm.$.uid).toBe(panel.vm.$.uid)
+  wrapper.getComponent(Detail).vm.$emit('update:open', false); await flushPromises()
+  expect(wrapper.emitted('update:open')).toBeUndefined()
+  finish({ id: 9 }); await flushPromises()
+  expect(addExampleFile).toHaveBeenCalledWith(1, 9)
+  await wrapper.setProps({ tab: 'attachments' })
+  expect(wrapper.text()).not.toContain('重试保存')
+  wrapper.unmount()
+})
+
+it('待保存文件切页仍可重试，切换记录或关闭时可选择继续保留', async () => {
+  vi.clearAllMocks()
+  vi.mocked(accessExample).mockResolvedValue({ record: row(1), eventId: 1 })
+  vi.mocked(getExampleFiles).mockResolvedValue([])
+  vi.mocked(uploadExampleAttachment).mockResolvedValue({ id: 10 } as any)
+  vi.mocked(addExampleFile).mockRejectedValueOnce(new Error('挂接失败')).mockResolvedValue({ id: 10 })
+  let guard!: (to: any, from: any) => any
+  const router = { beforeEach: (fn: typeof guard) => { guard = fn; return () => {} } }
+  const confirm = vi.spyOn(Modal, 'confirm').mockImplementation((config: any) => { config.onCancel(); return { destroy: vi.fn(), update: vi.fn() } })
+  const wrapper = mount(ExampleDetailDrawer, { props: { open: true, recordId: 1, tab: 'attachments' }, global: { plugins: [createPinia()], provide: { [routerKey as symbol]: router }, directives: { access: {} }, stubs: { DetailDrawer: Detail, AButton: Btn, AAlert: Alert, AImage: true, APopconfirm: true } } })
+  await flushPromises()
+  const input = wrapper.get('input[type="file"]')
+  Object.defineProperty(input.element, 'files', { value: [new File(['data'], '测试.pdf')] })
+  await input.trigger('change'); await flushPromises()
+  const from = { fullPath: '/items?detail=1&tab=attachments', path: '/items', query: { detail: '1' } }
+  expect(await guard({ fullPath: '/items?detail=2', path: '/items', query: { detail: '2' } }, from)).toBe(false)
+  wrapper.getComponent(Detail).vm.$emit('update:open', false); await flushPromises()
+  expect(wrapper.emitted('update:open')).toBeUndefined()
+  await wrapper.setProps({ tab: 'detail' }); await wrapper.setProps({ tab: 'attachments' })
+  expect(wrapper.text()).toContain('重试保存')
+  await wrapper.findAll('button').find(button => button.text() === '重试保存')!.trigger('click'); await flushPromises()
+  expect(uploadExampleAttachment).toHaveBeenCalledTimes(1)
+  expect(addExampleFile).toHaveBeenLastCalledWith(1, 10)
+  wrapper.unmount(); confirm.mockRestore()
+})

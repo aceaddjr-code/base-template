@@ -62,4 +62,41 @@ describe('空库初始化', () => {
     await service.onModuleInit();
     expect(manager.save).toHaveBeenCalledTimes(secondWriteCount);
   });
+
+  it('四类管理权限挂在对应页面，默认业务角色不获得全站管理资格', async () => {
+    const { service, manager } = setup();
+    await service.onModuleInit();
+    const savedMenus = await Promise.all(manager.save.mock.calls.flatMap(([entity]: any[], index: number) => entity === Menu ? [manager.save.mock.results[index].value] : []));
+    const expected: Record<string, string[]> = {
+      announcements: ['announcements:view', 'announcements:create', 'announcements:update', 'announcements:publish', 'announcements:withdraw', 'announcements:delete'],
+      dict: ['dicts:view', 'dicts:create', 'dicts:update', 'dicts:delete'],
+      logs: ['system-logs:view'],
+      attachments: ['attachments:view', 'attachments:upload', 'attachments:download', 'attachments:delete', 'attachments:cleanup'],
+    };
+    for (const [path, codes] of Object.entries(expected)) {
+      const page = savedMenus.find(menu => menu.path === `/system/${path}`);
+      expect(savedMenus.filter(menu => menu.parentId === page.id && menu.type === 'button').map(menu => menu.permission)).toEqual(codes);
+    }
+    const roles = manager.save.mock.calls.find(([entity, data]: any[]) => entity === Role && Array.isArray(data))[1];
+    const normal = roles.find((role: Role) => role.code === 'user');
+    expect(normal.menus.some((menu: Menu) => Object.values(expected).flat().includes(menu.permission!))).toBe(false);
+  });
+
+  it('公告、通知与附件入口挂在「工作协同」下，系统管理不再包含', async () => {
+    const { service, manager } = setup();
+    await service.onModuleInit();
+    const savedMenus = await Promise.all(manager.save.mock.calls.flatMap(([entity]: any[], index: number) => entity === Menu ? [manager.save.mock.results[index].value] : []));
+    const home = savedMenus.find((menu: any) => menu.path === '/home');
+    const collaboration = savedMenus.find((menu: any) => menu.path === '/collaboration');
+    const examples = savedMenus.find((menu: any) => menu.path === '/examples');
+    const system = savedMenus.find((menu: any) => menu.path === '/system');
+    expect(collaboration?.name).toBe('工作协同');
+    // 紧挨首页下方：排序位于首页与示例业务之间
+    expect(collaboration.sort).toBeGreaterThan(home.sort);
+    expect(collaboration.sort).toBeLessThan(examples.sort);
+    expect(savedMenus.filter((menu: any) => menu.parentId === collaboration.id && menu.type === 'menu').map((menu: any) => menu.path))
+      .toEqual(['/system/announcements', '/system/notifications', '/system/attachments']);
+    expect(savedMenus.filter((menu: any) => menu.parentId === system.id && menu.type === 'menu').map((menu: any) => menu.path))
+      .toEqual(['/system/users', '/system/roles', '/system/menus', '/system/dict', '/system/logs', '/system/backups', '/system/settings']);
+  });
 });

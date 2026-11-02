@@ -2,7 +2,10 @@ import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenEx
 import { Repository, ObjectLiteral, SelectQueryBuilder, EntityManager } from 'typeorm';
 import { generateDocNo } from '../utils/doc-no-generator';
 import { getUserId, formatDate, withDocNoRetry } from '../utils/service-helpers';
-import { buildDataScope, canEditOwner, assertCanOperateOn, ScopeUser } from '../utils/data-scope';
+import {
+  buildDataScope, buildOperationGate, canEditOwner, assertCanOperateOn,
+  GLOBAL_SCOPE_KEY, ScopeOperation, ScopeUser,
+} from '../utils/data-scope';
 import { ColumnDef, dataToExcel, excelToData } from '../utils/excel-helper';
 import { dateRangeBounds } from '../utils/date-range';
 
@@ -18,6 +21,8 @@ export interface ChildSpec {
   sourceKey: string;
   /** source_id 关联时固定写入的来源标识 */
   sourceType?: string;
+  /** 来源类型字段；通用附件使用 entityType。 */
+  typeKey?: string;
   /** 子表仅单列时（如参与人姓名数组），把字符串元素映射到该列 */
   valueField?: string;
 }
@@ -278,9 +283,9 @@ export abstract class CrudBaseService<Entity extends ObjectLiteral> {
   }
 
   /** 范围读取后的动作裁决：编辑附加查看资格，删除保持独立资格。部门范围的操作开关依赖前置 SQL 过滤，因此与范围读取不拆开开放。 */
-  private assertOperationAllowed(entity: Entity, user: ScopeUser | undefined, operation: 'view' | 'edit' | 'delete'): void {
+  private assertOperationAllowed(entity: Entity, user: ScopeUser | undefined, operation: ScopeOperation): void {
     if (this.options.dataScoped !== false && this.repo.metadata?.hasColumnWithPropertyPath?.('ownerId')) {
-      const scopeKey = this.dataScopeKey ?? '__global__';
+      const scopeKey = this.dataScopeKey ?? GLOBAL_SCOPE_KEY;
       assertCanOperateOn(entity, user, scopeKey, operation);
       if (operation === 'edit') assertCanOperateOn(entity, user, scopeKey, 'view');
     }
@@ -289,7 +294,7 @@ export abstract class CrudBaseService<Entity extends ObjectLiteral> {
   /**
    * 先在当前数据范围内读取，再裁决当前操作；范围外统一视为不存在，不泄露存在性。
    */
-  private async findOneForOperation(id: number, user: ScopeUser | undefined, operation: 'view' | 'edit' | 'delete'): Promise<Entity> {
+  private async findOneForOperation(id: number, user: ScopeUser | undefined, operation: ScopeOperation): Promise<Entity> {
     let entity: Entity | null;
     if (this.options.dataScoped === false) {
       entity = await this.repo.findOne({ where: { id } as any });
@@ -308,7 +313,7 @@ export abstract class CrudBaseService<Entity extends ObjectLiteral> {
    * 事务内的带锁授权读取（写路径 seam）：在当前数据范围内按主键加行锁读取，再裁决操作开关。
    * 供子类在事务内实现「读取旧值 → 版本/规则校验 → 写入」；行锁保证读到提交前的稳定旧值。
    */
-  protected async findOneForWrite(manager: EntityManager, id: number, user: ScopeUser | undefined, operation: 'view' | 'edit' | 'delete'): Promise<Entity> {
+  protected async findOneForWrite(manager: EntityManager, id: number, user: ScopeUser | undefined, operation: ScopeOperation): Promise<Entity> {
     if (this.options.dataScoped !== false && getUserId(user) == null) throw new UnauthorizedException('未登录');
     const qb = manager.getRepository(this.repo.target).createQueryBuilder('t').where('t.id = :id', { id }).setLock('pessimistic_write');
     if (this.options.dataScoped !== false) this.applyScope(qb, 't', user);
@@ -470,7 +475,7 @@ export abstract class CrudBaseService<Entity extends ObjectLiteral> {
         const { id: _id, deletedAt: _deletedAt, createdAt: _createdAt, updatedAt: _updatedAt, ...rest } =
           (item ?? {}) as Record<string, any>;
         const key = this.childKeyOf(spec);
-        return { ...rest, [key]: parentId, ...(spec.sourceKey === 'source_id' ? { sourceType: spec.sourceType ?? null } : {}) };
+        return { ...rest, [key]: parentId, ...(spec.sourceType ? { [spec.typeKey ?? 'sourceType']: spec.sourceType } : {}) };
       });
       await manager.save(spec.repo.target, manager.create(spec.repo.target, rows));
     }
@@ -502,14 +507,14 @@ export abstract class CrudBaseService<Entity extends ObjectLiteral> {
   }
 
   /** 软删除某主表下的全部子表（事务内） */
-  private async softDeleteChildrenTx(
+  protected async softDeleteChildrenTx(
     manager: any,
     parentId: number,
     spec: ChildSpec,
   ) {
     const where: Record<string, any> = { [this.childKeyOf(spec)]: parentId };
-    if (spec.sourceKey === 'source_id' && spec.sourceType) {
-      where.sourceType = spec.sourceType;
+    if (spec.sourceType) {
+      where[spec.typeKey ?? 'sourceType'] = spec.sourceType;
     }
     const rows = await manager.find(spec.repo.target, { where });
     if (rows.length) await manager.softRemove(spec.repo.target, rows);
@@ -522,8 +527,8 @@ export abstract class CrudBaseService<Entity extends ObjectLiteral> {
       const where: Record<string, any> = {
         [this.childKeyOf(spec)]: (entity as any).id,
       };
-      if (spec.sourceKey === 'source_id' && spec.sourceType) {
-        where.sourceType = spec.sourceType;
+      if (spec.sourceType) {
+        where[spec.typeKey ?? 'sourceType'] = spec.sourceType;
       }
       result[key] = await spec.repo.find({
         where,
@@ -537,7 +542,13 @@ export abstract class CrudBaseService<Entity extends ObjectLiteral> {
 
   /** 导出不受列表每页 500 条限制；超过总量上限时明确拒绝，禁止静默截断。 */
   protected async getExportRows(user?: ScopeUser, query: ListQuery = {}): Promise<any[]> {
-    const rows = await this.buildListQueryBuilder(query, user).take(50001).getMany();
+    // 列表查询已应用共同范围；导出只叠加查看开关门，不重复拼共同范围条件。
+    // 导出比列表更严是规格口径：查看详情开关控制详情、履历、附件读取和导出（docs/用户数据范围.md）。
+    const qb = this.buildListQueryBuilder(query, user);
+    if (this.options.dataScoped !== false) {
+      buildOperationGate(qb, 't', user, this.dataScopeKey ?? GLOBAL_SCOPE_KEY, 'view');
+    }
+    const rows = await qb.take(50001).getMany();
     if (rows.length > 50000) throw new BadRequestException('导出最多 50000 条，请缩小筛选范围');
     return rows;
   }

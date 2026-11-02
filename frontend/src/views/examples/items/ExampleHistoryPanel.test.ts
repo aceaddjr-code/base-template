@@ -10,6 +10,27 @@ const result = (list: ExampleEvent[], cursor: string | null = null): HistoryResu
 const setup = (tab: 'activity' | 'operations' | 'changes' = 'activity') => mount(ExampleHistoryPanel, { props: { recordId: 1, tab, revision: 0 }, global: { stubs: { AButton: Button } } })
 beforeEach(() => vi.resetAllMocks())
 describe('单据履历外部行为', () => {
+ it('按操作人姓名查询并可重置', async () => {
+  vi.mocked(getExampleHistory).mockResolvedValue(result([]))
+  const wrapper = setup(); await flushPromises()
+  await wrapper.get('input[type="text"]').setValue('操作人')
+  await wrapper.get('form').trigger('submit'); await flushPromises()
+  expect(vi.mocked(getExampleHistory).mock.lastCall![2]).toMatchObject({ actorName: '操作人' })
+  await wrapper.findAll('button').find(b => b.text() === '重置')!.trigger('click'); await flushPromises()
+  expect(vi.mocked(getExampleHistory).mock.lastCall![2]).not.toHaveProperty('actorName')
+  wrapper.unmount()
+ })
+ it('标题变更时显示前后值，其他修改只显示单据标题', async () => {
+  const changed = event(2, '新标题')
+  changed.changes = [{ id: 1, fieldKey: 'title', fieldLabel: '标题', valueType: 'text', beforeValue: '旧标题', afterValue: '新标题', beforeLabel: null, afterLabel: null }]
+  const unchanged = event(1, '原标题'); unchanged.changes = []
+  vi.mocked(getExampleHistory).mockResolvedValue(result([changed, unchanged]))
+  const wrapper = setup(); await flushPromises()
+  const cards = wrapper.findAll('article')
+  expect(cards[0]!.text()).toContain('旧标题 → 新标题')
+  expect(cards[1]!.text()).toContain('原标题'); expect(cards[1]!.text()).not.toContain('→')
+  wrapper.unmount()
+ })
  it('快速切换记录时忽略旧响应，加载、失败与空态可区分并能独立重试', async () => {
   let finish!: (data: HistoryResult) => void
   vi.mocked(getExampleHistory).mockImplementationOnce(() => new Promise(resolve => { finish = resolve })).mockRejectedValueOnce(new Error('offline'))

@@ -1,11 +1,12 @@
 <template>
-  <DetailDrawer ref="drawer" :open="open" title="示例事项详情" :record="detail" :fields="fields" :column="2" :loading="loading" :show-fields="activeTab === 'detail'" editable printable :prepare-print="preparePrint" :preserve-navigation="preserveNavigation" :system-name="appStore.siteName" :save-access="['example-items:update']" :save-handler="save" :reload-handler="reload" @update:open="emit('update:open', $event)" @edit-started="setTab('detail')" @view-mode="setTab('detail')" @saved="onSaved">
+  <DetailDrawer ref="drawer" :open="open" title="示例事项详情" :record="detail" :fields="fields" :column="2" :loading="loading" :close-blocked="filesBusy" :show-fields="activeTab === 'detail'" editable printable :prepare-print="preparePrint" :preserve-navigation="preserveNavigation" :system-name="appStore.siteName" :save-access="['example-items:update']" :save-handler="save" :reload-handler="reload" @update:open="closeDetail($event)" @edit-started="setTab('detail')" @view-mode="setTab('detail')" @saved="onSaved">
     <template #navigation>
       <div class="document-tabs" role="tablist" aria-label="单据详情与履历"><button v-for="tab in tabs" :key="tab.key" role="tab" :aria-selected="activeTab === tab.key" @click="setTab(tab.key)">{{ tab.label }}</button></div>
     </template>
     <template #panel>
       <div v-if="loadError" role="alert">{{ loadError }} <a-button @click="openRecord()">重试</a-button></div>
       <template v-if="detail">
+        <ExampleAttachmentPanel v-if="visited.includes('attachments')" v-show="activeTab === 'attachments'" :key="detail.id" :record-id="detail.id" @changed="revision++" @state="setFileState" />
         <ExampleHistoryPanel v-for="tab in historyTabs" v-show="activeTab === tab" :key="`${recordId}-${tab}`" v-bind="{ recordId: detail.id, tab, revision }" :event-id="tab === 'changes' ? focusedEvent : undefined" @locate="locate" @clear-focus="focusedEvent = undefined" />
       </template>
       <div v-if="printError" role="alert">{{ printError }} <a-button v-if="printConflict === 'version'" :disabled="loading" @click="reloadAndPrint">重新加载后打印</a-button> <a-button v-else-if="printConflict === 'intent'" @click="restartPrint">重新发起打印</a-button> <a-button v-else @click="prepareAndRetryPrint">重试同次打印</a-button></div>
@@ -26,8 +27,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import DetailDrawer, { type DetailField } from '@/components/DetailDrawer.vue'
-import { accessExample, getExample, updateExample, type ExampleItem, type HistoryTab } from '@/api/example'
+import { accessExample, getExample, updateExample, type ExampleItem, type DocumentTab as HistoryTab } from '@/api/example'
 import ExampleHistoryPanel from './ExampleHistoryPanel.vue'
+import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
+import ExampleAttachmentPanel from './ExampleAttachmentPanel.vue'
 import { statusColor, statusLabel, statusOptions } from './example-options'
 import { useDict } from '@/composables/useDict'
 import { useAppStore } from '@/stores/app'
@@ -39,10 +42,15 @@ const appStore = useAppStore()
 const drawer = ref<InstanceType<typeof DetailDrawer>>()
 const detail = ref<ExampleItem | null>(null)
 const loading = ref(false)
-const tabs: { key: HistoryTab; label: string }[] = [{ key: 'detail', label: '单据详情' }, { key: 'activity', label: '动态' }, { key: 'operations', label: '操作日志' }, { key: 'changes', label: '修改日志' }]
+const tabs: { key: HistoryTab; label: string }[] = [{ key: 'detail', label: '单据详情' }, { key: 'activity', label: '动态' }, { key: 'operations', label: '操作日志' }, { key: 'changes', label: '修改日志' }, { key: 'attachments', label: '附件/图片' }]
 const activeTab = ref<HistoryTab>('detail'), visited = ref<HistoryTab[]>(['detail']), revision = ref(0), focusedEvent = ref<number>()
-const historyTabs = computed(() => visited.value.filter((tab): tab is Exclude<HistoryTab, 'detail'> => tab !== 'detail'))
+const historyTabs = computed(() => visited.value.filter((tab): tab is Exclude<HistoryTab, 'detail' | 'attachments'> => tab !== 'detail' && tab !== 'attachments'))
 const loadError = ref(''), printError = ref('')
+const filesBusy = ref(false), filesPending = ref(false)
+function setFileState(state: { busy: boolean; pending: boolean }) { filesBusy.value = state.busy; filesPending.value = state.pending }
+const fileNavigation = useUnsavedChanges({ active: () => props.open, saving: () => filesBusy.value, dirty: () => filesPending.value, preserveNavigation })
+function closeDetail(open: boolean) { if (open) emit('update:open', true); else void fileNavigation.attempt(() => emit('update:open', false)) }
+
 const printConflict = ref<'' | 'version' | 'intent'>('')
 let viewIntent = '', printIntent = '', retryPrint = false, submitted = false, submittedPayload = ''
 // getRandomValues 也可用于内网 HTTP 环境，避免依赖仅安全上下文提供的 randomUUID。
@@ -164,6 +172,7 @@ async function loadLatest() {
 watch([() => props.open, () => props.recordId], () => {
   requestVersion++
   detail.value = null
+  filesBusy.value = false; filesPending.value = false
   conflict.value = false
   submitted = false; printIntent = ''; printError.value = ''; printConflict.value = ''; loadError.value = ''; visited.value = ['detail']; focusedEvent.value = undefined
   activeTab.value = props.tab ?? 'detail'; if (!visited.value.includes(activeTab.value)) visited.value.push(activeTab.value)
@@ -180,7 +189,10 @@ defineExpose({ startEdit: () => drawer.value?.startEdit() })
 /* F06 冲突提示：放在字段区之前，操作按钮随提示成组，窄屏换行。 */
 .conflict-box { display: flex; flex-direction: column; gap: 8px; margin-bottom: var(--space-2); }
 .conflict-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.document-tabs { display: flex; overflow-x: auto; gap: var(--space-2); margin-bottom: var(--space-3); border-bottom: var(--rule); align-items: center; }
+.document-tabs { display: flex; overflow-x: auto; gap: var(--space-2); margin-bottom: 0; border-bottom: var(--rule); align-items: center; }
 .document-tabs button[role=tab] { flex-shrink: 0; border: 0; border-bottom: 2px solid transparent; padding: var(--space-2); background: transparent; cursor: pointer; }
 .document-tabs button[aria-selected=true] { border-bottom-color: var(--color-text-primary); font-weight: 700; }
+</style>
+<style>
+.detail-drawer .ant-drawer-body:has(> .document-tabs) { padding-bottom: 0 !important; }
 </style>

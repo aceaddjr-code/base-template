@@ -12,14 +12,15 @@
         </template>
         <template #actions>
           <a-upload
+            v-if="hasAccessByCodes('attachments:upload')"
             :show-upload-list="false"
             :before-upload="handleUpload"
             :disabled="uploading"
           >
-            <a-button type="primary" :loading="uploading">上传附件</a-button>
+            <a-button v-access="['attachments:upload']" type="primary" :loading="uploading">上传附件</a-button>
           </a-upload>
           <a-popconfirm title="确认清理所有超过保留期的临时附件？" ok-text="确定" cancel-text="取消" @confirm="handleCleanup">
-            <a-button danger :loading="cleaning">清理过期临时</a-button>
+            <a-button v-access="['attachments:cleanup']" danger :loading="cleaning">清理过期临时</a-button>
           </a-popconfirm>
         </template>
       </PageToolbar>
@@ -52,9 +53,9 @@
           </template>
           <template v-if="column.key === 'action'">
             <a-space :size="0">
-              <a-button type="link" size="small" :aria-label="`下载${record.name}`" @click="handleDownload(record as AttachmentItem)">下载</a-button>
+              <a-button v-access="['attachments:download']" type="link" size="small" :aria-label="`下载${record.name}`" @click="handleDownload(record as AttachmentItem)">下载</a-button>
               <a-popconfirm title="确定删除该附件？删除后不可恢复。" ok-text="确定" cancel-text="取消" @confirm="handleDelete(record as AttachmentItem)">
-                <a-button type="link" size="small" danger>删除</a-button>
+                <a-button v-access="['attachments:delete']" type="link" size="small" danger>删除</a-button>
               </a-popconfirm>
             </a-space>
           </template>
@@ -72,7 +73,7 @@ import { computed, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import {
   getAttachments, uploadAttachment, deleteAttachment, cleanupAttachments,
-  attachmentDownloadUrl, formatSize, type AttachmentItem, type AttachmentStatus,
+  attachmentDownloadUrl, formatSize, ATTACHMENT_MAX_SIZE, type AttachmentItem, type AttachmentStatus,
 } from '@/api/attachment'
 import Page from '@/components/Page.vue'
 import PageToolbar from '@/components/PageToolbar.vue'
@@ -81,6 +82,7 @@ import { useListPage } from '@/composables/useListPage'
 import { useListQuery } from '@/composables/useListQuery'
 import { useAppStore } from '@/stores/app'
 import { formatDateTime } from '@/utils/format'
+import { hasAccessByCodes } from '@/utils/access'
 
 const uploading = ref(false)
 const cleaning = ref(false)
@@ -104,6 +106,7 @@ const columns = [
 ]
 
 async function handleUpload(file: File): Promise<boolean> {
+  if (!file.size || file.size > ATTACHMENT_MAX_SIZE) { message.error('文件必须非空且不超过 500MB'); return false }
   uploading.value = true
   try {
     await uploadAttachment(file)

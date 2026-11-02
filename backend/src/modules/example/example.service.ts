@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, HttpException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, HttpException, Injectable, NotFoundException, Optional, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, Repository } from 'typeorm';
 import { CrudBaseService, ListQuery, conflictWithReason } from '../../common/services/crud-base.service';
@@ -10,7 +10,11 @@ import { ExampleEvent, ExampleChange } from './example-event.entity';
 import { ExampleAccessDto, ExampleHistoryQuery } from './example-history.dto';
 import { getUserId } from '../../common/utils/service-helpers';
 import { dateRangeBounds } from '../../common/utils/date-range';
+import { extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { Attachment } from '../attachment/attachment.entity';
+import { AttachmentService, ATTACHMENT_IMAGE_MIMES, ATTACHMENT_PREVIEW_IMAGE_EXTS } from '../attachment/attachment.service';
+import type { JwtPayload } from '../auth/jwt.strategy';
 
 const CATEGORY_DICT = 'item_category';
 import type { ScopeUser } from '../../common/utils/data-scope';
@@ -29,8 +33,10 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
   constructor(
     @InjectRepository(ExampleItem) repo: Repository<ExampleItem>,
     private readonly dictService?: DictService,
+    @Optional() @InjectRepository(Attachment) attachmentRepo?: Repository<Attachment>,
+    @Optional() private readonly attachmentService?: AttachmentService,
   ) {
-    super(repo, {}, {
+    super(repo, attachmentRepo ? { attachments: { repo: attachmentRepo, sourceKey: 'entityId', sourceType: 'example-items', typeKey: 'entityType' } } : {}, {
       entityName: '示例事项',
       optimisticLock: true,
       searchFields: ['title', 'description'],
@@ -52,6 +58,59 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
         category: ['类别'],
         description: ['说明'],
       },
+    });
+  }
+
+  /** 附件列表独立读取，普通详情不下发文件路径等内部元数据。 */
+  protected override async withChildren(entity: ExampleItem) { return { ...entity }; }
+
+  async uploadAttachment(file: Express.Multer.File, user: JwtPayload) {
+    return this.attachmentService!.saveFile(file, user);
+  }
+
+  async files(id: number, user?: ScopeUser) {
+    return this.repo.manager.transaction(async manager => {
+      await this.findOneForWrite(manager, id, user, 'view');
+      const rows = await manager.getRepository(Attachment).find({ where: { entityType: 'example-items', entityId: id, status: 'bound' }, order: { id: 'DESC' } });
+      return rows.map(row => ({ id: row.id, name: row.originalName, size: row.size, mimeType: row.mimeType, createdAt: row.createdAt, image: !!ATTACHMENT_IMAGE_MIMES[extname(row.originalName).toLowerCase()], previewable: ATTACHMENT_PREVIEW_IMAGE_EXTS.has(extname(row.originalName).toLowerCase()) }));
+    });
+  }
+
+  async addFile(id: number, attachmentId: number, user?: ScopeUser) {
+    return this.repo.manager.transaction(async manager => {
+      const item = await this.findOneForWrite(manager, id, user, 'edit');
+      const repo = manager.getRepository(Attachment);
+      const row = await repo.findOne({ where: { id: attachmentId }, lock: { mode: 'pessimistic_write' } });
+      if (!row || row.createdBy !== getUserId(user)) throw new NotFoundException('临时附件不存在');
+      if (row.status === 'bound' && row.entityType === 'example-items' && row.entityId === id) return { id: row.id };
+      if (row.status !== 'temp' || row.entityId != null || row.entityType != null) throw new BadRequestException('附件已被使用');
+      await repo.update(row.id, { entityId: id, entityType: this.children.attachments.sourceType, status: 'bound', updatedBy: getUserId(user) });
+      const event = await this.appendEvent(manager, item, 'attachment_upload', user);
+      await manager.getRepository(ExampleEvent).update(event.id, { objectLabel: row.originalName.slice(0, 100) });
+      return { id: row.id };
+    });
+  }
+
+  async file(id: number, fileId: number, user?: ScopeUser) {
+    const row = await this.repo.manager.transaction(async manager => {
+      await this.findOneForWrite(manager, id, user, 'view');
+      const attachment = await manager.getRepository(Attachment).findOneBy({ id: fileId, entityType: 'example-items', entityId: id, status: 'bound' });
+      if (!attachment) throw new NotFoundException('附件不存在');
+      return attachment;
+    });
+    return { row, ...this.attachmentService!.openDownload(row) };
+  }
+
+  async removeFile(id: number, fileId: number, user?: ScopeUser) {
+    return this.repo.manager.transaction(async manager => {
+      const item = await this.findOneForWrite(manager, id, user, 'edit');
+      const repo = manager.getRepository(Attachment);
+      const row = await repo.findOneBy({ id: fileId, entityType: 'example-items', entityId: id, status: 'bound' });
+      if (!row) throw new NotFoundException('附件不存在');
+      await repo.softDelete(row.id);
+      const event = await this.appendEvent(manager, item, 'attachment_delete', user);
+      await manager.getRepository(ExampleEvent).update(event.id, { objectLabel: row.originalName.slice(0, 100) });
+      return { success: true };
     });
   }
 
@@ -109,7 +168,7 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
     const repo = manager.getRepository(ExampleEvent);
     const bounds = dateRangeBounds(query.from, query.to);
     let upper = query.upper;
-    const fingerprint = JSON.stringify([id, kind, query.action ?? '', query.actorId ?? '', query.from ?? '', query.to ?? '', query.eventId ?? '']);
+    const fingerprint = JSON.stringify([id, kind, query.action ?? '', query.actorId ?? '', query.from ?? '', query.to ?? '', query.eventId ?? '', ...(query.actorName ? [query.actorName] : [])]);
     let cursor: { before: string; id: number; upper: number; fingerprint: string } | undefined;
     if (query.cursor) {
       try {
@@ -129,6 +188,7 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
     if (kind === 'changes') qb.andWhere('e.action = :updateAction', { updateAction: 'update' });
     if (query.action) qb.andWhere('e.action = :action', { action: query.action });
     if (query.actorId) qb.andWhere('e.actorId = :actorId', { actorId: query.actorId });
+    if (query.actorName) qb.andWhere("e.actorName LIKE :actorName ESCAPE '!'", { actorName: `%${query.actorName.replace(/[!%_]/g, '!$&')}%` });
     // 日期筛选明确按北京时间解释，再由驱动按同一连接时区绑定 Date。
     if (bounds.from) qb.andWhere('e.occurredAt >= :from', { from: new Date(bounds.from.replace(' ', 'T') + '+08:00') });
     if (bounds.before) qb.andWhere('e.occurredAt < :before', { before: new Date(bounds.before.replace(' ', 'T') + '+08:00') });
@@ -142,8 +202,8 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
       .skip(kind === 'activity' ? 0 : ((query.page ?? 1) - 1) * size).take(size + (kind === 'activity' ? 1 : 0)).getRawAndEntities();
     const hasMore = kind === 'activity' && result.entities.length > size;
     const events = result.entities.slice(0, size);
-    const diffs = events.length && kind === 'changes' ? await manager.getRepository(ExampleChange).find({ where: { eventId: In(events.map(e => e.id)) }, order: { id: 'ASC' } }) : [];
-    const list = events.map(({ requestId: _request, interactionId: _interaction, ...event }) => ({ ...event, ...(kind === 'changes' ? { changes: diffs.filter(d => d.eventId === event.id) } : {}) }));
+    const diffs = events.length && kind !== 'operations' ? await manager.getRepository(ExampleChange).find({ where: { eventId: In(events.map(e => e.id)), ...(kind === 'activity' ? { fieldKey: 'title' } : {}) }, order: { id: 'ASC' } }) : [];
+    const list = events.map(({ requestId: _request, interactionId: _interaction, ...event }) => ({ ...event, ...(kind !== 'operations' ? { changes: diffs.filter(d => d.eventId === event.id) } : {}) }));
     const last = events[events.length - 1];
     return { list, total, upper, page: query.page ?? 1, pageSize: size,
       nextCursor: hasMore ? Buffer.from(JSON.stringify({ before: result.raw[size - 1].cursor_time, id: last.id, upper, fingerprint })).toString('base64url') : null,
@@ -197,6 +257,7 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
     await this.repo.manager.transaction(async manager => {
       const item = await this.findOneForWrite(manager, id, user, 'delete');
       await manager.getRepository(ExampleItem).softDelete(id);
+      if (this.children.attachments) await this.softDeleteChildrenTx(manager, id, this.children.attachments);
       await this.appendEvent(manager, item, 'delete', user, context);
     });
     return { success: true };

@@ -24,7 +24,7 @@ export const SETTING_REGISTRY: SettingDefinition[] = [
     key: 'site.name',
     name: '系统名称',
     type: 'string',
-    defaultValue: '企业管理系统',
+    defaultValue: 'BaseSuite平台',
     public: true,
     maxLength: 50,
     required: true,

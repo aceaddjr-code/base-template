@@ -103,7 +103,7 @@ export class UserController {
     @Body() dto: { rows?: unknown },
   ) {
     const userId = parseInt(id, 10);
-    return this.userDataScopeService.saveRows(userId, (dto?.rows ?? []) as any, caller?.sub ?? userId);
+    return this.userDataScopeService.saveRows(userId, dto?.rows as any, caller?.sub ?? userId);
   }
 
   /** 删除用户 */

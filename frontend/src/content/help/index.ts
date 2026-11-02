@@ -30,12 +30,12 @@ export const PAGE_HELP: PageHelpEntry[] = [
   { route: '/system/roles', sectionId: 'pages', heading: '角色 / 菜单 / 数据字典' },
   { route: '/system/menus', sectionId: 'pages', heading: '角色 / 菜单 / 数据字典' },
   { route: '/system/dict', sectionId: 'pages', heading: '角色 / 菜单 / 数据字典' },
-  { route: '/system/notifications', sectionId: 'pages', heading: '系统管理（通知 / 公告 / 参数 / 附件 / 备份 / 日志）' },
-  { route: '/system/announcements', sectionId: 'pages', heading: '系统管理（通知 / 公告 / 参数 / 附件 / 备份 / 日志）' },
-  { route: '/system/settings', sectionId: 'pages', heading: '系统管理（通知 / 公告 / 参数 / 附件 / 备份 / 日志）' },
-  { route: '/system/attachments', sectionId: 'pages', heading: '系统管理（通知 / 公告 / 参数 / 附件 / 备份 / 日志）' },
-  { route: '/system/backups', sectionId: 'pages', heading: '系统管理（通知 / 公告 / 参数 / 附件 / 备份 / 日志）' },
-  { route: '/system/logs', sectionId: 'pages', heading: '系统管理（通知 / 公告 / 参数 / 附件 / 备份 / 日志）' },
+  { route: '/system/announcements', sectionId: 'pages', heading: '工作协同（公告 / 通知 / 附件）' },
+  { route: '/system/notifications', sectionId: 'pages', heading: '工作协同（公告 / 通知 / 附件）' },
+  { route: '/system/attachments', sectionId: 'pages', heading: '工作协同（公告 / 通知 / 附件）' },
+  { route: '/system/settings', sectionId: 'pages', heading: '系统管理（参数 / 备份 / 日志）' },
+  { route: '/system/backups', sectionId: 'pages', heading: '系统管理（参数 / 备份 / 日志）' },
+  { route: '/system/logs', sectionId: 'pages', heading: '系统管理（参数 / 备份 / 日志）' },
 ]
 
 export function pageHelpFor(routePath: string): PageHelpEntry | undefined {

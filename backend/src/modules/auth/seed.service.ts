@@ -10,6 +10,21 @@ import { Department } from '../department/department.entity';
 import { SysDictType } from '../system/entities/sys-dict-type.entity';
 import { SysDictItem } from '../system/entities/sys-dict-item.entity';
 
+/**
+ * 管理页操作权限声明（docs/管理功能权限码.md）：新库种子、HTTP 边界测试与升级补丁
+ * （docs/sql/20261031-management-permissions.sql）共用同一清单；新增管理权限时四处同步。
+ */
+export const MANAGEMENT_ACTION_SPEC: Record<string, { prefix: string; actions: Array<[string, string]> }> = {
+  announcements: { prefix: 'announcements', actions: [['view', '查看'], ['create', '新增'], ['update', '编辑'], ['publish', '发布'], ['withdraw', '撤回'], ['delete', '删除']] },
+  dict: { prefix: 'dicts', actions: [['view', '查看'], ['create', '新增'], ['update', '编辑'], ['delete', '删除']] },
+  logs: { prefix: 'system-logs', actions: [['view', '查看']] },
+  attachments: { prefix: 'attachments', actions: [['view', '查看'], ['upload', '上传'], ['download', '下载'], ['delete', '删除'], ['cleanup', '清理过期临时附件']] },
+};
+
+/** 全部管理操作权限码（16 项）；测试用它交叉核对种子与补丁不漏项 */
+export const MANAGEMENT_PERMISSION_CODES: string[] = Object.values(MANAGEMENT_ACTION_SPEC)
+  .flatMap(({ prefix, actions }) => actions.map(([action]) => `${prefix}:${action}`));
+
 /** 仅初始化空库；已有账号、菜单、角色和授权由管理界面维护。 */
 @Injectable()
 export class SeedService implements OnModuleInit {
@@ -46,16 +61,25 @@ export class SeedService implements OnModuleInit {
       return menu;
     };
     const home = await add({ name:'首页', path:'/home', icon:'HomeOutlined', sort:1 });
+    const collaboration = await add({ name:'工作协同', path:'/collaboration', icon:'TeamOutlined', sort:2 });
     const examples = await add({ name:'示例业务', path:'/examples', icon:'AppstoreOutlined', sort:10 });
     const items = await add({ name:'示例事项', path:'/examples/items', parentId:examples.id, sort:11 });
     const actions = [['view','查看'],['create','新增'],['update','编辑'],['delete','删除'],['import','导入'],['export','导出']];
     const exampleButtons: Menu[] = [];
     for (const [action,name] of actions) exampleButtons.push(await add({ name, type:'button', permission:`example-items:${action}`, parentId:items.id, sort:exampleButtons.length+1 }));
     const system = await add({ name:'系统管理', path:'/system', icon:'SettingOutlined', sort:90 });
-    for (const [index,[name,path]] of [
-      ['用户管理','users'],['角色管理','roles'],['菜单管理','menus'],['数据字典','dict'],
-      ['操作日志','logs'],['数据备份','backups'],['我的通知','notifications'],['系统参数','settings'],['系统公告','announcements'],['附件管理','attachments'],
-    ].entries()) await add({ name, path:`/system/${path}`, parentId:system.id, sort:91+index });
+    for (const [parent, pages, baseSort] of [
+      [collaboration, [['系统公告','announcements'],['我的通知','notifications'],['附件管理','attachments']], 3],
+      [system, [['用户管理','users'],['角色管理','roles'],['菜单管理','menus'],['数据字典','dict'],['操作日志','logs'],['数据备份','backups'],['系统参数','settings']], 91],
+    ] as Array<[Menu, Array<[string, string]>, number]>) {
+      for (const [index,[name,path]] of pages.entries()) {
+        const page = await add({ name, path:`/system/${path}`, parentId:parent.id, sort:baseSort+index });
+        const spec = MANAGEMENT_ACTION_SPEC[path];
+        for (const [sort, [action, label]] of (spec?.actions ?? []).entries()) {
+          await add({ name: label, type: 'button', permission: `${spec.prefix}:${action}`, parentId: page.id, sort: sort + 1 });
+        }
+      }
+    }
     for (const [action,name] of [['create','新增部门'],['update','编辑部门'],['delete','删除部门']]) {
       await add({ name, type:'button', permission:`departments:${action}`, parentId:system.id });
     }

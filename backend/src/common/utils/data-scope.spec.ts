@@ -32,7 +32,7 @@ describe('显式用户数据范围', () => {
   });
 
   it('编辑权限开关不能扩大按用户配置的目标集合', () => {
-    const user={sub:2,dataScopes:[{scopeKey:'__global__',scopeType:'by_users',targets:[7],editOthers:1}]};
+    const user={sub:2,dataScopes:[{scopeKey:'example-items',scopeType:'by_users',targets:[7],editOthers:1}]};
     expect(() => assertCanOperateOn({ownerId:7},user,'example-items','edit')).not.toThrow();
     expect(() => assertCanOperateOn({ownerId:9},user,'example-items','edit')).toThrow(ForbiddenException);
     expect(() => assertCanOperateOn({ownerId:7},user,'example-items','delete')).toThrow(ForbiddenException);

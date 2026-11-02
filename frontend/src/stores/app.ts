@@ -25,7 +25,7 @@ export const useAppStore = defineStore('app', () => {
   const access = useAccessStore()
   // 公开系统参数（登录后加载；失败保留默认值，重新登录重试）
   const publicSettings = ref<Record<string, string>>({})
-  const siteName = computed(() => publicSettings.value['site.name'] || import.meta.env.VITE_APP_NAME || '企业管理系统')
+  const siteName = computed(() => publicSettings.value['site.name'] || import.meta.env.VITE_APP_NAME || 'BaseSuite平台')
   const helpContact = computed(() => publicSettings.value['help.contact'] || '')
   let publicSettingsJob: Promise<void> | null = null
   let publicSettingsJobGeneration = -1

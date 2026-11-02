@@ -6,22 +6,17 @@ import { UserDataScopeTarget } from './user-data-scope-target.entity';
 import { User } from './user.entity';
 import { Department } from '../department/department.entity';
 import { SCOPE_FORM_REGISTRY, SCOPE_KEYS } from './scope-form.registry';
-import { SCOPE_TYPES, type ScopeType, type UserScopeEntry } from '../../common/utils/data-scope';
+import {
+  GLOBAL_SCOPE_KEY, SCOPE_OPERATIONS, SCOPE_TYPES, normalizeScopeFlags,
+  type ScopeFlags, type ScopeType, type UserScopeEntry,
+} from '../../common/utils/data-scope';
 
-/** 配置面板行（含行 id，用于编辑回显） */
-export interface ScopeConfigRow {
+/** 配置面板行（含行 id，用于编辑回显）；开关值已按缺省口径归一化 */
+export interface ScopeConfigRow extends ScopeFlags {
   id: number;
   scopeKey: string;
   scopeType: ScopeType;
-  viewOthers: number;
-  editOthers: number;
-  deleteOthers: number;
   targets: number[];
-}
-
-/** 无任何配置时的 __global__ self 兜底行：读侧回退与写侧补齐共用同一口径 */
-function defaultGlobalRow(id = 0): ScopeConfigRow {
-  return { id, scopeKey: '__global__', scopeType: 'self', viewOthers: 1, editOthers: 0, deleteOthers: 0, targets: [] };
 }
 
 /**
@@ -46,7 +41,7 @@ export class UserDataScopeService {
     return SCOPE_FORM_REGISTRY;
   }
 
-  /** 行 + targets 一次装载（会话与面板共用） */
+  /** 行 + targets 一次装载（会话与面板共用）；开关按缺省口径归一化，是唯一的缺省真相源 */
   private async loadRows(userId: number): Promise<ScopeConfigRow[]> {
     const rows = await this.userDataScopeRepo.find({ where: { userId }, order: { id: 'ASC' } });
     const ids = rows.map((r) => r.id);
@@ -58,28 +53,20 @@ export class UserDataScopeService {
       scopeKey: r.scopeKey,
       // 实体列为 string；入库值均经 saveRows 按 SCOPE_TYPES 校验，读取时收窄
       scopeType: r.scopeType as ScopeType,
-      viewOthers: r.viewOthers,
-      editOthers: r.editOthers,
-      deleteOthers: r.deleteOthers,
+      ...normalizeScopeFlags(r),
       targets: targets.filter((t) => t.userDataScopeId === r.id).map((t) => t.targetId),
     }));
   }
 
-  /** 装载进登录会话的数据范围；无配置回退 __global__ self */
+  /** 装载进登录会话的数据范围；无配置返回空数组，读侧对未配置表单按仅本人回退 */
   async loadForSession(userId: number): Promise<UserScopeEntry[]> {
-    const rows = await this.loadRows(userId);
-    if (!rows.length) {
-      const { id: _id, ...entry } = defaultGlobalRow();
-      return [entry];
-    }
-    return rows.map(({ id: _id, ...entry }) => entry);
+    return (await this.loadRows(userId)).map(({ id: _id, ...entry }) => entry);
   }
 
-  /** 配置面板回显；无配置补默认行（id: 0） */
+  /** 配置面板回显；无配置返回空数组（前端按表单渲染默认仅本人） */
   async getPanelRows(userId: number): Promise<ScopeConfigRow[]> {
     await this.assertUserExists(userId);
-    const rows = await this.loadRows(userId);
-    return rows.length ? rows : [defaultGlobalRow()];
+    return this.loadRows(userId);
   }
 
   /**
@@ -95,6 +82,9 @@ export class UserDataScopeService {
       editOthers?: number;
       deleteOthers?: number;
       targets?: number[];
+      viewSelf?: number;
+      editSelf?: number;
+      deleteSelf?: number;
     }[],
     callerId: number,
   ) {
@@ -104,12 +94,16 @@ export class UserDataScopeService {
     const VALID_TYPES = new Set<string>(SCOPE_TYPES);
     const seen = new Set<string>();
     const clean = rows.map(r => {
-      if (!r || !(r.scopeKey === '__global__' || SCOPE_KEYS.has(r.scopeKey)) || !VALID_TYPES.has(r.scopeType)) {
+      if (!r || r.scopeKey === GLOBAL_SCOPE_KEY) {
+        // __global__ 是遗留「所有表单」行，读侧已不回退；按表单直接配置，不再接受或补写
+        throw new BadRequestException('数据范围需按表单直接配置，不再支持所有表单默认值');
+      }
+      if (!SCOPE_KEYS.has(r.scopeKey) || !VALID_TYPES.has(r.scopeType)) {
         throw new BadRequestException('数据范围的表单或类型无效');
       }
       if (seen.has(r.scopeKey)) throw new BadRequestException('数据范围表单不能重复');
       seen.add(r.scopeKey);
-      const values = [r.viewOthers, r.editOthers, r.deleteOthers];
+      const values = SCOPE_OPERATIONS.flatMap(op => [r[`${op}Others`], r[`${op}Self`]]);
       if (values.some(value => value !== undefined && value !== 0 && value !== 1)) {
         throw new BadRequestException('操作开关必须为 0 或 1');
       }
@@ -119,15 +113,13 @@ export class UserDataScopeService {
       const targeted = r.scopeType === 'by_users' || r.scopeType === 'by_depts';
       const targets = targeted ? [...new Set(r.targets ?? [])] : [];
       if (targeted && !targets.length) throw new BadRequestException('请指定数据范围目标');
-      return { scopeKey:r.scopeKey, scopeType:r.scopeType, viewOthers:r.viewOthers ?? 0,
-        editOthers:r.editOthers ?? 0, deleteOthers:r.deleteOthers ?? 0, targets };
+      return { scopeKey: r.scopeKey, scopeType: r.scopeType, targets, ...normalizeScopeFlags(r) };
     });
-    if (!seen.has('__global__')) clean.unshift({ scopeKey:'__global__', scopeType:'self', viewOthers:1, editOthers:0, deleteOthers:0, targets:[] });
     for (const row of clean) {
       if (!row.targets.length) continue;
       const found = row.scopeType === 'by_users'
-        ? await this.userRepo.find({ where: { id: In(row.targets) }, select: { id:true } })
-        : await this.deptRepo.find({ where: { id: In(row.targets) }, select: { id:true } });
+        ? await this.userRepo.find({ where: { id: In(row.targets) }, select: { id: true } })
+        : await this.deptRepo.find({ where: { id: In(row.targets) }, select: { id: true } });
       if (found.length !== row.targets.length) throw new BadRequestException('数据范围包含不存在的目标');
     }
 
@@ -145,6 +137,9 @@ export class UserDataScopeService {
           viewOthers: r.viewOthers,
           editOthers: r.editOthers,
           deleteOthers: r.deleteOthers,
+          viewSelf: r.viewSelf,
+          editSelf: r.editSelf,
+          deleteSelf: r.deleteSelf,
           ownerId: userId,
           createdBy: callerId,
         });

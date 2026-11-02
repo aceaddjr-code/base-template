@@ -6,9 +6,9 @@
     placement="right"
     :width="fullscreen ? '100%' : `min(${width}px, 100vw)`"
     :body-style="{ background: 'var(--color-surface)' }"
-    :mask-closable="!saving"
-    :keyboard="!saving"
-    :closable="!saving"
+    :mask-closable="!saving && !closeBlocked"
+    :keyboard="!saving && !closeBlocked"
+    :closable="!saving && !closeBlocked"
     @close="requestClose"
   >
 
@@ -157,6 +157,8 @@ const props = withDefaults(
     record: Record<string, any> | null | undefined
     fields: DetailField[]
     loading?: boolean
+    /** 子面板正在提交时阻止关闭。 */
+    closeBlocked?: boolean
 
     showAuditTime?: boolean
     column?: number
@@ -279,7 +281,7 @@ const feedback = editSession.feedback
 const bindRoot = editSession.bindRoot
 const { errors: fieldErrors, summary: feedbackItems, requestId: feedbackRequestId } = feedback
 
-function requestClose() { editSession.guard(() => { resetEditState(); emit('update:open', false) }) }
+function requestClose() { if (!props.closeBlocked) editSession.guard(() => { resetEditState(); emit('update:open', false) }) }
 
 function resetEditState() {
   editSession.visible.value = false

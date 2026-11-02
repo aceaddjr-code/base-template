@@ -1,5 +1,7 @@
 import request, { type FormRequestOptions } from './request'
 
+export const ATTACHMENT_MAX_SIZE = 500 * 1024 * 1024
+
 export type AttachmentStatus = 'temp' | 'bound'
 
 export interface AttachmentItem {
@@ -25,10 +27,10 @@ export function getAttachments(params: { page?: number; pageSize?: number; statu
   return request.get('/attachments', { params })
 }
 
-export function uploadAttachment(file: File, options?: FormRequestOptions): Promise<AttachmentItem> {
+export function uploadAttachment(file: File, options?: FormRequestOptions & { signal?: AbortSignal }): Promise<AttachmentItem> {
   const form = new FormData()
   form.append('file', file)
-  return request.post('/attachments', form, options)
+  return request.post('/attachments', form, { ...options, timeout: 30 * 60 * 1000 })
 }
 
 export function deleteAttachment(id: number): Promise<{ message: string }> {

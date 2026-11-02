@@ -8,14 +8,51 @@ import { excelFileFilter, sendExcel } from '../../common/utils/excel-helper';
 import type { Request, Response } from 'express';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { getUserId } from '../../common/utils/service-helpers';
-import { ExampleAccessDto, ExampleHistoryQuery } from './example-history.dto';
+import { ExampleAccessDto, ExampleHistoryQuery, ExampleFileDto } from './example-history.dto';
+import { pipeline } from 'node:stream/promises';
+import { ATTACHMENT_IMAGE_MIMES, ATTACHMENT_PREVIEW_IMAGE_EXTS } from '../attachment/attachment.service';
+import { extname } from 'node:path';
 import { SkipRequestAudit } from '../../common/decorators/skip-request-audit.decorator';
+import { AttachmentUploadInterceptor } from '../attachment/attachment-upload.interceptor';
 
 @CrudPermPrefix('example-items')
 @Controller('examples/items')
 export class ExampleController extends CrudBaseController {
   constructor(protected readonly service: ExampleService) {
     super(service);
+  }
+
+  /** 单据的临时文件上传跟随单据编辑权限；挂接时另行校验记录的数据范围。 */
+  @Post('attachments/upload')
+  @RequirePermission('example-items:update')
+  @UseInterceptors(AttachmentUploadInterceptor)
+  uploadAttachment(@UploadedFile() file: Express.Multer.File, @Req() req: Request) {
+    if (!file?.filename) throw new BadRequestException('请选择文件');
+    return this.service.uploadAttachment(file, req.user as any);
+  }
+
+  @Get(':id/attachments')
+  @RequirePermission('example-items:view')
+  files(@Param('id', ParseIntPipe) id: number, @Req() req: Request) { return this.service.files(id, req.user as any); }
+
+  @Post(':id/attachments')
+  @RequirePermission('example-items:update')
+  addFile(@Param('id', ParseIntPipe) id: number, @Body() dto: ExampleFileDto, @Req() req: Request) { return this.service.addFile(id, dto.attachmentId, req.user as any); }
+
+  @Delete(':id/attachments/:fileId')
+  @RequirePermission('example-items:update')
+  removeFile(@Param('id', ParseIntPipe) id: number, @Param('fileId', ParseIntPipe) fileId: number, @Req() req: Request) { return this.service.removeFile(id, fileId, req.user as any); }
+
+  @Get(':id/attachments/:fileId/download')
+  @RequirePermission('example-items:view')
+  async downloadFile(@Param('id', ParseIntPipe) id: number, @Param('fileId', ParseIntPipe) fileId: number, @Req() req: Request, @Res() res: Response) {
+    const file = await this.service.file(id, fileId, req.user as any);
+    const imageMime = ATTACHMENT_IMAGE_MIMES[extname(file.row.originalName).toLowerCase()];
+    res.setHeader('Content-Type', imageMime || 'application/octet-stream');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Content-Disposition', req.query.preview === '1' && ATTACHMENT_PREVIEW_IMAGE_EXTS.has(extname(file.row.originalName).toLowerCase()) ? 'inline' : file.contentDisposition);
+    try { await pipeline(file.stream, res); } catch { res.destroy(); }
   }
 
   @Post(':id/access-events')

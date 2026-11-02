@@ -58,7 +58,8 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: proxyTarget,
-        changeOrigin: true,
+        // 保留浏览器访问的 Host，使 multipart 同源校验在 IP/域名访问时也正确。
+        changeOrigin: false,
       },
       // 2026-08-11 问题反馈图片静态访问（dev 直连后端 uploads）
       '/uploads': {
@@ -77,7 +78,7 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: proxyTarget,
-        changeOrigin: true,
+        changeOrigin: false,
       },
       '/uploads': {
         target: proxyTarget,

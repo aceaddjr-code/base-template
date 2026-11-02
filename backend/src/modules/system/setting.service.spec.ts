@@ -26,7 +26,7 @@ describe('SettingService', () => {
     const list = await service.listAll();
     expect(list.map((item) => item.key)).toEqual(['site.name', 'help.contact']);
     const site = list[0]!;
-    expect(site.value).toBe('企业管理系统');
+    expect(site.value).toBe('BaseSuite平台');
     expect(site.modified).toBe(false);
   });
 

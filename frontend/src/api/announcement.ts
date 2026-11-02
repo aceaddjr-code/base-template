@@ -2,7 +2,7 @@ import request, { type FormRequestOptions } from './request'
 
 export type AnnouncementStatus = 'draft' | 'published' | 'withdrawn'
 
-/** 管理列表/详情（admin 或详情阅读接口返回） */
+/** 管理列表/详情（按管理权限或已发布内容阅读接口返回） */
 export interface AnnouncementItem {
   id: number
   title: string
@@ -27,7 +27,7 @@ export interface AnnouncementPage<T> {
   pageSize: number
 }
 
-/** 管理列表（仅 admin） */
+/** 管理列表（announcements:view） */
 export function getAnnouncements(params: { page?: number; pageSize?: number; status?: AnnouncementStatus; keyword?: string }): Promise<AnnouncementPage<AnnouncementItem>> {
   return request.get('/system/announcements', { params })
 }
@@ -59,4 +59,8 @@ export function withdrawAnnouncement(id: number): Promise<AnnouncementItem> {
 
 export function deleteAnnouncement(id: number): Promise<{ message: string }> {
   return request.delete(`/system/announcements/${id}`)
+}
+
+export function getAnnouncementManagementDetail(id: number): Promise<AnnouncementItem> {
+  return request.get(`/system/announcements/manage/${id}`)
 }

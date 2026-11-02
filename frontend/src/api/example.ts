@@ -17,6 +17,7 @@ export function listExamples(params: Record<string, any>, signal?: AbortSignal):
   return request.get('/examples/items', { params, signal })
 }
 export function getExample(id: number, options?: FormRequestOptions): Promise<ExampleItem> { return request.get(`/examples/items/${id}`, options) }
+export type DocumentTab = HistoryTab | 'attachments'
 export type HistoryTab = 'detail' | 'activity' | 'operations' | 'changes'
 export interface ExampleEvent {
   id: number; itemId: number; action: string; result: string; actorId: number; actorName: string
@@ -78,4 +79,17 @@ export function getExampleExportUrl(params: ExampleListQuery & { cols: string; i
     if (value !== undefined && value !== '') query.set(key, String(value))
   }
   return `${API_BASE}/examples/items/export?${query}`
+}
+
+export interface ExampleFile { id: number; name: string; size: number; mimeType: string; image: boolean; previewable?: boolean; createdAt: string }
+export function getExampleFiles(id: number): Promise<ExampleFile[]> { return request.get(`/examples/items/${id}/attachments`, { errorFeedback: 'form' }) }
+export function addExampleFile(id: number, attachmentId: number): Promise<{ id: number }> { return request.post(`/examples/items/${id}/attachments`, { attachmentId }, { errorFeedback: 'form' }) }
+export function removeExampleFile(id: number, fileId: number): Promise<void> { return request.delete(`/examples/items/${id}/attachments/${fileId}`, { errorFeedback: 'form' }) }
+export function exampleFileUrl(id: number, fileId: number, preview = false): string { return `${API_BASE}/examples/items/${id}/attachments/${fileId}/download${preview ? '?preview=1' : ''}` }
+
+/** 单据临时文件上传按单据编辑权限，不依赖附件管理授权。 */
+export function uploadExampleAttachment(file: File, options?: FormRequestOptions & { signal?: AbortSignal }): Promise<{ id: number }> {
+  const form = new FormData()
+  form.append('file', file)
+  return request.post('/examples/items/attachments/upload', form, { ...options, timeout: 30 * 60 * 1000 })
 }

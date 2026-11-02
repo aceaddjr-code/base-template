@@ -212,7 +212,7 @@ describe('公开系统参数', () => {
   it('初始化后加载公共参数，品牌名与帮助联系方式跟随', async () => {
     settingApi.getPublicSettings.mockResolvedValue({ 'site.name': '供应链平台', 'help.contact': 'support@example.com' })
     const store = useAppStore()
-    expect(store.siteName).toBe('企业管理系统')
+    expect(store.siteName).toBe('BaseSuite平台')
     expect(await store.ensureSession()).toBe(true)
     await flushPromises()
     expect(settingApi.getPublicSettings).toHaveBeenCalledTimes(1)
@@ -226,7 +226,7 @@ describe('公开系统参数', () => {
     expect(await store.ensureSession()).toBe(true)
     await flushPromises()
     expect(store.userInfo?.id).toBe(1)
-    expect(store.siteName).toBe('企业管理系统')
+    expect(store.siteName).toBe('BaseSuite平台')
     expect(store.helpContact).toBe('')
   })
 
@@ -237,7 +237,7 @@ describe('公开系统参数', () => {
     await flushPromises()
     expect(store.siteName).toBe('供应链平台')
     await store.signOut()
-    expect(store.siteName).toBe('企业管理系统')
+    expect(store.siteName).toBe('BaseSuite平台')
     settingApi.getPublicSettings.mockResolvedValue({ 'site.name': '另一平台' })
     await store.ensureSession()
     await flushPromises()
