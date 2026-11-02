@@ -6,7 +6,7 @@ import { buildListQuery } from '../../common/utils/list-query';
 
 function fixture() {
   const rows = [
-    { id: 1, title: '目标甲', description: '第一行\n第二行', status: 'doing', updatedAt: new Date(2026, 9, 18, 8, 0) },
+    { id: 1, docNo: 'EX-20261018-001', title: '目标甲', description: '第一行\n第二行', remark: '核对备注', status: 'doing', updatedAt: new Date(2026, 9, 18, 8, 0) },
     { id: 2, title: '目标乙', description: null, status: 'pending', updatedAt: new Date(2026, 9, 18, 9, 0) },
     { id: 3, title: '其他', description: null, status: 'doing', updatedAt: new Date(2026, 9, 18, 10, 0) },
   ];
@@ -60,7 +60,11 @@ describe('示例事项导出与批量删除', () => {
     expect(repo.createQueryBuilder).not.toHaveBeenCalled();
     const exported = await service.exportExcel(admin);
     const book = XLSX.read(exported.buffer);
-    expect(XLSX.utils.sheet_to_json<any[]>(book.Sheets[book.SheetNames[0]], { header: 1 })[0]).toEqual(['标题', '状态', '类别', '说明', '更新时间']);
+    const rows = XLSX.utils.sheet_to_json<any[]>(book.Sheets[book.SheetNames[0]], { header: 1 });
+    expect(rows[0]).toEqual(['单据编号', '标题', '状态', '类别', '说明', '备注', '更新时间']);
+    const target = rows.find(row => row[1] === '目标甲');
+    expect(target?.[0]).toBe('EX-20261018-001');
+    expect(target?.[5]).toBe('核对备注');
   });
 
   it('标准导出可重新导入，展示状态在模块内转换并继续执行创建验证', async () => {

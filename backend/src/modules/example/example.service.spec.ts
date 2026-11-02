@@ -39,7 +39,7 @@ describe('示例导入预检与字典翻译',()=>{
  const buffer=(rows:any[])=>dataToExcel(rows,[{header:'标题',key:'title'},{header:'状态',key:'status'},{header:'类别',key:'category'}]);
  it('模板表头与真实导入列一致',async()=>{
   const workbook=XLSX.read(await fixture().importTemplateBuffer(),{type:'buffer'});
-  expect(XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]],{header:1})[0]).toEqual(['标题','状态','类别','说明']);
+  expect(XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]],{header:1})[0]).toEqual(['标题','状态','类别','说明','备注']);
  });
  it('展示标签和内部值均可预检，停用和未知值逐行报错，预检不需要写仓储',async()=>{
   const result=await fixture().importPreview(await buffer([{title:'标签',status:'待处理',category:'类别甲'},{title:'内部值',status:'pending',category:'cat-a'},{title:'停用',status:'待处理',category:'类别乙'},{title:'未知',category:'不存在'},{title:'状态错误',status:'unknown'}]),1,{sub:1});

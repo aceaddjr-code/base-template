@@ -9,6 +9,7 @@
     </template>
 
     <a-table
+      :ref="setTableRef"
       :columns="columns"
       :data-source="list"
       :loading="loading"
@@ -43,6 +44,7 @@
       </template>
       <template #emptyText><a-empty :description="failed ? '加载失败，请刷新重试' : '暂无参数'" /></template>
     </a-table>
+    <template #footer><div class="settings-footer"><StickyScrollBar :source="stickySource" /></div></template>
   </Page>
 
   <a-modal
@@ -97,9 +99,12 @@ import { useFormModal } from '@/composables/useFormModal'
 import { useAppStore } from '@/stores/app'
 import FormFeedback from '@/components/FormFeedback.vue'
 import Page from '@/components/Page.vue'
+import StickyScrollBar from '@/components/StickyScrollBar.vue'
+import { useListPage } from '@/composables/useListPage'
 import { formatDateTime } from '@/utils/format'
 
 const appStore = useAppStore()
+const { setTableRef, stickySource } = useListPage()
 
 const loading = ref(false)
 const failed = ref(false)
@@ -161,6 +166,7 @@ onMounted(fetchList)
 <style scoped>
 /* 本页是无分页的参数全量列表：page-list 默认把底边交给页脚，这里自行补一条闭合线。 */
 .page-list :deep(.ant-table-tbody > tr:last-child > td) { border-bottom: var(--rule); }
+.settings-footer { flex-shrink: 0; border-top: var(--rule); background: var(--color-surface); }
 .setting-value {
   display: inline-block;
   max-width: 100%;

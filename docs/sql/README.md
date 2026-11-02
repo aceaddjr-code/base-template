@@ -1,5 +1,13 @@
 # 数据库变更
 
+## 2026-11-02 示例事项单据编号与负责人权限
+
+`20261102-example-doc-fields.sql` 为 `example_items` 新增 `doc_no`（单据编号，回填 `EX-<创建日期>-<id>` 后建唯一索引；此后由后端创建时生成 `EX-yyyymmdd-001`）、`remark`（备注）两列，并在「示例事项」菜单下补「变更负责人」按钮节点（`example-items:owner`），仅授予 admin；普通角色由管理员在角色管理显式配置，配置后重新登录生效。开发库列由 synchronize 自动建，菜单节点仍需本补丁。
+
+执行顺序：备份 `example_items` / `menus` / `role_menus` / `users` → 隔离库验证 → 停止单据写入的维护窗口执行 → 配套发布前后端 → 管理员重新登录并按需给普通角色配置「变更负责人」。补丁幂等可重复执行；编号回填含软删行（共用编号空间）；唯一索引按「doc_no 上已存在唯一索引」判重，与 synchronize 自动建的索引不冲突。
+
+回滚：提交前 `ROLLBACK`；提交后先回退前后端代码，再按备份恢复或逆向 DROP 索引/列（编号对外发布后不可回收，先确认无外部引用）。详见补丁尾部注释。
+
 ## 2026-11-02 用户本人数据操作开关
 
 `20261102-user-data-scope-self-permissions.sql` 为 `user_data_scopes` 新增 `view_self`、`edit_self`、`delete_self` 三个开关，默认 1；沿用共同人员/部门范围和三个他人开关。旧数据不会自动扩大范围。

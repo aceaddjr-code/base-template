@@ -34,7 +34,6 @@ export function validateEnvironment(input: Record<string, unknown>) {
   integer('BACKUP_TIMEOUT_MS', 120000, 1000, 3600000);
   integer('KEEP_DAYS', 30, 0, 36500);
   integer('AUDIT_RETENTION_DAYS', 0, 0, 36500);
-  integer('ATTACHMENT_TEMP_RETENTION_HOURS', 24, 1, 8760);
   bool('COOKIE_SECURE', 'false');
   bool('DB_SYNCHRONIZE', env === 'development' ? 'true' : 'false');
   if (env !== 'development' && config.DB_SYNCHRONIZE === 'true') errors.push('DB_SYNCHRONIZE 仅允许在 development 环境启用');

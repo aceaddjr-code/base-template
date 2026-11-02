@@ -275,9 +275,9 @@ suite('单据履历：业务 HTTP 与隔离 MySQL', () => {
   codes=['example-items:create','example-items:update','example-items:view','example-items:delete'];
   const item=(await api().post('/api/v1/examples/items').send({title:'附件事项'}).expect(201)).body.data;
   const repo=db.getRepository(Attachment);
-  const seed=(owner=7)=>repo.save({originalName:'测试.pdf',storagePath:'not-present.pdf',mimeType:'application/pdf',size:5,status:'temp',createdBy:owner});
+  const seed=(owner=7)=>repo.save({originalName:'测试.pdf',storagePath:'not-present.pdf',mimeType:'application/pdf',size:5,status:'temp',origin:'business',createdBy:owner,ownerId:owner});
   const file=await seed(), foreign=await seed(8);
-  const otherType=await repo.save({originalName:'别的业务.pdf',storagePath:'other.pdf',mimeType:'application/pdf',size:5,status:'bound',entityType:'other-type',entityId:item.id,createdBy:7});
+  const otherType=await repo.save({originalName:'别的业务.pdf',storagePath:'other.pdf',mimeType:'application/pdf',size:5,status:'bound',origin:'business',entityType:'other-type',entityId:item.id,createdBy:7,ownerId:7});
   const endpoint=`/api/v1/examples/items/${item.id}/attachments`;
   await api().post(endpoint).send({attachmentId:foreign.id}).expect(404);
   await api().post(endpoint).send({attachmentId:file.id}).expect(201);
@@ -292,8 +292,36 @@ suite('单据履历：业务 HTTP 与隔离 MySQL', () => {
   const preview=await api().get(`${endpoint}/${upload.id}/download?preview=1`).expect(200);expect(preview.headers['content-type']).toContain('image/png');expect(preview.headers['content-disposition']).toBe('inline');expect(preview.body).toEqual(imageBuffer);
   await api().get(`/api/v1/attachments/${upload.id}/download`).expect(403);
   codes.push('attachments:download');
-  await api().get(`/api/v1/attachments/${upload.id}/download`).expect(404);
+  // 已挂接业务附件从附件中心下载跟随单据数据范围：单据归属人（本人 view 默认开）可下
+  const centerDownload=await api().get(`/api/v1/attachments/${upload.id}/download`).expect(200);
+  expect(centerDownload.body).toEqual(imageBuffer);
+  // 范围外用户 403；配置该单据数据范围后放行
+  user={sub:8,roleCode:'user'};
+  await api().get(`/api/v1/attachments/${upload.id}/download`).expect(403);
+  user={sub:8,roleCode:'user',dataScopes:[{scopeKey:'example-items',scopeType:'all',viewSelf:1,viewOthers:1}]};
+  await api().get(`/api/v1/attachments/${upload.id}/download`).expect(200);
+  user={sub:7,roleCode:'user'};
   codes = codes.filter(code => code !== 'attachments:download');
+  // 附件中心业务页签：跟随单据数据范围，返回模块/单据/上传人；未挂接暂存行仅上传者可见
+  codes.push('attachments:view');
+  const biz7=(await api().get('/api/v1/attachments?origin=business').expect(200)).body.data;
+  expect(biz7.list.find((r:any)=>r.id===upload.id)).toMatchObject({entityType:'example-items',entityId:item.id,entityTitle:'附件事项',uploaderName:'原操作人',status:'bound',origin:'business'});
+  expect(biz7.list.some((r:any)=>r.id===foreign.id)).toBe(false);
+  user={sub:8,roleCode:'user'};
+  const biz8=(await api().get('/api/v1/attachments?origin=business').expect(200)).body.data;
+  expect(biz8.list.some((r:any)=>r.id===upload.id)).toBe(false);
+  expect(biz8.list.some((r:any)=>r.id===foreign.id)).toBe(true);
+  user={sub:7,roleCode:'user'};
+  // 文件库页签：按附件管理自身数据范围（无配置默认仅本人）
+  const libSeed=await repo.save({originalName:'文件库.pdf',storagePath:'not-present.pdf',mimeType:'application/pdf',size:5,status:'temp',origin:'center',createdBy:7,ownerId:7});
+  const lib7=(await api().get('/api/v1/attachments?origin=center').expect(200)).body.data;
+  expect(lib7.list.some((r:any)=>r.id===libSeed.id)).toBe(true);
+  expect(lib7.list.some((r:any)=>r.id===upload.id)).toBe(false);
+  user={sub:8,roleCode:'user'};
+  const lib8=(await api().get('/api/v1/attachments?origin=center').expect(200)).body.data;
+  expect(lib8.list.some((r:any)=>r.id===libSeed.id)).toBe(false);
+  user={sub:7,roleCode:'user'};
+  codes = codes.filter(code => code !== 'attachments:view');
   for(const [filename,image] of [['工程图.dwg',false],['照片.heic',true],['扫描.tiff',true],['矢量.svg',true]] as const) {
    const uploaded=(await api().post('/api/v1/examples/items/attachments/upload').attach('file',Buffer.from('format-test'),{filename,contentType:'application/octet-stream'}).expect(201)).body.data;
    await api().post(endpoint).send({attachmentId:uploaded.id}).expect(201);

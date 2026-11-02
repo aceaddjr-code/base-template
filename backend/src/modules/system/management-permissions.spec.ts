@@ -34,7 +34,7 @@ describe('管理权限 HTTP 边界（真实控制器、角色守卫与权限守�
   };
   const logs = { findAll: jest.fn() };
   const attachment = {
-    findPage: jest.fn(), saveFile: jest.fn(), remove: jest.fn(), sweepExpiredTemp: jest.fn(),
+    findPage: jest.fn(), saveFile: jest.fn(), remove: jest.fn(), sweepDeletedFiles: jest.fn(),
     resolveForDownload: jest.fn(), openDownload: jest.fn(),
   };
   const example = { uploadAttachment: jest.fn() };
@@ -88,7 +88,7 @@ describe('管理权限 HTTP 边界（真实控制器、角色守卫与权限守�
     ['post', '/attachments', 'attachments:upload', attachment.saveFile],
     ['get', '/attachments/1/download', 'attachments:download', attachment.resolveForDownload],
     ['delete', '/attachments/1', 'attachments:delete', attachment.remove],
-    ['post', '/attachments/cleanup', 'attachments:cleanup', attachment.sweepExpiredTemp],
+    ['post', '/attachments/cleanup', 'attachments:cleanup', attachment.sweepDeletedFiles],
     ['post', '/examples/items/attachments/upload', 'example-items:update', example.uploadAttachment],
   ] as const;
   const send = (method: string, path: string) => (request(app.getHttpServer()) as any)[method](path).send({});

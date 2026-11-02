@@ -57,6 +57,25 @@ describe('generateDocNo', () => {
     const result = await generateDocNo('XMLH', repo as any, 'docNo');
     expect(result).toBe(`XMLH-${todayPart()}-004`);
   });
+
+  it('dateDigits 0：无日期段全局流水，空表从 0001 起', async () => {
+    const repo = mockRepo(null);
+    const result = await generateDocNo('dept', repo as any, 'code', { dateDigits: 0, seqDigits: 4 });
+    expect(result).toBe('dept-0001');
+  });
+
+  it('dateDigits 0：在全局最大流水基础上 +1', async () => {
+    const repo = mockRepo(12);
+    const result = await generateDocNo('dept', repo as any, 'code', { dateDigits: 0, seqDigits: 4 });
+    expect(result).toBe('dept-0013');
+  });
+
+  it('dateDigits 0：计数口径为全局前缀 prefix-%', async () => {
+    const repo = mockRepo(null);
+    await generateDocNo('dept', repo as any, 'code', { dateDigits: 0, seqDigits: 4 });
+    const qb = (repo.createQueryBuilder as jest.Mock).mock.results[0].value;
+    expect(qb.where).toHaveBeenCalledWith('e.code LIKE :pattern', { pattern: 'dept-%' });
+  });
 });
 
 describe('generateDocNoBatch', () => {

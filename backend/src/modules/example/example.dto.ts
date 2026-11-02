@@ -36,6 +36,12 @@ export class CreateExampleDto {
   @IsString()
   @MaxLength(500, { message: '说明不能超过 500 字' })
   description?: string | null;
+
+  @ValidateIf((_, value) => value !== undefined && value !== null)
+  @Transform(trim)
+  @IsString()
+  @MaxLength(500, { message: '备注不能超过 500 字' })
+  remark?: string | null;
 }
 
 export class UpdateExampleDto {
@@ -61,10 +67,24 @@ export class UpdateExampleDto {
   @MaxLength(500, { message: '说明不能超过 500 字' })
   description?: string | null;
 
+  @ValidateIf((_, value) => value !== undefined && value !== null)
+  @Transform(trim)
+  @IsString()
+  @MaxLength(500, { message: '备注不能超过 500 字' })
+  remark?: string | null;
+
   @IsDefined({ message: '缺少版本信息，请刷新后重试' })
   @IsInt({ message: '版本信息无效，请刷新后重试' })
   @Min(1, { message: '版本信息无效，请刷新后重试' })
   version?: number;
+}
+
+/** 变更单据负责人：独立动作权限（example-items:owner），与普通编辑解耦。 */
+export class ChangeExampleOwnerDto {
+  @IsDefined({ message: '请选择新的单据负责人' })
+  @IsInt({ message: '单据负责人无效，请重新选择' })
+  @Min(1, { message: '单据负责人无效，请重新选择' })
+  ownerId: number;
 }
 
 /** HTTP 写入和 Excel 导入共用业务验证，禁止调用方仅依赖前端校验。 */

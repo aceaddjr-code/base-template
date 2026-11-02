@@ -2,7 +2,6 @@ import {
   BadRequestException, Controller, Delete, Get,
   Param, Post, Query, Res, UploadedFile, UseInterceptors,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import type { Response } from 'express';
 import { AttachmentService } from './attachment.service';
 import { AttachmentUploadInterceptor } from './attachment-upload.interceptor';
@@ -10,20 +9,20 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import type { JwtPayload } from '../auth/jwt.strategy';
 
-/** 私有附件（F08）：上传即 temp；下载/删除仅上传者与管理员；业务记录挂接走子表声明式（ADR-0001） */
+/** 私有附件（F08）：origin=center 文件库（附件管理自身数据范围），origin=business 业务附件（跟随单据数据范围）；业务记录挂接走子表声明式（ADR-0001） */
 @Controller('attachments')
 export class AttachmentController {
   constructor(
     private readonly attachmentService: AttachmentService,
-    private readonly config: ConfigService,
   ) {}
 
+  /** 附件管理页直传：进入文件库（origin=center，永久保留） */
   @Post()
   @RequirePermission('attachments:upload')
   @UseInterceptors(AttachmentUploadInterceptor)
   upload(@UploadedFile() file?: Express.Multer.File, @CurrentUser() user?: JwtPayload) {
     if (!file?.filename) throw new BadRequestException('请选择文件');
-    return this.attachmentService.saveFile(file, user!);
+    return this.attachmentService.saveFile(file, user!, 'center');
   }
 
   @Get()
@@ -31,10 +30,13 @@ export class AttachmentController {
   findPage(
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    @Query('origin') origin?: string,
     @Query('status') status?: string,
+    @Query('entityType') entityType?: string,
+    @Query('keyword') keyword?: string,
     @CurrentUser() user?: JwtPayload,
   ) {
-    return this.attachmentService.findPage(Number(page) || 1, Number(pageSize) || 20, status, user!);
+    return this.attachmentService.findPage(Number(page) || 1, Number(pageSize) || 20, { origin, status, entityType, keyword }, user!);
   }
 
   @Get(':id/download')
@@ -58,11 +60,10 @@ export class AttachmentController {
     return this.attachmentService.remove(Number(id), user!);
   }
 
-  /** 手动触发过期临时附件清理（计划任务每小时同样执行） */
+  /** 手动触发已删除附件的磁盘文件回收（计划任务每小时同样执行；附件不再按时间清理） */
   @RequirePermission('attachments:cleanup')
   @Post('cleanup')
   cleanup() {
-    const retention = this.config.get<number>('ATTACHMENT_TEMP_RETENTION_HOURS', 24);
-    return this.attachmentService.sweepExpiredTemp(retention);
+    return this.attachmentService.sweepDeletedFiles();
   }
 }

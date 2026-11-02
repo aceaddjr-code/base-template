@@ -18,7 +18,7 @@ export const MANAGEMENT_ACTION_SPEC: Record<string, { prefix: string; actions: A
   announcements: { prefix: 'announcements', actions: [['view', '查看'], ['create', '新增'], ['update', '编辑'], ['publish', '发布'], ['withdraw', '撤回'], ['delete', '删除']] },
   dict: { prefix: 'dicts', actions: [['view', '查看'], ['create', '新增'], ['update', '编辑'], ['delete', '删除']] },
   logs: { prefix: 'system-logs', actions: [['view', '查看']] },
-  attachments: { prefix: 'attachments', actions: [['view', '查看'], ['upload', '上传'], ['download', '下载'], ['delete', '删除'], ['cleanup', '清理过期临时附件']] },
+  attachments: { prefix: 'attachments', actions: [['view', '查看'], ['upload', '上传'], ['download', '下载'], ['delete', '删除'], ['cleanup', '回收已删除附件文件']] },
 };
 
 /** 全部管理操作权限码（16 项）；测试用它交叉核对种子与补丁不漏项 */
@@ -64,7 +64,7 @@ export class SeedService implements OnModuleInit {
     const collaboration = await add({ name:'工作协同', path:'/collaboration', icon:'TeamOutlined', sort:2 });
     const examples = await add({ name:'示例业务', path:'/examples', icon:'AppstoreOutlined', sort:10 });
     const items = await add({ name:'示例事项', path:'/examples/items', parentId:examples.id, sort:11 });
-    const actions = [['view','查看'],['create','新增'],['update','编辑'],['delete','删除'],['import','导入'],['export','导出']];
+    const actions = [['view','查看'],['create','新增'],['update','编辑'],['owner','变更负责人'],['delete','删除'],['import','导入'],['export','导出']];
     const exampleButtons: Menu[] = [];
     for (const [action,name] of actions) exampleButtons.push(await add({ name, type:'button', permission:`example-items:${action}`, parentId:items.id, sort:exampleButtons.length+1 }));
     const system = await add({ name:'系统管理', path:'/system', icon:'SettingOutlined', sort:90 });

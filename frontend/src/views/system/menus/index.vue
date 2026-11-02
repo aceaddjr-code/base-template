@@ -39,6 +39,9 @@
           <template v-if="column.key === 'name'">
             <span class="menu-name" :style="{ paddingLeft: `${(record.__level ?? 0) * 16}px` }">{{ record.name }}</span>
           </template>
+          <template v-else-if="column.key === 'icon' || column.key === 'path' || column.key === 'permission'">
+            <span class="menu-value" :title="record[column.key] || undefined">{{ record[column.key] || '-' }}</span>
+          </template>
           <template v-else-if="column.key === 'type'">
             <a-tag :color="record.type === 'menu' ? 'processing' : 'warning'">
               {{ record.type === 'menu' ? '菜单' : '按钮' }}
@@ -176,11 +179,11 @@ const flatData = computed(() => flattenTree(treeData.value))
 // ============ 列宽拖拽 ============
 const allColumns = ref(withEmptyDash([
   { title: '名称', dataIndex: 'name', key: 'name', width: 180 },
-  { title: '图标', key: 'icon', width: 100 },
+  { title: '图标', dataIndex: 'icon', key: 'icon', width: 100 },
   { title: '类型', key: 'type', width: 80 },
-  { title: '路径', key: 'path', width: 180 },
-  { title: '权限标识', key: 'permission', width: 150 },
-  { title: '排序', key: 'sort', width: 70 },
+  { title: '路径', dataIndex: 'path', key: 'path', width: 180 },
+  { title: '权限标识', dataIndex: 'permission', key: 'permission', width: 150 },
+  { title: '排序', dataIndex: 'sort', key: 'sort', width: 70 },
   { title: '状态', key: 'status', width: 80 },
   // 操作列改为文字链接（新增子项/编辑/删除），按现有按钮收紧
   { title: '操作', key: 'action', width: 168, fixed: 'right' as const },
@@ -288,6 +291,7 @@ onMounted(() => {
 .menus-body > .ant-table-wrapper { min-height: 0; overflow: hidden; }
 /* 名称列缩进表达树层级，长名称允许截断省略 */
 .menu-name { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.menu-value { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 全量树页脚：横滚条 + 总数，无分页器 */
 .menus-footer { background: var(--color-surface); border-top: var(--rule); flex-shrink: 0; }
 .menus-footer-meta { display: flex; justify-content: flex-end; padding: var(--space-2) 0; color: var(--color-text-tertiary); font-size: var(--text-aux); font-variant-numeric: tabular-nums; }

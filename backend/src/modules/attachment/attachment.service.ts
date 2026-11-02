@@ -2,13 +2,19 @@ import { BadRequestException, Injectable, NotFoundException, ServiceUnavailableE
 import { ConfigService } from '@nestjs/config';
 import { createReadStream, existsSync, mkdirSync, unlinkSync } from 'fs';
 import { extname, isAbsolute, relative, resolve, sep } from 'path';
-import { IsNull, Not, LessThan, Repository } from 'typeorm';
+import { IsNull, Not, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { JwtPayload } from '../auth/jwt.strategy';
-import { Attachment, AttachmentStatus } from './attachment.entity';
+import { Attachment, AttachmentOrigin, AttachmentStatus } from './attachment.entity';
+import { ATTACHMENT_TARGET_REGISTRY, findAttachmentTarget } from './attachment-targets.registry';
 import { monthPath } from '../../common/uploads/upload.service';
 import { isSystemAdmin } from '../../common/utils/permission-check';
+import { assertCanOperateOn, scopeWhereClause } from '../../common/utils/data-scope';
 import { SystemLogService } from '../system/system-log.service';
+import { User } from '../user/user.entity';
+
+/** 附件管理（文件库页签）的数据范围 scopeKey；业务附件跟随各业务模块自己的 scopeKey。 */
+export const ATTACHMENTS_SCOPE_KEY = 'attachments';
 
 /** 图片归类与浏览器可预览格式分开，特殊图片保留原文件下载。 */
 export const ATTACHMENT_IMAGE_MIMES: Record<string, string> = {
@@ -34,10 +40,23 @@ export interface AttachmentView {
   mimeType: string;
   size: number;
   status: AttachmentStatus;
+  origin: AttachmentOrigin;
   entityType: string | null;
   entityId: number | null;
+  /** 绑定时单据标题快照，用于附件中心展示与穿透 */
+  entityTitle: string | null;
+  /** 上传人显示名（displayName 缺失时回退用户名；用户被删则为 null） */
+  uploaderName: string | null;
   mine: boolean;
   createdAt: string | Date;
+}
+
+/** 列表查询参数：origin 区分文件库/业务附件两个页签 */
+export interface AttachmentListQuery {
+  origin?: string;
+  status?: string;
+  entityType?: string;
+  keyword?: string;
 }
 
 @Injectable()
@@ -67,7 +86,8 @@ export class AttachmentService {
     return dir;
   }
 
-  async saveFile(file: Express.Multer.File, user: JwtPayload): Promise<AttachmentView> {
+  /** origin=center 为附件管理直传（文件库，永久保留）；business 为业务表单上传（等待挂接） */
+  async saveFile(file: Express.Multer.File, user: JwtPayload, origin: AttachmentOrigin = 'center'): Promise<AttachmentView> {
     const root = this.privateRoot();
     const actualPath = file.path ? resolve(file.path) : null;
     const storagePath = actualPath ? relative(root, actualPath).split(sep).join('/') : null;
@@ -83,6 +103,8 @@ export class AttachmentService {
         mimeType: file.mimetype || 'application/octet-stream',
         size: file.size,
         status: 'temp' as AttachmentStatus,
+        origin,
+        ownerId: user.sub,
         createdBy: user.sub,
         updatedBy: user.sub,
       });
@@ -96,25 +118,115 @@ export class AttachmentService {
     return this.toView(row, user);
   }
 
-  async findPage(page: number, pageSize: number, status: string | undefined, user: JwtPayload) {
+  /** 多段 scope 条件拼接时给参数加前缀，避免不同 scopeKey 生成的同名参数冲突 */
+  private prefixedScope(sql: string, params: Record<string, any>, prefix: string): { sql: string; params: Record<string, any> } {
+    const renamed: Record<string, any> = {};
+    let out = sql;
+    for (const [key, value] of Object.entries(params)) {
+      const to = `${prefix}_${key}`;
+      out = out.replace(new RegExp(`:\\.\\.\\.${key}(?![\\w])`, 'g'), `:...${to}`).replace(new RegExp(`:${key}(?![\\w])`, 'g'), `:${to}`);
+      renamed[to] = value;
+    }
+    return { sql: out, params: renamed };
+  }
+
+  /**
+   * 附件中心列表（双页签双轨可见性）：
+   * - origin=center（文件库）：按附件管理自身数据范围（scopeKey=attachments）过滤 ownerId；
+   * - origin=business（业务附件）：已挂接行跟随所属单据的数据范围（按挂接目标注册表逐个 EXISTS），
+   *   未注册类型的已挂接行与未挂接暂存行保守仅上传者可见。
+   */
+  async findPage(page: number, pageSize: number, query: AttachmentListQuery, user: JwtPayload) {
     page = Number.isFinite(page) && page > 0 ? page : 1;
     pageSize = Number.isFinite(pageSize) && pageSize > 0 ? Math.min(pageSize, 100) : 20;
+    const origin: AttachmentOrigin = query.origin === 'business' ? 'business' : 'center';
     const qb = this.attachmentRepo.createQueryBuilder('a')
       .where('a.deletedAt IS NULL')
+      .andWhere('a.origin = :origin', { origin })
       .orderBy('a.createdAt', 'DESC')
       .skip((page - 1) * pageSize)
       .take(pageSize);
-    if (status === 'temp' || status === 'bound') qb.andWhere('a.status = :status', { status });
-    if (!isSystemAdmin(user)) qb.andWhere('a.createdBy = :me', { me: user.sub }).andWhere("(a.entityType IS NULL OR a.entityType <> :business)", { business: 'example-items' });
+    if (query.status === 'temp' || query.status === 'bound') qb.andWhere('a.status = :status', { status: query.status });
+    if (query.entityType && query.entityType.trim()) qb.andWhere('a.entityType = :entityType', { entityType: query.entityType.trim().slice(0, 50) });
+    const keyword = query.keyword?.trim();
+    if (keyword) qb.andWhere('(a.originalName LIKE :keyword OR a.entityTitle LIKE :keyword)', { keyword: `%${keyword.slice(0, 100)}%` });
+
+    if (!isSystemAdmin(user)) {
+      if (origin === 'center') {
+        const { sql, params } = scopeWhereClause('a', user, ATTACHMENTS_SCOPE_KEY);
+        if (sql) qb.andWhere(sql, params);
+      } else {
+        const branches: string[] = ['(a.status = \'temp\' AND a.createdBy = :bizUid)'];
+        const allParams: Record<string, any> = { bizUid: user.sub };
+        const registeredTypes: string[] = [];
+        for (const [index, target] of ATTACHMENT_TARGET_REGISTRY.entries()) {
+          registeredTypes.push(target.sourceType);
+          const clause = scopeWhereClause('e', user, target.scopeKey);
+          // 子查询别名 e 未在 QueryBuilder 注册，属性名不会被翻译成列名，需手工转成真实列名（scope 条件只引用 ownerId）
+          const { sql, params } = this.prefixedScope((clause.sql ?? '1 = 1').replace(/\be\.ownerId\b/g, 'e.owner_id'), clause.params, `t${index}`);
+          branches.push(
+            `(a.status = 'bound' AND a.entityType = :et${index} AND EXISTS (
+              SELECT 1 FROM ${target.table} e WHERE e.id = a.entityId AND e.deleted_at IS NULL AND (${sql})
+            ))`,
+          );
+          allParams[`et${index}`] = target.sourceType;
+          Object.assign(allParams, params);
+        }
+        // 未注册类型的已挂接行：无法按业务数据范围裁决，保守仅上传者可见
+        branches.push(`(a.status = 'bound' AND a.createdBy = :bizUid AND a.entityType NOT IN (:...registeredTypes))`);
+        allParams.registeredTypes = registeredTypes;
+        qb.andWhere(`(${branches.join(' OR ')})`, allParams);
+      }
+    }
+
     const [list, total] = await qb.getManyAndCount();
-    return { list: list.map((row) => this.toView(row, user)), total, page, pageSize };
+    const uploaderNames = await this.findUploaderNames(list.map((row) => row.id));
+    return { list: list.map((row) => this.toView(row, user, uploaderNames.get(row.id) ?? null)), total, page, pageSize };
   }
 
-  /** 授权下载：仅上传者/管理员（已绑定附件的业务可见性裁决随子表声明式接入演进，见 docs/adr/0001） */
+  /** 批量取上传人显示名（displayName 缺省回退用户名；不排除软删用户，仅展示用途） */
+  private async findUploaderNames(ids: number[]): Promise<Map<number, string>> {
+    const map = new Map<number, string>();
+    if (!ids.length) return map;
+    const rows: Array<{ id: number; uploaderName: string | null }> = await this.attachmentRepo
+      .createQueryBuilder('a')
+      .leftJoin(User, 'u', 'u.id = a.createdBy')
+      .select('a.id', 'id')
+      .addSelect('COALESCE(u.display_name, u.username)', 'uploaderName')
+      .where('a.id IN (:...ids)', { ids })
+      .getRawMany();
+    for (const row of rows) if (row.uploaderName) map.set(Number(row.id), row.uploaderName);
+    return map;
+  }
+
+  /**
+   * 授权下载（双轨裁决）：
+   * - 文件库（origin=center）：按附件管理数据范围 view 裁决；
+   * - 业务附件已挂接：按所属单据的数据范围 view 裁决（跟随业务模块，ADR-0001 演进点 1）；
+   * - 业务附件未挂接（暂存）：仅上传者；管理员全程放行。
+   */
   async resolveForDownload(id: number, user: JwtPayload): Promise<{ row: Attachment; streamPath: string }> {
     const row = await this.mustGet(id);
-    if (row.entityType === 'example-items' && !isSystemAdmin(user)) throw new NotFoundException('请从单据详情访问附件');
-    if (row.createdBy !== user.sub && !isSystemAdmin(user)) throw new NotFoundException('附件不存在');
+    if (!isSystemAdmin(user)) {
+      if (row.origin === 'center') {
+        assertCanOperateOn(row, user, ATTACHMENTS_SCOPE_KEY, 'view');
+      } else if (row.status === 'bound') {
+        const target = findAttachmentTarget(row.entityType);
+        if (target) {
+          const doc = await this.attachmentRepo.manager.createQueryBuilder()
+            .from(target.table, 'e')
+            .select('e.owner_id', 'ownerId')
+            .where('e.id = :id AND e.deleted_at IS NULL', { id: row.entityId })
+            .getRawOne<{ ownerId: number | null }>();
+          if (!doc) throw new NotFoundException('附件关联的单据不存在');
+          assertCanOperateOn({ ownerId: doc.ownerId }, user, target.scopeKey, 'view');
+        } else if (row.createdBy !== user.sub) {
+          throw new NotFoundException('附件不存在');
+        }
+      } else if (row.createdBy !== user.sub) {
+        throw new NotFoundException('附件不存在');
+      }
+    }
     const streamPath = this.absolutePath(row.storagePath);
     if (!existsSync(streamPath)) {
       // 文件已丢失：行保留（可在管理列表删除），给出可理解的错误而非 500
@@ -123,12 +235,18 @@ export class AttachmentService {
     return { row, streamPath };
   }
 
-  /** 删除：仅上传者/管理员；行删文件删；文件缺失仍清行；磁盘失败可重试 */
+  /** 删除：文件库按附件范围 edit 裁决；业务附件未挂接仅上传者；已挂接从单据详情管理；行删文件删；磁盘失败可重试 */
   async remove(id: number, user: JwtPayload): Promise<{ message: string }> {
     return this.attachmentRepo.manager.transaction(async manager => {
       const repo = manager.getRepository(Attachment);
       const row = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
-      if (!row || row.entityType === 'example-items' || (row.createdBy !== user.sub && !isSystemAdmin(user))) throw new NotFoundException('附件不存在，请从单据详情管理已绑定文件');
+      if (!row) throw new NotFoundException('附件不存在');
+      if (row.origin === 'business') {
+        if (row.status === 'bound') throw new NotFoundException('附件不存在，请从单据详情管理已绑定文件');
+        if (row.createdBy !== user.sub && !isSystemAdmin(user)) throw new NotFoundException('附件不存在');
+      } else {
+        assertCanOperateOn(row, user, ATTACHMENTS_SCOPE_KEY, 'edit');
+      }
       const abs = this.absolutePath(row.storagePath);
       if (existsSync(abs)) {
         try { unlinkSync(abs); } catch { throw new ServiceUnavailableException('附件文件删除失败，请稍后重试'); }
@@ -140,13 +258,13 @@ export class AttachmentService {
   }
 
   /**
-   * 过期临时附件清理（F08）：删除超过保留期的 temp 行与其磁盘文件；
+   * 已删除附件的磁盘文件回收（F08 演进）：附件一律永久保留、不再按时间清理；
+   * 这里只回收软删行（单据删除级联软删的 bound 附件等）的磁盘文件。
    * 文件缺失只清行；磁盘删除失败保留行留待下次。返回移除的行数。
    */
-  async sweepExpiredTemp(retentionHours: number): Promise<number> {
-    const cutoff = new Date(Date.now() - retentionHours * 3600_000);
+  async sweepDeletedFiles(): Promise<number> {
     const stale = await this.attachmentRepo.find({
-      where: [{ status: 'temp', createdAt: LessThan(cutoff) }, { deletedAt: Not(IsNull()) }],
+      where: { deletedAt: Not(IsNull()) },
       withDeleted: true,
       take: 500,
     });
@@ -154,9 +272,9 @@ export class AttachmentService {
     for (const row of stale) {
       const didRemove = await this.attachmentRepo.manager.transaction(async manager => {
         const repo = manager.getRepository(Attachment);
-        // 与单据挂接共用行锁，避免清理任务把刚绑定的临时文件删掉。
+        // 与挂接/删除共用行锁，事务内复核仍是软删行，避免把刚恢复的行清掉。
         const current = await repo.findOne({ where: { id: row.id }, withDeleted: true, lock: { mode: 'pessimistic_write' } });
-        if (!current || (!current.deletedAt && (current.status !== 'temp' || current.createdAt >= cutoff))) return false;
+        if (!current || !current.deletedAt) return false;
         const abs = this.absolutePath(current.storagePath);
         if (existsSync(abs)) { try { unlinkSync(abs); } catch { return false; } }
         await repo.remove(current);
@@ -168,8 +286,8 @@ export class AttachmentService {
     if (removed) {
       await this.logService.write({
         userId: null, username: null, action: 'delete',
-        entityType: 'attachments', entityId: 0, entityDesc: `清理过期临时附件 ${removed} 条`,
-        detail: JSON.stringify({ retentionHours, removed }),
+        entityType: 'attachments', entityId: 0, entityDesc: `回收已删除附件文件 ${removed} 条`,
+        detail: JSON.stringify({ removed }),
       });
     }
     return removed;
@@ -182,15 +300,18 @@ export class AttachmentService {
     return row;
   }
 
-  private toView(row: Attachment, user: JwtPayload): AttachmentView {
+  private toView(row: Attachment, user: JwtPayload, uploaderName: string | null = null): AttachmentView {
     return {
       id: row.id,
       name: row.originalName,
       mimeType: row.mimeType,
       size: row.size,
       status: row.status,
+      origin: row.origin,
       entityType: row.entityType,
       entityId: row.entityId,
+      entityTitle: row.entityTitle,
+      uploaderName,
       mine: row.createdBy === user.sub,
       createdAt: row.createdAt,
     };

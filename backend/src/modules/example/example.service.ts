@@ -8,7 +8,8 @@ import { DictService } from '../system/dict.service';
 import { User } from '../user/user.entity';
 import { ExampleEvent, ExampleChange } from './example-event.entity';
 import { ExampleAccessDto, ExampleHistoryQuery } from './example-history.dto';
-import { getUserId } from '../../common/utils/service-helpers';
+import { getUserId, withDocNoRetry } from '../../common/utils/service-helpers';
+import { generateDocNo } from '../../common/utils/doc-no-generator';
 import { dateRangeBounds } from '../../common/utils/date-range';
 import { extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -17,6 +18,8 @@ import { AttachmentService, ATTACHMENT_IMAGE_MIMES, ATTACHMENT_PREVIEW_IMAGE_EXT
 import type { JwtPayload } from '../auth/jwt.strategy';
 
 const CATEGORY_DICT = 'item_category';
+/** 单据编号前缀：EX-yyyymmdd-001，创建时生成、全库唯一、不可修改。 */
+const DOC_NO_PREFIX = 'EX';
 import type { ScopeUser } from '../../common/utils/data-scope';
 import { dataToExcel, excelToData } from '../../common/utils/excel-helper';
 
@@ -39,17 +42,19 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
     super(repo, attachmentRepo ? { attachments: { repo: attachmentRepo, sourceKey: 'entityId', sourceType: 'example-items', typeKey: 'entityType' } } : {}, {
       entityName: '示例事项',
       optimisticLock: true,
-      searchFields: ['title', 'description'],
+      searchFields: ['docNo', 'title', 'description'],
       filterableFields: ['status'],
       inFilterable: ['status'],
       dateFilterableFields: ['createdAt', 'updatedAt'],
-      sortableFields: ['createdAt', 'updatedAt', 'title', 'status'],
+      sortableFields: ['createdAt', 'updatedAt', 'title', 'status', 'docNo'],
       mineField: 'ownerId',
       excelColumns: [
+        { header: '单据编号', key: 'docNo', width: 18 },
         { header: '标题', key: 'title', width: 24 },
         { header: '状态', key: 'status', width: 12 },
         { header: '类别', key: 'category', width: 18 },
         { header: '说明', key: 'description', width: 40 },
+        { header: '备注', key: 'remark', width: 30 },
         { header: '更新时间', key: 'updatedAt', width: 22 },
       ],
       excelImportMap: {
@@ -57,6 +62,7 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
         status: ['状态'],
         category: ['类别'],
         description: ['说明'],
+        remark: ['备注'],
       },
     });
   }
@@ -65,7 +71,7 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
   protected override async withChildren(entity: ExampleItem) { return { ...entity }; }
 
   async uploadAttachment(file: Express.Multer.File, user: JwtPayload) {
-    return this.attachmentService!.saveFile(file, user);
+    return this.attachmentService!.saveFile(file, user, 'business');
   }
 
   async files(id: number, user?: ScopeUser) {
@@ -82,9 +88,10 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
       const repo = manager.getRepository(Attachment);
       const row = await repo.findOne({ where: { id: attachmentId }, lock: { mode: 'pessimistic_write' } });
       if (!row || row.createdBy !== getUserId(user)) throw new NotFoundException('临时附件不存在');
+      if (row.origin !== 'business') throw new BadRequestException('文件库文件不支持挂接到单据，请在单据中重新上传');
       if (row.status === 'bound' && row.entityType === 'example-items' && row.entityId === id) return { id: row.id };
       if (row.status !== 'temp' || row.entityId != null || row.entityType != null) throw new BadRequestException('附件已被使用');
-      await repo.update(row.id, { entityId: id, entityType: this.children.attachments.sourceType, status: 'bound', updatedBy: getUserId(user) });
+      await repo.update(row.id, { entityId: id, entityType: this.children.attachments.sourceType, status: 'bound', entityTitle: item.title.slice(0, 255), updatedBy: getUserId(user) });
       const event = await this.appendEvent(manager, item, 'attachment_upload', user);
       await manager.getRepository(ExampleEvent).update(event.id, { objectLabel: row.originalName.slice(0, 100) });
       return { id: row.id };
@@ -217,11 +224,16 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
     await this.assertCategorySelectable(validated.category ?? null);
     const actorId = getUserId(user);
     if (actorId == null) throw new UnauthorizedException('未登录');
-    return this.repo.manager.transaction(async manager => {
-      const item = await manager.getRepository(ExampleItem).save({ ...validated, category: validated.category || null, description: validated.description || null, version: 1, ownerId: actorId, createdBy: actorId });
-      await this.appendEvent(manager, item, 'create', user, context);
-      return item;
-    });
+    // 单据编号并发撞号时整个事务重跑（事件随事务回滚，不会重复记录）。
+    return withDocNoRetry(() =>
+      this.repo.manager.transaction(async manager => {
+        const docNo = await generateDocNo(DOC_NO_PREFIX, manager.getRepository(ExampleItem), 'docNo');
+        const item = await manager.getRepository(ExampleItem).save({ ...validated, category: validated.category || null, description: validated.description || null, remark: validated.remark || null, version: 1, docNo, ownerId: actorId, createdBy: actorId });
+        await this.appendEvent(manager, item, 'create', user, context);
+        return item;
+      }),
+    { onRetry: attempt => this.logger.warn(`单据编号冲突，重新生成重试（第 ${attempt} 次）`) },
+    );
   }
 
   override async update(id: number, dto: unknown, userId?: number, user?: ScopeUser, context: EventContext = {}) {
@@ -230,7 +242,7 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
       const old = await this.findOneForWrite(manager, id, user, 'edit');
       if (validated.version !== old.version) throw this.versionConflict();
       if (validated.category !== undefined && (validated.category || null) !== old.category) await this.assertCategorySelectable(validated.category || null);
-      const tracked = { title: '标题', status: '状态', category: '类别', description: '说明' };
+      const tracked = { title: '标题', status: '状态', category: '类别', description: '说明', remark: '备注' };
       const next = { ...old };
       const changed: string[] = [];
       for (const key of Object.keys(tracked)) {
@@ -249,6 +261,35 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
       const labelBook = changed.includes('category') ? await this.dictService?.getLabelBook(CATEGORY_DICT, manager) : undefined;
       const label = (key: string, value: any) => value == null || value === '' ? null : key === 'status' ? STATUS_LABELS[value] ?? String(value) : key === 'category' ? labelBook?.display(value) ?? String(value) : null;
       await manager.getRepository(ExampleChange).save(changed.map(key => ({ eventId: event.id, fieldKey: key, fieldLabel: tracked[key], valueType: key === 'status' || key === 'category' ? 'enum' : 'text', beforeValue: old[key] ?? null, afterValue: item[key] ?? null, beforeLabel: label(key, old[key]), afterLabel: label(key, item[key]) })));
+      return item;
+    });
+  }
+
+  /**
+   * 变更单据负责人（权限码 example-items:owner，与普通编辑解耦）。
+   * 负责人即记录归属人：变更后数据范围的"本人/他人"口径随之转移。
+   * 修改日志只存 ID 与当时姓名快照，不用当前姓名反推历史。
+   */
+  async changeOwner(id: number, ownerId: number, user?: ScopeUser, context: EventContext = {}) {
+    return this.repo.manager.transaction(async manager => {
+      const old = await this.findOneForWrite(manager, id, user, 'edit');
+      if (old.ownerId === ownerId) {
+        await this.appendEvent(manager, old, 'no_change', user, context);
+        return old;
+      }
+      const rows = await manager.getRepository(User).find({ where: { id: In([old.ownerId, ownerId].filter((v): v is number => v != null)) }, select: { id: true, displayName: true, username: true } });
+      if (!rows.some(row => row.id === ownerId)) throw new BadRequestException('单据负责人不存在或已删除，请重新选择');
+      const nameOf = (uid: number | null) => {
+        if (uid == null) return null;
+        const row = rows.find(item => item.id === uid);
+        return row ? row.displayName || row.username : `用户#${uid}`;
+      };
+      const item = await manager.getRepository(ExampleItem).save({ ...old, ownerId, updatedBy: getUserId(user)!, version: old.version + 1 });
+      const event = await this.appendEvent(manager, item, 'update', user, context);
+      await manager.getRepository(ExampleChange).save({
+        eventId: event.id, fieldKey: 'ownerId', fieldLabel: '单据负责人', valueType: 'text',
+        beforeValue: old.ownerId ?? null, afterValue: item.ownerId ?? null, beforeLabel: nameOf(old.ownerId), afterLabel: nameOf(ownerId),
+      });
       return item;
     });
   }

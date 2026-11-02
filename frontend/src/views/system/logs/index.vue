@@ -21,7 +21,7 @@
           <span>{{ column.title }}</span><span class="resize-handle" @click.stop @mousedown.prevent.stop="(e: any) => resizeStart(String(column.key), e)" />
         </template>
         <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'createdAt'">{{ formatTime(record.createdAt) }}</template>
+          <template v-if="column.key === 'createdAt'"><span class="log-time">{{ formatTime(record.createdAt) }}</span></template>
           <template v-else-if="column.key === 'action'"><a-tag :color="ACTION_COLORS(record.action)">{{ actionLabelOf(record.action) }}</a-tag></template>
           <template v-else-if="column.key === 'entityType'">{{ entityTypeLabelOf(record.entityType) }}</template>
           <template v-else-if="column.key === 'entityDesc'">{{ record.entityDesc || (record.entityId ? '#' + record.entityId : '-') }}</template>
@@ -85,7 +85,7 @@ const onApplyView = makeOnApplyView<Filters>({ sort, apply, defaults: logsFilter
 const appliedRecord = computed(() => ({ ...applied.value }) as Record<string, unknown>)
 
 const columns = withEmptyDash([
-  { title: '时间', key: 'createdAt', dataIndex: 'createdAt', width: 170 },
+  { title: '时间', key: 'createdAt', dataIndex: 'createdAt', width: 190 },
   { title: '用户', dataIndex: 'username', key: 'username', width: 100 },
   { title: '操作', key: 'action', dataIndex: 'action', width: 90 },
   { title: '模块', key: 'entityType', dataIndex: 'entityType', width: 170 },
@@ -93,7 +93,7 @@ const columns = withEmptyDash([
   { title: '详情', key: 'detail', dataIndex: 'detail', width: 260 },
   { title: 'IP', key: 'ip', dataIndex: 'ip', width: 120 },
 ])
-const { resizeStart } = useResizableColumns('starter-cols-logs-main-width', ref(columns))
+const { resizeStart } = useResizableColumns('starter-cols-logs-main-width-v2', ref(columns))
 function formatTime(t: string) { return formatDateTime(t) }
 const DETAIL_KEY_LABELS: Record<string, string> = {
   name: '名称', displayName: '姓名', username: '用户名', email: '邮箱', phone: '电话', code: '编码', status: '状态', description: '描述', remark: '备注', parentId: '上级', sort: '排序', deptId: '部门', roleId: '角色', leaderId: '直属上级', password: '密码', avatar: '头像', icon: '图标', path: '路径', permission: '权限码', dataScope: '数据范围',
@@ -110,4 +110,5 @@ function prettyDetail(json: string) {
 .logs-body { height: 100%; display: flex; flex-direction: column; min-height: 0; background: var(--color-surface); }
 .logs-body > .ant-table-wrapper { min-height: 0; overflow: hidden; }
 .detail-text { cursor: help; overflow-wrap: anywhere; }
+.log-time { white-space: nowrap; }
 </style>

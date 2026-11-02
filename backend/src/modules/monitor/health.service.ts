@@ -67,14 +67,13 @@ export class HealthService {
   }
 
   private async checkAttachments() {
-    const retentionHours = Number(process.env.ATTACHMENT_TEMP_RETENTION_HOURS || 24);
     try {
       const dir = resolve(process.cwd(), process.env.ATTACHMENT_PRIVATE_DIR || 'uploads-private');
       await fs.mkdir(dir, { recursive: true });
       await fs.access(dir, fs.constants.W_OK);
-      return { privateDirWritable: true, tempRetentionHours: retentionHours };
+      return { privateDirWritable: true };
     } catch {
-      return { privateDirWritable: false, tempRetentionHours: retentionHours };
+      return { privateDirWritable: false };
     }
   }
 

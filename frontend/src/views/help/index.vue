@@ -1,5 +1,6 @@
 <template>
   <Page title="帮助中心" description="按页面关联的使用说明、常见问题与系统更新记录。">
+    <template #extra><router-link :to="returnPath">{{ returnPath === '/home' ? '返回首页' : '返回原页面' }}</router-link></template>
     <div class="help-page">
       <div v-if="pageHelp" class="from-banner" role="status">
         当前页面：<strong>{{ pageHelp.heading }}</strong>
@@ -37,6 +38,10 @@ import { renderMarkdown } from '@/utils/mini-markdown'
 import { HELP_SECTIONS, pageHelpFor } from '@/content/help'
 
 const route = useRoute()
+const returnPath = computed(() => {
+  const from = route.query.from
+  return typeof from === 'string' && /^\/(?!\/)/.test(from) ? from : '/home'
+})
 const sections = HELP_SECTIONS
 const rendered = Object.fromEntries(sections.map((section) => [section.id, renderMarkdown(section.markdown)]))
 

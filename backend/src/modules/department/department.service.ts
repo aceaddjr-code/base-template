@@ -4,6 +4,8 @@ import { Repository } from 'typeorm';
 import { Department } from './department.entity';
 import { User } from '../user/user.entity';
 import { deptSubtreeSelect } from '../../common/utils/dept-subtree';
+import { generateDocNo } from '../../common/utils/doc-no-generator';
+import { withDocNoRetry } from '../../common/utils/service-helpers';
 
 @Injectable()
 export class DepartmentService {
@@ -61,19 +63,18 @@ export class DepartmentService {
     return dept;
   }
 
-  async create(dto: { name: string; code: string; parentId?: number | null; status?: number; sort?: number }) {
-    // 唯一索引不含 deletedAt，软删除行仍占用编码；必须连已删除行一起查，否则 save 撞索引变成 500
-    const exists = await this.deptRepo.findOne({ where: { code: dto.code }, withDeleted: true });
-    if (exists) {
-      const message = exists.deletedAt ? '该编码已被已删除部门占用，请更换编码' : '部门编码已存在';
-      throw new BadRequestException({ message, fieldErrors: [{ path: 'code', code: 'unique', message }] });
-    }
-    return this.deptRepo.save({
-      name: dto.name,
-      code: dto.code,
-      parentId: dto.parentId ?? null,
-      status: dto.status ?? 1,
-      sort: dto.sort ?? 0,
+  async create(dto: { name: string; parentId?: number | null; status?: number; sort?: number }) {
+    // 编码由系统生成（dept-0001 全局流水；生成器计数含软删行，软删除部门仍占用编码唯一索引）；
+    // 并发创建撞唯一索引时自动重新生成重试
+    return withDocNoRetry(async () => {
+      const code = await generateDocNo('dept', this.deptRepo, 'code', { dateDigits: 0, seqDigits: 4 });
+      return this.deptRepo.save({
+        name: dto.name,
+        code,
+        parentId: dto.parentId ?? null,
+        status: dto.status ?? 1,
+        sort: dto.sort ?? 0,
+      });
     });
   }
 
@@ -88,7 +89,7 @@ export class DepartmentService {
         throw new BadRequestException('不能将子部门设为上级部门');
       }
     }
-    // code 不进可修改白名单：角色数据范围前缀按 code 派生，允许改码会破坏既有授权
+    // code 不进可修改白名单：编码是系统生成的稳定标识（搜索引用口径），不应随组织调整变化
     const patch: Record<string, any> = {};
     for (const k of ['name', 'parentId', 'status', 'sort'] as const) {
       if (dto[k] !== undefined) patch[k] = dto[k];

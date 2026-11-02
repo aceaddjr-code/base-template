@@ -13,8 +13,7 @@
 
       <!-- 各项目按需替换本段文案（h1 第二行是主色高亮部分） -->
       <div class="brand-body">
-        <p class="brand-eyebrow">[ 企业工作台 ]</p>
-        <h1>企业管理工作台<br /><em>统一工作入口</em></h1>
+        <h1>企业管理工作台<br />统一工作入口</h1>
         <div class="brand-rule"></div>
         <p class="brand-desc">账号按角色与数据范围授权，关键操作全程留痕可追溯。</p>
         <ul class="brand-points">
@@ -25,7 +24,7 @@
       </div>
 
       <div class="brand-foot">
-        <span class="foot-item"><i class="foot-dot"></i>本地账号</span>
+        <span class="foot-item">本地账号</span>
         <span class="foot-item">v{{ appVersion }}</span>
       </div>
     </section>
@@ -127,6 +126,9 @@ async function handleLogin() {
 </script>
 
 <style scoped>
+/* Hallmark · app screen · modern-minimal · existing project theme · login */
+/* Critique: improve field contrast and remove redundant decoration while keeping the brand. */
+/* Hallmark · waive 39b · login-form password input is inside a 44px wrapper · login password control uses the outer wrapper as its full hit target */
 .login-page {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -153,12 +155,10 @@ async function handleLogin() {
 }
 .brand-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .brand-text strong { font-size: var(--text-aux); font-weight: 700; }
-.brand-text span { color: var(--color-text-disabled); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; overflow-wrap: anywhere; }
+.brand-text span { color: var(--color-text-disabled); font-size: var(--text-aux); overflow-wrap: anywhere; }
 
 .brand-body { margin: auto 0; }
-.brand-eyebrow { margin: 0 0 var(--space-5); font-size: var(--text-aux); color: var(--color-text-disabled); letter-spacing: 0.04em; }
-.brand-body h1 { margin: 0; font-size: var(--text-display); font-weight: 700; line-height: var(--lh-tight); }
-.brand-body h1 em { font-style: normal; color: var(--color-text-on-color); }
+.brand-body h1 { margin: 0; font-size: var(--text-display); font-weight: 700; line-height: var(--lh-tight); overflow-wrap: break-word; min-width: 0; text-wrap: balance; }
 .brand-rule { height: 1px; background: var(--color-border-strong); margin: var(--space-5) 0; }
 .brand-desc { margin: 0; font-size: var(--text-body); line-height: var(--lh-base); color: var(--color-text-disabled); }
 .brand-points { margin: var(--space-5) 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-2); }
@@ -175,8 +175,6 @@ async function handleLogin() {
   color: var(--color-text-disabled);
 }
 .foot-item { display: inline-flex; align-items: center; }
-/* 在线状态用绿点表达，比 [x] 更符合「可用」的直觉。 */
-.foot-dot::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--color-success); margin-right: var(--space-2); display: inline-block; }
 
 /* ===== 表单区 ===== */
 .login-form { display: flex; align-items: center; justify-content: center; padding: var(--space-7) var(--space-6); }
@@ -199,8 +197,11 @@ async function handleLogin() {
 .login-form :deep(.ant-form-item) { margin-bottom: var(--space-5); }
 .login-form :deep(.ant-form-item-label > label) { font-size: var(--text-aux); color: var(--color-text-secondary); }
 .login-form :deep(.ant-input-lg), .login-form :deep(.ant-input-affix-wrapper-lg) { min-height: 44px; }
+.login-form :deep(.ant-input-lg:not(.ant-input-affix-wrapper .ant-input)), .login-form :deep(.ant-input-affix-wrapper-lg) { border-color: var(--color-border-strong); }
+.login-form :deep(input:focus-visible) { outline: var(--focus-width) solid var(--color-primary); outline-offset: var(--focus-offset); }
 .login-form :deep(.ant-input-affix-wrapper-lg > .ant-input) { min-height: 0; }
 .login-submit { height: 44px; letter-spacing: 0.08em; }
+.login-submit:active { opacity: .85; }
 .form-submit { margin-top: var(--space-6); margin-bottom: var(--space-3) !important; }
 .form-foot { margin: 0; font-size: var(--text-aux); line-height: var(--lh-base); color: var(--color-text-tertiary); }
 

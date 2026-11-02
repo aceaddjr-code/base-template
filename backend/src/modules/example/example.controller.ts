@@ -2,7 +2,7 @@ import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe
 import { CrudBaseController } from '../../common/controllers/crud-base.controller';
 import { CrudPermPrefix } from '../../common/decorators/crud-perm-prefix.decorator';
 import { ExampleService } from './example.service';
-import { BatchRemoveExampleDto, CreateExampleDto, UpdateExampleDto } from './example.dto';
+import { BatchRemoveExampleDto, ChangeExampleOwnerDto, CreateExampleDto, UpdateExampleDto } from './example.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { excelFileFilter, sendExcel } from '../../common/utils/excel-helper';
 import type { Request, Response } from 'express';
@@ -53,6 +53,13 @@ export class ExampleController extends CrudBaseController {
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('Content-Disposition', req.query.preview === '1' && ATTACHMENT_PREVIEW_IMAGE_EXTS.has(extname(file.row.originalName).toLowerCase()) ? 'inline' : file.contentDisposition);
     try { await pipeline(file.stream, res); } catch { res.destroy(); }
+  }
+
+  /** 变更单据负责人：独立权限码，角色管理可配置；admin 天生旁路。 */
+  @Post(':id/owner')
+  @RequirePermission('example-items:owner')
+  changeOwner(@Param('id', ParseIntPipe) id: number, @Body() dto: ChangeExampleOwnerDto, @Req() req: Request) {
+    return this.service.changeOwner(id, dto.ownerId, req.user as any, { requestId: req['requestId'] });
   }
 
   @Post(':id/access-events')

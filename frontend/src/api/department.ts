@@ -21,7 +21,8 @@ export function getDepartmentsAll(): Promise<Department[]> {
   return request.get('/departments/all')
 }
 
-export function createDepartment(data: { name: string; code: string; parentId?: number | null; status?: number; sort?: number }, options?: FormRequestOptions): Promise<Department> {
+/** 编码由后端自动生成（dept-0001 全局流水），无需传入 */
+export function createDepartment(data: { name: string; parentId?: number | null; status?: number; sort?: number }, options?: FormRequestOptions): Promise<Department> {
   return request.post('/departments', data, options)
 }
 

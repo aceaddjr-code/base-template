@@ -41,6 +41,7 @@
       </div>
       <a-tree
         v-if="orgTreeVisible.length"
+        :tree-data="orgTreeVisible"
         v-model:selectedKeys="treeSelectedKeys"
         v-model:expandedKeys="orgExpandedKeys"
         block-node
@@ -54,11 +55,18 @@
               <span class="org-count">({{ node.count }})</span>
             </span>
             <span v-if="node.id !== 'all'" class="hidden group-hover:flex items-center shrink-0">
-              <a-tooltip title="添加子部门"><a-button type="text" size="small" class="w-6! h-6! px-0!" @click.stop="openDeptCreate(node)"><PlusOutlined /></a-button></a-tooltip>
-              <a-tooltip title="编辑部门"><a-button type="text" size="small" class="w-6! h-6! px-0!" @click.stop="openDeptEdit(node)"><EditOutlined /></a-button></a-tooltip>
-              <a-popconfirm title="确定删除该部门？" ok-text="确定" cancel-text="取消" @confirm="handleDeptDelete(node.id)">
-                <a-button type="text" size="small" danger class="w-6! h-6! px-0!" @click.stop><DeleteOutlined /></a-button>
-              </a-popconfirm>
+              <a-dropdown :trigger="['click']" placement="bottomRight">
+                <a-button type="text" size="small" class="w-6! h-6! px-0!" :aria-label="`${node.name}的更多操作`" @click.stop>
+                  <template #icon><MoreOutlined /></template>
+                </a-button>
+                <template #overlay>
+                  <a-menu>
+                    <a-menu-item key="create" @click="openDeptCreate(node)">添加子部门</a-menu-item>
+                    <a-menu-item key="edit" @click="openDeptEdit(node)">编辑</a-menu-item>
+                    <a-menu-item key="delete" danger @click="confirmDeptDelete(node.id)">删除</a-menu-item>
+                  </a-menu>
+                </template>
+              </a-dropdown>
             </span>
           </div>
         </template>
@@ -67,7 +75,7 @@
     </template>
   </div>
 
-  <!-- 部门新增/编辑弹窗（新增与编辑共用；编辑时编码不可改） -->
+  <!-- 部门新增/编辑弹窗（新增与编辑共用；编码由系统自动生成，编辑时只读展示） -->
   <a-modal
     :open="deptModalVisible"
     :title="deptEditId ? '编辑部门' : '新增部门'"
@@ -89,10 +97,9 @@
           <a-input v-model:value="deptForm.name" :disabled="deptModalLoading" aria-label="部门名称" v-bind="deptFeedback.attrs('name')" placeholder="如：计划部" :maxlength="50" />
           <p v-if="deptErrors.name" :id="deptFeedback.errorId('name')" class="field-error">{{ deptErrors.name }}</p>
         </a-form-item>
-        <a-form-item label="部门编码" required data-form-field="code" :validate-status="deptErrors.code ? 'error' : undefined">
-          <a-input v-model:value="deptForm.code" :disabled="!!deptEditId || deptModalLoading" aria-label="部门编码" v-bind="deptFeedback.attrs('code')" placeholder="如：sales" :maxlength="50" />
-          <p v-if="deptErrors.code" :id="deptFeedback.errorId('code')" class="field-error">{{ deptErrors.code }}</p>
-          <div class="dept-code-note">编码是部门的稳定标识，创建后不可修改</div>
+        <a-form-item v-if="deptEditId != null" label="部门编码">
+          <div class="dept-code-readonly">{{ deptForm.code }}</div>
+          <div class="dept-code-note">编码由系统自动生成，创建后不可修改</div>
         </a-form-item>
         <a-row :gutter="16">
           <a-col :span="12">
@@ -113,12 +120,12 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import FormFeedback from '@/components/FormFeedback.vue'
 import { useFormModal } from '@/composables/useFormModal'
 import { createDepartment, updateDepartment, deleteDepartment, type Department } from '@/api/department'
 import { getUsersSimple } from '@/api/user'
-import { ApartmentOutlined, AppstoreOutlined, DeleteOutlined, EditOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PlusOutlined } from '@ant-design/icons-vue'
+import { ApartmentOutlined, AppstoreOutlined, MenuFoldOutlined, MenuUnfoldOutlined, MoreOutlined, PlusOutlined } from '@ant-design/icons-vue'
 import { searchOrgTree, collectOrgKeys, orgTreeHasKey, splitHighlight } from './org-tree-search'
 
 /**
@@ -255,19 +262,19 @@ function onSelectedTipClose(e: MouseEvent) {
 
 // ============ 部门新增/编辑 ============
 const deptModal = useFormModal<{ name: string; code: string; parentId: number | undefined; status: number; sort: number }, number>({
-  fields: () => ({ name: '部门名称', code: '部门编码' }),
+  // code 仅作编辑弹窗只读展示，不参与校验与提交（新增由后端自动生成）
+  fields: () => ({ name: '部门名称' }),
   defaults: () => ({ name: '', code: '', parentId: undefined, status: 1, sort: 0 }),
-  validate: (form, editId) => {
+  validate: (form) => {
     const errors: Record<string, string> = {}
     if (!form.name.trim()) errors.name = '请输入部门名称'
-    if (editId == null && !form.code.trim()) errors.code = '请输入部门编码'
     return errors
   },
   save: async (form, editId) => {
     if (editId != null) {
       await updateDepartment(editId, { name: form.name.trim(), parentId: form.parentId ?? null, status: form.status, sort: form.sort }, { errorFeedback: 'form' })
     } else {
-      await createDepartment({ name: form.name.trim(), code: form.code.trim(), parentId: form.parentId ?? null, status: form.status, sort: form.sort }, { errorFeedback: 'form' })
+      await createDepartment({ name: form.name.trim(), parentId: form.parentId ?? null, status: form.status, sort: form.sort }, { errorFeedback: 'form' })
     }
     message.success('保存成功')
     // 部门增删改后同时重算人数（与原 refreshOrg 口径一致），并通知父页面刷新部门与列表
@@ -304,6 +311,16 @@ function openDeptEdit(node: any) {
     parentId: d?.parentId ?? undefined,
     status: d?.status ?? 1,
     sort: d?.sort ?? 0,
+  })
+}
+
+function confirmDeptDelete(id: number) {
+  Modal.confirm({
+    title: '确定要删除该部门吗？',
+    okText: '确定',
+    cancelText: '取消',
+    okType: 'danger',
+    onOk: () => handleDeptDelete(id),
   })
 }
 
@@ -365,6 +382,7 @@ async function handleDeptDelete(id: number) {
   word-break: break-all;
 }
 .dept-code-note { color: var(--color-text-tertiary); font-size: var(--text-aux); margin-top: var(--space-1); }
+.dept-code-readonly { color: var(--color-text-secondary); font-size: var(--text-aux); word-break: break-all; }
 
 @media (max-width: 768px) {
   .org-panel {

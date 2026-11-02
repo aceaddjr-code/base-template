@@ -79,9 +79,14 @@
                   <a-button type="link" size="small" :disabled="unread === 0" @click="readAll">全部已读</a-button>
                 </div>
                 <div class="notification-list">
-                  <a-empty v-if="!notifications.length" :image="null" description="暂无通知" />
+                  <div v-if="notificationsLoading" class="notification-state" role="status">通知加载中…</div>
+                  <div v-else-if="notificationsFailed" class="notification-state" role="alert">
+                    <span>通知加载失败</span>
+                    <a-button type="link" size="small" @click="loadNotifications(true)">重试</a-button>
+                  </div>
+                  <a-empty v-else-if="!notifications.length" :image="null" description="暂无通知" />
                   <button
-                    v-for="item in notifications"
+                    v-for="item in notificationsLoading || notificationsFailed ? [] : notifications"
                     :key="item.id"
                     type="button"
                     class="notification-item"
@@ -155,6 +160,9 @@ const openKeys = ref<string[]>([])
 const profileOpen = ref(false)
 const unread = ref(0)
 const notifications = ref<NotificationItem[]>([])
+const notificationsLoading = ref(false)
+const notificationsFailed = ref(false)
+let notificationsVersion = 0
 const displayName = computed(() => appStore.userInfo?.displayName || appStore.userInfo?.username || '用户')
 
 
@@ -209,7 +217,21 @@ async function refreshUnread() {
   } catch { /* 请求层已反馈；失败不把未读数伪装成零 */ }
 }
 function onNotificationsChanged() { void refreshUnread() }
-async function loadNotifications(open: boolean) { if (open) notifications.value = (await getNotifications({ page: 1, pageSize: 8 })).list; await refreshUnread() }
+async function loadNotifications(open: boolean) {
+  if (!open) return
+  const version = ++notificationsVersion
+  notificationsLoading.value = true
+  notificationsFailed.value = false
+  try {
+    const result = await getNotifications({ page: 1, pageSize: 8 })
+    if (version === notificationsVersion) notifications.value = result.list
+  } catch {
+    if (version === notificationsVersion) notificationsFailed.value = true
+  } finally {
+    if (version === notificationsVersion) notificationsLoading.value = false
+  }
+  void refreshUnread()
+}
 async function readOne(item: NotificationItem) {
   // 仍然显示为未读，要关掉重开才变。已读项也无需再发请求。
   if (item.readAt) return
@@ -248,6 +270,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   unreadVersion++
+  notificationsVersion++
   window.removeEventListener(NOTIFICATIONS_CHANGED, onNotificationsChanged)
   mediaQuery?.removeEventListener('change', syncViewport)
   document.body.style.overflow = ''
@@ -423,6 +446,7 @@ onBeforeUnmount(() => {
 .notification-panel { width: min(380px, calc(100vw - 24px)); background: var(--color-surface); border: var(--rule); display: flex; flex-direction: column; max-height: min(520px, calc(100dvh - 72px)); }
 .notification-title { padding: var(--space-3) var(--space-4); display: flex; align-items: center; justify-content: space-between; border-bottom: var(--rule); flex: none; }
 .notification-list { min-height: 0; overflow-y: auto; }
+.notification-state { display: flex; align-items: center; justify-content: center; gap: var(--space-2); padding: var(--space-4); color: var(--color-text-secondary); font-size: var(--text-aux); }
 .notification-item {
   position: relative;
   display: flex;

@@ -3,6 +3,8 @@ import request, { type FormRequestOptions } from './request'
 export const ATTACHMENT_MAX_SIZE = 500 * 1024 * 1024
 
 export type AttachmentStatus = 'temp' | 'bound'
+/** center=附件管理直传（文件库）；business=业务表单上传 */
+export type AttachmentOrigin = 'center' | 'business'
 
 export interface AttachmentItem {
   id: number
@@ -10,8 +12,13 @@ export interface AttachmentItem {
   mimeType: string
   size: number
   status: AttachmentStatus
+  origin: AttachmentOrigin
   entityType: string | null
   entityId: number | null
+  /** 绑定时单据标题快照，用于展示与穿透 */
+  entityTitle: string | null
+  /** 上传人显示名（displayName 缺省回退用户名；用户被删为 null） */
+  uploaderName: string | null
   mine: boolean
   createdAt: string
 }
@@ -23,8 +30,17 @@ export interface AttachmentPage {
   pageSize: number
 }
 
-export function getAttachments(params: { page?: number; pageSize?: number; status?: AttachmentStatus }): Promise<AttachmentPage> {
-  return request.get('/attachments', { params })
+export interface AttachmentQuery {
+  page?: number
+  pageSize?: number
+  origin?: AttachmentOrigin
+  status?: AttachmentStatus
+  entityType?: string
+  keyword?: string
+}
+
+export function getAttachments(params: AttachmentQuery, signal?: AbortSignal): Promise<AttachmentPage> {
+  return request.get('/attachments', { params, signal })
 }
 
 export function uploadAttachment(file: File, options?: FormRequestOptions & { signal?: AbortSignal }): Promise<AttachmentItem> {

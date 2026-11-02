@@ -17,6 +17,9 @@ async function buildService(rows: Department[]) {
     orderBy: jest.fn().mockReturnThis(),
     addOrderBy: jest.fn().mockReturnThis(),
     getMany: jest.fn().mockResolvedValue(rows),
+    withDeleted: jest.fn().mockReturnThis(),
+    select: jest.fn().mockReturnThis(),
+    getRawOne: jest.fn().mockResolvedValue({ maxSeq: null }),
   };
   const repo = {
     createQueryBuilder: jest.fn().mockReturnValue(qb),
@@ -78,27 +81,35 @@ describe('DepartmentService.findAll 关键词搜索保留祖先路径', () => {
   });
 });
 
-describe('DepartmentService.create 编码占用检查', () => {
-  it('编码被活跃部门占用时拒绝创建', async () => {
+describe('DepartmentService.create 编码自动生成', () => {
+  it('编码由系统生成（dept-0001 全局流水）并随其余字段规范化落库', async () => {
     const { service, repo } = await buildService([]);
-    repo.findOne.mockResolvedValue({ id: 2, code: 'd2', deletedAt: null });
-    const error = await service.create({ name: '新部门', code: 'd2' }).catch((e) => e);
-    expect(error.response.fieldErrors).toEqual([{ path: 'code', code: 'unique', message: '部门编码已存在' }]);
-    expect(error.message).toBe('部门编码已存在');
-    expect(repo.save).not.toHaveBeenCalled();
+    await service.create({ name: '新部门', parentId: 1 });
+    expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ name: '新部门', code: 'dept-0001', parentId: 1, status: 1, sort: 0 }));
   });
 
-  it('编码被软删除部门占用时给出明确提示而非撞唯一索引', async () => {
-    const { service, repo } = await buildService([]);
-    repo.findOne.mockResolvedValue({ id: 2, code: 'd2', deletedAt: new Date() });
-    await expect(service.create({ name: '新部门', code: 'd2' })).rejects.toThrow('该编码已被已删除部门占用');
-    expect(repo.save).not.toHaveBeenCalled();
+  it('编码在全局最大流水基础上递增（计数含软删行）', async () => {
+    const { service, repo, qb } = await buildService([]);
+    qb.getRawOne.mockResolvedValue({ maxSeq: 3 });
+    await service.create({ name: '新部门' });
+    expect(qb.withDeleted).toHaveBeenCalled();
+    expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ code: 'dept-0004' }));
   });
 
-  it('编码未被占用时正常创建并规范化字段', async () => {
+  it('并发撞唯一索引时自动重新生成并重试成功', async () => {
     const { service, repo } = await buildService([]);
-    await service.create({ name: '新部门', code: 'd9', parentId: 1 });
-    expect(repo.findOne).toHaveBeenCalledWith(expect.objectContaining({ where: { code: 'd9' } }));
-    expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ code: 'd9', parentId: 1, status: 1, sort: 0 }));
+    const dup = Object.assign(new Error('Duplicate entry'), { code: 'ER_DUP_ENTRY' });
+    repo.save.mockRejectedValueOnce(dup);
+    const result = await service.create({ name: '新部门' });
+    expect(repo.save).toHaveBeenCalledTimes(2);
+    expect(result).toEqual(expect.objectContaining({ code: 'dept-0001' }));
+  });
+
+  it('重试用尽后原样抛出唯一索引错误', async () => {
+    const { service, repo } = await buildService([]);
+    const dup = Object.assign(new Error('Duplicate entry'), { code: 'ER_DUP_ENTRY' });
+    repo.save.mockRejectedValue(dup);
+    await expect(service.create({ name: '新部门' })).rejects.toBe(dup);
+    expect(repo.save).toHaveBeenCalledTimes(3);
   });
 });

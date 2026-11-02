@@ -2,7 +2,7 @@ import { Repository } from 'typeorm';
 import { Logger } from '@nestjs/common';
 
 export interface DocNoOptions {
-  /** 日期段位数：8 = yyyyMMdd 按日归零（默认）；6 = yymmdd 按 yymm 当月归零 */
+  /** 日期段位数：8 = yyyyMMdd 按日归零（默认）；6 = yymmdd 按 yymm 当月归零；0 = 无日期段，全局流水不归零 */
   dateDigits?: number;
   /** 流水位数：3 = 001（默认）；2 = 01 */
   seqDigits?: number;
@@ -25,12 +25,17 @@ function buildDocNoContext(prefix: string, opts: DocNoOptions): DocNoContext {
   const m = String(today.getMonth() + 1).padStart(2, '0');
   const d = String(today.getDate()).padStart(2, '0');
 
-  // 6 位日期（yymmdd，按当月归零）；8 位日期（yyyyMMdd，按日归零）
-  const datePart = dateDigits === 6 ? `${yy}${m}${d}` : `${y}${m}${d}`;
+  // 6 位日期（yymmdd，按当月归零）；8 位日期（yyyyMMdd，按日归零）；0 位无日期（全局流水不归零）
+  const datePart = dateDigits === 0 ? '' : dateDigits === 6 ? `${yy}${m}${d}` : `${y}${m}${d}`;
   // 归零口径：6 位 → 当月前缀 prefix-yymm%（yymmdd 连续 6 位，当月全部记录均以 prefix-yymm 开头）；
-  // 8 位 → 当日前缀 prefix-yyyymmdd-%
-  const likePrefix = dateDigits === 6 ? `${prefix}-${yy}${m}%` : `${prefix}-${datePart}-%`;
+  // 8 位 → 当日前缀 prefix-yyyymmdd-%；0 位 → 全局前缀 prefix-%
+  const likePrefix = dateDigits === 0 ? `${prefix}-%` : dateDigits === 6 ? `${prefix}-${yy}${m}%` : `${prefix}-${datePart}-%`;
   return { datePart, likePrefix, dateDigits, seqDigits };
+}
+
+/** 组装完整编号：有日期段 → prefix-datePart-seq；无日期段 → prefix-seq */
+function assembleDocNo(prefix: string, datePart: string, seq: number, seqDigits: number): string {
+  return `${prefix}${datePart ? `-${datePart}` : ''}-${String(seq).padStart(seqDigits, '0')}`;
 }
 
 /**
@@ -66,10 +71,10 @@ export async function generateDocNo(
 
   const maxSeq = Math.pow(10, seqDigits) - 1;
   if (seq > maxSeq) {
-    logger.warn(`${prefix} ${dateDigits === 6 ? '当月' : '今日'}流水号已超过 ${maxSeq}`);
+    logger.warn(`${prefix} ${dateDigits === 0 ? '全局' : dateDigits === 6 ? '当月' : '今日'}流水号已超过 ${maxSeq}`);
   }
 
-  return `${prefix}-${datePart}-${String(seq).padStart(seqDigits, '0')}`;
+  return assembleDocNo(prefix, datePart, seq, seqDigits);
 }
 
 export async function generateDocNoBatch(
@@ -81,5 +86,5 @@ export async function generateDocNoBatch(
 ): Promise<string[]> {
   const { datePart, likePrefix, seqDigits } = buildDocNoContext(prefix, opts);
   const max = await currentMaxSeq(repo, field, likePrefix, seqDigits);
-  return Array.from({ length: count }, (_, i) => `${prefix}-${datePart}-${String(max + 1 + i).padStart(seqDigits, '0')}`);
+  return Array.from({ length: count }, (_, i) => assembleDocNo(prefix, datePart, max + 1 + i, seqDigits));
 }
