@@ -1,12 +1,6 @@
 <template>
   <Page class="page-list" title="角色管理" description="菜单权限 · 数据范围">
     <div class="page-body">
-      <PageToolbar :show-search="false" :show-create="true" create-label="新增角色" @create="showCreateModal()">
-        <template #actions>
-          <a-button :disabled="!selectedRole" @click="showCopyModal()">复制当前角色</a-button>
-        </template>
-      </PageToolbar>
-
       <a-card :bordered="false" class="flex-1 min-h-0">
         <div class="roles-layout">
           <!-- ===== 左：角色列表 ===== -->
@@ -24,23 +18,28 @@
               <div
                 v-for="r in pagedRoles"
                 :key="r.id"
-                class="role-item group"
+                class="role-item"
                 :class="{ 'role-item-active': selectedRole?.id === r.id }"
-                @click="onRoleItemClick(r, $event)"
               >
-                <div class="flex items-center justify-between gap-1">
+                <button class="role-select" type="button" :disabled="saving" :aria-pressed="selectedRole?.id === r.id" @click="selectRole(r)">
                   <span class="role-name">{{ r.name }}</span>
-                  <span class="flex items-center gap-1">
-                    <a-tag v-if="r.code === 'admin'" color="processing" class="m-0!">超级管理员</a-tag>
-                    <span class="role-actions opacity-0 group-hover:opacity-100 transition-opacity">
-                      <a-button type="link" size="small" @click="showEditModal(r)">编辑</a-button>
-                      <a-popconfirm title="确定要删除该角色吗？" ok-text="确定" cancel-text="取消" @confirm="handleDelete(r.id)">
-                        <a-button type="link" danger size="small">删除</a-button>
-                      </a-popconfirm>
-                    </span>
-                  </span>
-                </div>
-                <div class="role-desc">{{ r.description || r.code }}</div>
+                  <span class="role-desc">{{ r.description || r.code }}</span>
+                </button>
+                <span class="role-meta">
+                  <a-tag v-if="r.code === 'admin'" color="processing" class="m-0!">超级管理员</a-tag>
+                  <a-dropdown :trigger="['click']" placement="bottomRight">
+                    <a-button type="text" size="small" :aria-label="`${r.name}的更多操作`" @click.stop>
+                      <template #icon><MoreOutlined /></template>
+                    </a-button>
+                    <template #overlay>
+                      <a-menu>
+                        <a-menu-item key="copy" @click="showCopyModal(r)">复制角色</a-menu-item>
+                        <a-menu-item key="edit" @click="showEditModal(r)">编辑</a-menu-item>
+                        <a-menu-item key="delete" danger @click="confirmDelete(r)">删除</a-menu-item>
+                      </a-menu>
+                    </template>
+                  </a-dropdown>
+                </span>
               </div>
               <a-empty v-if="!loading && filteredRoles.length === 0" :description="failed ? '角色加载失败' : '无匹配角色'">
                 <a-button v-if="failed" size="small" @click="fetchData">重试</a-button>
@@ -56,6 +55,7 @@
                 :show-size-changer="false"
                 @change="onPageChange"
               />
+              <a-button type="primary" block @click="showCreateModal()">新增角色</a-button>
             </div>
           </div>
 
@@ -101,12 +101,12 @@
                   </div>
                   <div v-for="g in filteredGroups" :key="g.moduleId" class="mb-4 last:mb-0!">
                     <!-- 模块分组头（可折叠） -->
-                    <div class="matrix-group" @click="toggleGroup(g.moduleId)">
+                    <button type="button" class="matrix-group" :aria-expanded="!collapsed.has(g.moduleId)" @click="toggleGroup(g.moduleId)">
                       <CaretDownOutlined v-if="!collapsed.has(g.moduleId)" class="group-caret" />
                       <CaretRightOutlined v-else class="group-caret" />
                       <span class="group-name">{{ g.moduleName }}</span>
                       <span class="group-count">{{ g.rows.length }} 个表单</span>
-                    </div>
+                    </button>
                     <div v-show="!collapsed.has(g.moduleId)" class="matrix-table">
                       <div v-for="row in g.rows" :key="row.formId" class="matrix-row">
                         <div class="matrix-form-col">
@@ -138,8 +138,8 @@
 
               <!-- 底部操作条 -->
               <div class="matrix-foot">
-                <a-button :disabled="isAdminRole" @click="setRowsChecked(currentViewRows, true)">全选</a-button>
-                <a-dropdown :disabled="isAdminRole">
+                <a-button :disabled="isAdminRole || matrixLoading || matrixFailed || saving" @click="setRowsChecked(currentViewRows, true)">全选</a-button>
+                <a-dropdown :disabled="isAdminRole || matrixLoading || matrixFailed || saving">
                   <a-button>
                     快速授权
                     <DownOutlined />
@@ -152,7 +152,7 @@
                     </a-menu>
                   </template>
                 </a-dropdown>
-                <a-button type="primary" :loading="saving" :disabled="isAdminRole" @click="handleSavePerm">保存</a-button>
+                <a-button type="primary" :loading="saving" :disabled="isAdminRole || matrixLoading || matrixFailed" @click="handleSavePerm">保存</a-button>
               </div>
             </template>
           </div>
@@ -206,10 +206,9 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted } from 'vue'
-import { SearchOutlined, DownOutlined, CaretRightOutlined, CaretDownOutlined } from '@ant-design/icons-vue'
-import { message } from 'ant-design-vue'
+import { SearchOutlined, DownOutlined, CaretRightOutlined, CaretDownOutlined, MoreOutlined } from '@ant-design/icons-vue'
+import { message, Modal } from 'ant-design-vue'
 import Page from '@/components/Page.vue'
-import PageToolbar from '@/components/PageToolbar.vue'
 import FormFeedback from '@/components/FormFeedback.vue'
 import { useFormModal } from '@/composables/useFormModal'
 import {
@@ -274,13 +273,6 @@ async function fetchData() {
   }
 }
 
-/** 列表项点击：操作区（编辑/删除）内不触发选中 */
-function onRoleItemClick(r: RoleItem, e: MouseEvent) {
-  const el = e.target as HTMLElement
-  if (el.closest('.role-actions')) return
-  selectRole(r)
-}
-
 // ============ 权限矩阵 ============
 const moduleTree = ref<MenuItem[]>([])
 const matrix = ref<MatrixRow[]>([])
@@ -288,6 +280,7 @@ const matrix = ref<MatrixRow[]>([])
 const existingIds = ref<number[]>([])
 const matrixLoading = ref(false)
 const matrixFailed = ref(false)
+let matrixRequest = 0
 const saving = ref(false)
 const activeTab = ref('all')
 const formKeyword = ref('')
@@ -306,21 +299,27 @@ async function selectRole(role: RoleItem) {
 /** 并行拉取全量菜单树 + 角色已分配菜单 id */
 async function loadMatrix() {
   if (!selectedRole.value) return
+  const roleId = selectedRole.value.id
+  const request = ++matrixRequest
   matrixLoading.value = true
   matrixFailed.value = false
+  matrix.value = []
+  moduleTree.value = []
+  existingIds.value = []
   try {
     const [tree, ids] = await Promise.all([
       getMenuTree(),
-      getRoleMenuIds(selectedRole.value.id),
+      getRoleMenuIds(roleId),
     ])
+    if (request !== matrixRequest || selectedRole.value?.id !== roleId) return
     moduleTree.value = tree
     existingIds.value = ids || []
     matrix.value = buildPermissionMatrix(moduleTree.value, existingIds.value)
   } catch {
-    matrixFailed.value = true
+    if (request === matrixRequest && selectedRole.value?.id === roleId) matrixFailed.value = true
   }
   finally {
-    matrixLoading.value = false
+    if (request === matrixRequest) matrixLoading.value = false
   }
 }
 
@@ -406,9 +405,8 @@ const feedbackRoot = roleModal.bindRoot
 function showCreateModal() { roleModal.open() }
 
 /** 复制角色：只建空角色（不复制权限），复用新增弹窗预填名称/编码 */
-function showCopyModal() {
-  if (!selectedRole.value) return
-  roleModal.open(null, { name: `${selectedRole.value.name}-副本`, code: `${selectedRole.value.code}_copy` })
+function showCopyModal(role: RoleItem) {
+  roleModal.open(null, { name: `${role.name}-副本`, code: `${role.code}_copy` })
 }
 
 function showEditModal(record: any) {
@@ -416,11 +414,24 @@ function showEditModal(record: any) {
 }
 
 // ============ 删除 ============
+function confirmDelete(role: RoleItem) {
+  Modal.confirm({
+    title: '确定要删除该角色吗？',
+    content: role.name,
+    okText: '确定',
+    cancelText: '取消',
+    okType: 'danger',
+    onOk: () => handleDelete(role.id),
+  })
+}
+
 async function handleDelete(id: number) {
   try {
     await deleteRole(id)
     message.success('删除成功')
     if (selectedRole.value?.id === id) {
+      matrixRequest++
+      matrixLoading.value = false
       selectedRole.value = null
       matrix.value = []
       existingIds.value = []
@@ -437,6 +448,8 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* Hallmark · app screen · modern-minimal · existing project theme · role permissions */
+/* Critique: make selection and permission groups keyboard accessible; keep the matrix legible. */
 /* 布局外壳：.page-body 由 style.css 统一提供，工具栏在上、左右分栏在下共享纵向空间 */
 .roles-layout { flex: 1; min-height: 0; display: flex; }
 
@@ -446,17 +459,24 @@ onMounted(() => {
 .sidebar-title { font-size: var(--text-aux); font-weight: 600; color: var(--color-text-primary); }
 .sidebar-count { font-size: var(--text-aux); color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
 .role-sidebar-search { flex-shrink: 0; padding: 0 var(--space-3); }
-.role-list { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-2) 6px; }
-.role-sidebar-foot { flex-shrink: 0; padding: var(--space-2) var(--space-3); border-top: var(--rule); }
+.role-list { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-2); }
+.role-sidebar-foot { flex-shrink: 0; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-top: var(--rule); }
 
 /* 角色选择使用细线边框；不使用投影表达选中态。 */
 .role-item {
-  padding: var(--space-2) 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  padding: var(--space-2);
   border-radius: 0;
-  cursor: pointer;
   border: 1px solid transparent;
   margin-bottom: 2px;
 }
+.role-select { flex: 1; min-width: 0; padding: 0; border: 0; background: transparent; text-align: left; cursor: pointer; }
+.role-select:disabled { cursor: wait; }
+.role-select:focus-visible, .matrix-group:focus-visible { outline: 2px solid var(--color-link); outline-offset: 2px; }
+.role-select:active, .matrix-group:active { opacity: .75; }
+.role-meta { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-1); }
 .role-item:hover {
   background: var(--color-layer-hover);
 }
@@ -466,6 +486,7 @@ onMounted(() => {
   border-color: var(--color-primary);
 }
 .role-name {
+  display: block;
   font-size: var(--text-aux);
   font-weight: 600;
   color: var(--color-text-primary);
@@ -474,6 +495,7 @@ onMounted(() => {
   white-space: nowrap;
 }
 .role-desc {
+  display: block;
   font-size: var(--text-aux);
   color: var(--color-text-tertiary);
   margin-top: 2px;
@@ -481,7 +503,6 @@ onMounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.role-actions { display: flex; align-items: center; }
 
 /* ===== 右：权限矩阵 ===== */
 .role-matrix { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
@@ -515,7 +536,7 @@ onMounted(() => {
   padding: var(--space-2) var(--space-4) 0;
 }
 .matrix-scroll { flex: 1; min-height: 0; overflow: auto; padding: var(--space-3) var(--space-4); }
-.matrix-group { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; padding: 6px 0; }
+.matrix-group { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; user-select: none; padding: var(--space-2) 0; width: 100%; border: 0; background: transparent; text-align: left; }
 .group-caret { font-size: var(--text-aux); color: var(--color-text-tertiary); }
 .group-name { font-size: var(--text-aux); font-weight: 600; color: var(--color-text-primary); }
 .group-count { font-size: var(--text-aux); color: var(--color-text-tertiary); }
@@ -543,7 +564,7 @@ onMounted(() => {
 .matrix-form-col {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2);
   min-width: 150px;
   flex-shrink: 0;
 }
