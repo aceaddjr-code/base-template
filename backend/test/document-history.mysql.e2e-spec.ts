@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { Test } from '@nestjs/testing';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
-import { ConfigService } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { DataSource } from 'typeorm';
 import { createConnection } from 'mysql2/promise';
@@ -10,12 +10,14 @@ import { resolve } from 'node:path';
 import request from 'supertest';
 import { randomUUID } from 'node:crypto';
 import { Attachment } from '../src/modules/attachment/attachment.entity';
+import { AttachmentRecycle } from '../src/modules/attachment/attachment-recycle.entity';
 import { AttachmentController } from '../src/modules/attachment/attachment.controller';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AttachmentService } from '../src/modules/attachment/attachment.service';
 import { ExampleItem } from '../src/modules/example/example-item.entity';
+import { ExampleRecycle, ExampleReservedNumber } from '../src/modules/example/example-recycle.entity';
 import { ExampleEvent, ExampleChange } from '../src/modules/example/example-event.entity';
 import { User } from '../src/modules/user/user.entity';
 import { Role } from '../src/modules/role/role.entity';
@@ -34,6 +36,7 @@ import { DictService } from '../src/modules/system/dict.service';
 import { SysDictType } from '../src/modules/system/entities/sys-dict-type.entity';
 import { SysDictItem } from '../src/modules/system/entities/sys-dict-item.entity';
 
+ConfigModule.forRoot({ envFilePath: '.env' });
 const suite = process.env.TEST_HISTORY_DATABASE ? describe : describe.skip;
 suite('单据履历：业务 HTTP 与隔离 MySQL', () => {
  let app: NestExpressApplication, db: DataSource, connection: Awaited<ReturnType<typeof createConnection>>, created = false;
@@ -51,7 +54,7 @@ suite('单据履历：业务 HTTP 与隔离 MySQL', () => {
   const [old] = await connection.query('SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=?',[database]);
   if ((old as any[]).length) throw Error('测试库已存在，拒绝覆盖');
   await connection.query(`CREATE DATABASE \`${database}\` CHARACTER SET utf8mb4`); created=true;
-  const options = {type:'mysql' as const,...config,username:config.user,database,entities:[ExampleItem,SysDictType,SysDictItem,Attachment]};
+  const options = {type:'mysql' as const,...config,username:config.user,database,entities:[ExampleItem,ExampleRecycle,ExampleReservedNumber,SysDictType,SysDictItem,Attachment,AttachmentRecycle]};
   db = await new DataSource({...options,synchronize:true}).initialize();
   const legacy = await db.getRepository(ExampleItem).save({title:'采集前旧记录',status:'pending',ownerId:7,version:1}); itemId=legacy.id;
   otherId=(await db.getRepository(ExampleItem).save({title:'范围外',status:'pending',ownerId:8,version:1})).id;
@@ -62,7 +65,7 @@ suite('单据履历：业务 HTTP 与隔离 MySQL', () => {
   const migration=readFileSync(resolve('..','docs/sql/20261026-example-document-history.sql'),'utf8');
   await connection.query(migration); await connection.query(migration);
   // User 的快照查询只选 id/displayName/username，但其关联元数据要求 Role/Department/Menu 一并注册。
-  db=await new DataSource({...options,entities:[ExampleItem,ExampleEvent,ExampleChange,Attachment,SysDictType,SysDictItem,User,Role,Department,Menu],synchronize:false}).initialize();
+  db=await new DataSource({...options,entities:[ExampleItem,ExampleRecycle,ExampleReservedNumber,ExampleEvent,ExampleChange,Attachment,AttachmentRecycle,SysDictType,SysDictItem,User,Role,Department,Menu],synchronize:false}).initialize();
   const dictType=await db.getRepository(SysDictType).save({code:'item_category',name:'类别',status:1});
   await db.getRepository(SysDictItem).save({typeId:dictType.id,value:'a',label:'当时类别',status:1});
   const dict=new DictService(db.getRepository(SysDictType),db.getRepository(SysDictItem),audit as any);

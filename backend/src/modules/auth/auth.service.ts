@@ -96,6 +96,8 @@ export class AuthService {
     // 系统管理员始终可见启用菜单；其他角色按显式授权取并集。
     const assignedIds = new Set<number>();
     const allMenus = await this.menuRepo.find({ where: { status: 1 } });
+    // 回收站对已登录用户开放，具体单据始终按原模块数据范围裁决。
+    for (const menu of allMenus) if (menu.type === 'menu' && menu.path === '/system/recycle-bin') assignedIds.add(menu.id);
     if (roles.some(role => role.code === 'admin')) {
       for (const menu of allMenus) if (menu.type === 'menu') assignedIds.add(menu.id);
     }

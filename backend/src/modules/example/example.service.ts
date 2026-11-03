@@ -3,6 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, Repository } from 'typeorm';
 import { CrudBaseService, ListQuery, conflictWithReason } from '../../common/services/crud-base.service';
 import { ExampleItem } from './example-item.entity';
+import { ExampleRecycle, ExampleReservedNumber } from './example-recycle.entity';
+import { AttachmentRecycle } from '../attachment/attachment-recycle.entity';
 import { validateExample } from './example.dto';
 import { DictService } from '../system/dict.service';
 import { User } from '../user/user.entity';
@@ -119,6 +121,8 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
       const repo = manager.getRepository(Attachment);
       const row = await repo.findOneBy({ id: fileId, entityType: 'example-items', entityId: id, status: 'bound' });
       if (!row) throw new NotFoundException('附件不存在');
+      await manager.getRepository(AttachmentRecycle).save({ attachmentId: row.id, deletedBy: getUserId(user)!, actorName: (user as JwtPayload)?.username || String(getUserId(user)), state: 'deleted' });
+      await repo.update(row.id, { recycleHeld: 1 });
       await repo.softDelete(row.id);
       const event = await this.appendEvent(manager, item, 'attachment_delete', user);
       await manager.getRepository(ExampleEvent).update(event.id, { objectLabel: row.originalName.slice(0, 100) });
@@ -196,7 +200,7 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
       upper = latest?.id ?? 0;
     }
     const qb = repo.createQueryBuilder('e').where('e.itemId = :id AND e.id <= :upper', { id, upper });
-    if (kind === 'activity') qb.andWhere('e.action IN (:...actions)', { actions: ['create', 'update', 'delete'] });
+    if (kind === 'activity') qb.andWhere('e.action IN (:...actions)', { actions: ['create', 'update', 'delete', 'restore'] });
     if (kind === 'changes') qb.andWhere('e.action = :updateAction', { updateAction: 'update' });
     if (query.action) qb.andWhere('e.action = :action', { action: query.action });
     if (query.actorId) qb.andWhere('e.actorId = :actorId', { actorId: query.actorId });
@@ -233,7 +237,9 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
     // 单据编号并发撞号时整个事务重跑（事件随事务回滚，不会重复记录）。
     return withDocNoRetry(() =>
       this.repo.manager.transaction(async manager => {
-        const docNo = await generateDocNo(DOC_NO_PREFIX, manager.getRepository(ExampleItem), 'docNo');
+        const next = await generateDocNo(DOC_NO_PREFIX, manager.getRepository(ExampleItem), 'docNo');
+        const reserved = await generateDocNo(DOC_NO_PREFIX, manager.getRepository(ExampleReservedNumber), 'docNo');
+        const docNo = Number(next.split('-').at(-1)) >= Number(reserved.split('-').at(-1)) ? next : reserved;
         const item = await manager.getRepository(ExampleItem).save({ ...validated, category: validated.category || null, description: validated.description || null, remark: validated.remark || null, version: 1, docNo, ownerId: actorId, createdBy: actorId });
         await this.appendEvent(manager, item, 'create', user, context);
         return item;
@@ -303,6 +309,9 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
   override async remove(id: number, user?: ScopeUser, context: EventContext = {}) {
     await this.repo.manager.transaction(async manager => {
       const item = await this.findOneForWrite(manager, id, user, 'delete');
+      const attachments = this.children.attachments ? await manager.getRepository(Attachment).findBy({ entityType: 'example-items', entityId: id }) : [];
+      await manager.getRepository(ExampleRecycle).save({ itemId: id, attachmentIds: attachments.map(a => a.id), deletedBy: getUserId(user)!, actorName: (user as JwtPayload)?.username || String(getUserId(user)), state: 'deleted' });
+      if (attachments.length) await manager.getRepository(Attachment).update(attachments.map(a => a.id), { recycleHeld: 1 });
       await manager.getRepository(ExampleItem).softDelete(id);
       if (this.children.attachments) await this.softDeleteChildrenTx(manager, id, this.children.attachments);
       await this.appendEvent(manager, item, 'delete', user, context);

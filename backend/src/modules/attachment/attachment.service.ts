@@ -12,6 +12,7 @@ import { isSystemAdmin } from '../../common/utils/permission-check';
 import { assertCanOperateOn, scopeWhereClause } from '../../common/utils/data-scope';
 import { SystemLogService } from '../system/system-log.service';
 import { User } from '../user/user.entity';
+import { AttachmentRecycle } from './attachment-recycle.entity';
 
 /** 附件管理（文件库页签）的数据范围 scopeKey；业务附件跟随各业务模块自己的 scopeKey。 */
 export const ATTACHMENTS_SCOPE_KEY = 'attachments';
@@ -246,12 +247,14 @@ export class AttachmentService {
         if (row.createdBy !== user.sub && !isSystemAdmin(user)) throw new NotFoundException('附件不存在');
       } else {
         assertCanOperateOn(row, user, ATTACHMENTS_SCOPE_KEY, 'edit');
+        const clause = scopeWhereClause('a', user, ATTACHMENTS_SCOPE_KEY, 'edit');
+        const query = repo.createQueryBuilder('a').where('a.id = :id', { id: row.id });
+        if (clause.sql) query.andWhere(clause.sql, clause.params);
+        if (!await query.getOne()) throw new NotFoundException('文件不存在或不在当前操作范围内');
       }
-      const abs = this.absolutePath(row.storagePath);
-      if (existsSync(abs)) {
-        try { unlinkSync(abs); } catch { throw new ServiceUnavailableException('附件文件删除失败，请稍后重试'); }
-      }
-      await repo.remove(row);
+      await manager.getRepository(AttachmentRecycle).save({ attachmentId: row.id, deletedBy: user.sub, actorName: user.username, state: 'deleted' });
+      await repo.update(row.id, { recycleHeld: 1 });
+      await repo.softDelete(row.id);
       await this.writeLog('delete', row, user);
       return { message: '删除成功' };
     });
@@ -264,7 +267,7 @@ export class AttachmentService {
    */
   async sweepDeletedFiles(): Promise<number> {
     const stale = await this.attachmentRepo.find({
-      where: { deletedAt: Not(IsNull()) },
+      where: { deletedAt: Not(IsNull()), recycleHeld: 0 },
       withDeleted: true,
       take: 500,
     });
@@ -274,7 +277,7 @@ export class AttachmentService {
         const repo = manager.getRepository(Attachment);
         // 与挂接/删除共用行锁，事务内复核仍是软删行，避免把刚恢复的行清掉。
         const current = await repo.findOne({ where: { id: row.id }, withDeleted: true, lock: { mode: 'pessimistic_write' } });
-        if (!current || !current.deletedAt) return false;
+        if (!current || !current.deletedAt || current.recycleHeld) return false;
         const abs = this.absolutePath(current.storagePath);
         if (existsSync(abs)) { try { unlinkSync(abs); } catch { return false; } }
         await repo.remove(current);
@@ -330,5 +333,16 @@ export class AttachmentService {
     const abs = this.absolutePath(row.storagePath);
     if (!existsSync(abs)) throw new ServiceUnavailableException('附件文件已丢失，请联系管理员');
     return { stream: createReadStream(abs), contentDisposition: `attachment; filename="${row.originalName.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, "'")}"; filename*=UTF-8''${encodeURIComponent(row.originalName)}` };
+  }
+
+  assertFileExists(row: Attachment): void {
+    if (!existsSync(this.absolutePath(row.storagePath))) throw new ServiceUnavailableException('附件文件缺失，无法完整恢复单据');
+  }
+
+  eraseFile(row: Attachment): void {
+    const path = this.absolutePath(row.storagePath);
+    if (existsSync(path)) {
+      try { unlinkSync(path); } catch { throw new ServiceUnavailableException('附件文件删除失败，请重试彻底删除'); }
+    }
   }
 }

@@ -62,6 +62,7 @@ export class SeedService implements OnModuleInit {
     };
     const home = await add({ name:'首页', path:'/home', icon:'HomeOutlined', sort:1 });
     const collaboration = await add({ name:'工作协同', path:'/collaboration', icon:'TeamOutlined', sort:2 });
+    const recycleBin = await add({ name: '回收站', path: '/system/recycle-bin', parentId: collaboration.id, sort: 2 });
     const examples = await add({ name:'示例业务', path:'/examples', icon:'AppstoreOutlined', sort:10 });
     const items = await add({ name:'示例事项', path:'/examples/items', parentId:examples.id, sort:11 });
     const actions = [['view','查看'],['create','新增'],['update','编辑'],['owner','变更负责人'],['delete','删除'],['import','导入'],['export','导出']];
@@ -84,7 +85,7 @@ export class SeedService implements OnModuleInit {
       await add({ name, type:'button', permission:`departments:${action}`, parentId:system.id });
     }
     adminRole.menus = menus;
-    userRole.menus = [home, examples, items, ...exampleButtons];
+    userRole.menus = [home, collaboration, recycleBin, examples, items, ...exampleButtons];
     await manager.save(Role, [adminRole,userRole]);
     const logTypes = [['users','用户管理'],['roles','角色管理'],['menus','菜单管理'],['departments','部门'],
       ['system_dicts','数据字典'],['system_backups','数据备份'],['system_logs','操作日志'],

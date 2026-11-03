@@ -6,10 +6,11 @@ import { AttachmentController } from './attachment.controller';
 import { AttachmentCleanupScheduler } from './attachment-cleanup.scheduler';
 import { SystemModule } from '../system/system.module';
 import { AuthModule } from '../auth/auth.module';
+import { AttachmentRecycle } from './attachment-recycle.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Attachment]),
+    TypeOrmModule.forFeature([Attachment, AttachmentRecycle]),
     // SystemModule 提供 SystemLogService;AuthModule 提供 JwtPayload 所需的装饰器依赖
     SystemModule,
     AuthModule,

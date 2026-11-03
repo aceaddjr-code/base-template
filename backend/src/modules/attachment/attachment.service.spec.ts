@@ -10,7 +10,7 @@ import { SystemLogService } from '../system/system-log.service';
 
 describe('AttachmentService 生命周期（F08）', () => {
   let service: AttachmentService;
-  let repo: { save: jest.Mock; findOne: jest.Mock; find: jest.Mock; remove: jest.Mock; manager?: any };
+  let repo: { save: jest.Mock; findOne: jest.Mock; find: jest.Mock; remove: jest.Mock; update: jest.Mock; softDelete: jest.Mock; createQueryBuilder: jest.Mock; manager?: any };
   let logWrite: jest.Mock;
   let tmpDir: string;
   let nextId: number;
@@ -63,6 +63,9 @@ describe('AttachmentService 生命周期（F08）', () => {
       findOne: jest.fn(async ({ where }: any) => rows.get(where?.id) ?? null),
       find: jest.fn().mockResolvedValue([]),
       remove: jest.fn(async (row: any) => { rows.delete(row.id); return row; }),
+      update: jest.fn(async (id: number, values: any) => Object.assign(rows.get(id), values)),
+      softDelete: jest.fn(async (id: number) => { rows.get(id).deletedAt = new Date(); }),
+      createQueryBuilder: jest.fn(() => { const q: any = { where: () => q, andWhere: () => q, getOne: async () => ({ id: 1 }) }; return q; }),
     };
     repo.manager = { transaction: async (fn: any) => fn({ getRepository: () => repo }) };
     logWrite = jest.fn().mockResolvedValue(undefined);
@@ -161,13 +164,13 @@ describe('AttachmentService 生命周期（F08）', () => {
     await expect(service.resolveForDownload(stranger.id, admin)).resolves.toBeDefined();
   });
 
-  it('删除:文件库上传者可删且移除文件;他人无范围 403 且文件保留;业务 bound 一律从单据管理', async () => {
+  it('删除:文件库上传者可删且文件留待回收站;他人无范围 403;业务 bound 一律从单据管理', async () => {
     const row = await seedRow();
     writeStoreFile(row.storagePath);
     const result = await service.remove(row.id, uploader);
     expect(result.message).toBe('删除成功');
-    expect(existsSync(join(tmpDir, row.storagePath))).toBe(false);
-    expect(rows.has(row.id)).toBe(false);
+    expect(existsSync(join(tmpDir, row.storagePath))).toBe(true);
+    expect(rows.get(row.id)).toMatchObject({ recycleHeld: 1, deletedAt: expect.any(Date) });
 
     const others = await seedRow();
     writeStoreFile(others.storagePath);

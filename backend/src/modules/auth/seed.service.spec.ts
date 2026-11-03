@@ -95,7 +95,9 @@ describe('空库初始化', () => {
     expect(collaboration.sort).toBeGreaterThan(home.sort);
     expect(collaboration.sort).toBeLessThan(examples.sort);
     expect(savedMenus.filter((menu: any) => menu.parentId === collaboration.id && menu.type === 'menu').map((menu: any) => menu.path))
-      .toEqual(['/system/announcements', '/system/notifications', '/system/attachments']);
+      .toEqual(['/system/recycle-bin', '/system/announcements', '/system/notifications', '/system/attachments']);
+    expect(savedMenus.find((menu: any) => menu.path === '/system/recycle-bin').sort)
+      .toBeLessThan(savedMenus.find((menu: any) => menu.path === '/system/announcements').sort);
     expect(savedMenus.filter((menu: any) => menu.parentId === system.id && menu.type === 'menu').map((menu: any) => menu.path))
       .toEqual(['/system/users', '/system/roles', '/system/menus', '/system/dict', '/system/logs', '/system/backups', '/system/settings']);
   });

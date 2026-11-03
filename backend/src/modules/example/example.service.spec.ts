@@ -4,6 +4,8 @@ import * as XLSX from 'xlsx-js-style';
 import { CrudBaseService } from '../../common/services/crud-base.service';
 import { ExampleService } from './example.service';
 import { CreateExampleDto, UpdateExampleDto, validateExample } from './example.dto';
+import { ExampleItem } from './example-item.entity';
+import { ExampleReservedNumber } from './example-recycle.entity';
 import { User } from '../user/user.entity';
 
 // 事务、并发、真实旧值和停用类别保留改由 document-history.mysql.e2e-spec 的业务 HTTP 验证。
@@ -30,6 +32,44 @@ describe('示例事项输入规则', () => {
   const service=new ExampleService({} as any);
   await expect(service.create({title:'事项'})).rejects.toThrow('未登录');
   await expect(service.findOne(1)).rejects.toThrow('未登录');
+ });
+});
+
+describe('单据编号生成与创建写入',()=>{
+ function fixture(maxSeq: number | string | null) {
+  const saved: any[] = [];
+  const events: any[] = [];
+  const itemRepo = {
+   createQueryBuilder: () => ({
+    withDeleted() { return this; },
+    where() { return this; },
+    select() { return this; },
+    getRawOne: async () => ({ maxSeq }),
+   }),
+   save: async (data: any) => { saved.push(data); return { id:7, version:1, createdAt:new Date(), updatedAt:new Date(), ...data }; },
+  };
+  const manager = {
+   getRepository: (entity: any) => entity === ExampleItem || entity === ExampleReservedNumber ? itemRepo
+    : entity === User ? { findOne: async () => ({ id:1, displayName:'张三', username:'zhang' }) }
+    : { save: async (data: any) => { events.push(data); return { id:9, ...data }; } },
+   transaction: async (cb:(m:any)=>Promise<any>) => cb(manager),
+  };
+  return { service:new ExampleService({ manager } as any), saved, events };
+ }
+ it('创建时生成当日编号，默认归属创建人并记录创建事件',async()=>{
+  const { service, saved, events } = fixture(null);
+  const item = await service.create({ title:'事项' }, 1, { sub:1 } as any);
+  expect(item.docNo).toMatch(/^EX-\d{8}-001$/);
+  expect(saved[0]).toMatchObject({ title:'事项', remark:null, docNo:item.docNo, version:1, ownerId:1, createdBy:1 });
+  expect(events[0]).toMatchObject({ action:'create', actorId:1, actorName:'张三' });
+ });
+ it('编号按当日最大流水递增；备注规范化为空值或去空格',async()=>{
+  const { service, saved } = fixture(2);
+  const item = await service.create({ title:'事项', remark:' 备注 ' }, 1, { sub:1 } as any);
+  expect(item.docNo?.endsWith('-003')).toBe(true);
+  expect(saved[0]).toMatchObject({ remark:'备注' });
+  const empty = await fixture(null).service.create({ title:'事项', remark:'' }, 1, { sub:1 } as any);
+  expect(empty.remark).toBeNull();
  });
 });
 

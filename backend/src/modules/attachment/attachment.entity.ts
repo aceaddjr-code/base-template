@@ -17,6 +17,8 @@ export type AttachmentOrigin = 'center' | 'business';
 @Index('idx_attachment_status_created', ['status', 'createdAt'])
 @Index('idx_attachment_target', ['entityType', 'entityId'])
 export class Attachment extends BaseEntity {
+  @Column({ name: 'recycle_held', type: 'tinyint', default: 0, comment: '回收站保留，禁止清理任务回收' })
+  recycleHeld: number;
   /** 相对 ATTACHMENT_PRIVATE_DIR 的存储路径（含月份子目录与随机文件名） */
   @Column({ name: 'storage_path', type: 'varchar', length: 260 })
   storagePath: string;
