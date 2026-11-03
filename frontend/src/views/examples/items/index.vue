@@ -11,7 +11,7 @@
         search-placeholder="搜索标题或说明"
         :columns="columns"
         :all-columns="allColumns"
-        column-settings-key="starter-example-columns"
+        column-settings-key="starter-example-columns-v2"
         :resizable="exampleResizable"
         :locked-keys="['actions']"
         :create-access="['example-items:create']"
@@ -28,7 +28,7 @@
         <!-- 筛选行放进工具栏左区：查询条件与「新增 / 功能」同处一行，右侧不再空一大片。 -->
         <template #left>
           <ListFilters :tags="filterTags" :dirty="dirty" :failed="failed" @apply="apply()" @reset="reset" @remove="removeFilter" @retry="fetchRows">
-            <label class="filter-field">关键词<a-input v-model:value="draft.keyword" placeholder="搜索标题或说明" allow-clear style="width:220px" @press-enter="onSearchEnter" /></label>
+            <label class="filter-field">关键词<a-input v-model:value="draft.keyword" placeholder="搜索单据编号、标题或说明" allow-clear style="width:220px" @press-enter="onSearchEnter" /></label>
             <label class="filter-field">状态<a-select v-model:value="draft.statuses" mode="multiple" :options="statusOptions" allow-clear placeholder="全部状态" style="min-width:180px;max-width:300px" /></label>
             <label class="filter-field">更新时间<a-range-picker v-model:value="draft.updated" value-format="YYYY-MM-DD" :presets="filterDatePresets()" style="width:250px" /></label>
             <template #more><label class="filter-field">创建时间<a-range-picker v-model:value="draft.created" value-format="YYYY-MM-DD" :presets="filterDatePresets()" style="width:250px" /></label></template>
@@ -55,8 +55,9 @@
           <span v-if="column.key !== 'actions' && !isFlexible(column.key ?? '')" class="resize-handle" @click.stop @mousedown.stop.prevent="resizeStart(column.key ?? '', $event)" />
         </template>
         <template #bodyCell="{ column, record }">
-          <!-- 标题允许长内容换行，同时保留按钮的详情入口和键盘操作。 -->
-          <template v-if="column.key === 'title'"><button type="button" class="row-title" :class="{ 'cell-dash': !record.title }" @click="openDetail(Number(record.id))">{{ record.title || '-' }}</button></template>
+          <!-- 单据编号是单据唯一标识：详情穿透入口放编号列；标题、说明同为自由长文本，完整换行。 -->
+          <template v-if="column.key === 'docNo'"><button type="button" class="row-link" :class="{ 'cell-dash': !record.docNo }" @click="openDetail(Number(record.id))">{{ record.docNo || '-' }}</button></template>
+          <template v-else-if="column.key === 'title'"><span class="table-long-text">{{ record.title || '-' }}</span></template>
           <template v-else-if="column.key === 'status'"><a-tag class="status-tag" :class="`is-${record.status}`">{{ statusLabel(record.status) }}</a-tag></template>
           <template v-else-if="column.key === 'category'"><span>{{ categoryLabelOfAny(record.category) }}</span></template>
           <!-- 说明为自由长文本：完整换行，保留用户输入的换行符。 -->
@@ -82,6 +83,7 @@
       <a-form-item label="状态" data-form-field="status" :validate-status="createErrors.status ? 'error' : undefined"><a-select v-model:value="form.status" aria-label="状态" v-bind="createFeedback.attrs('status')" :disabled="modalLoading" :options="statusOptions" /><p v-if="createErrors.status" :id="createFeedback.errorId('status')" class="field-error">{{ createErrors.status }}</p></a-form-item>
       <a-form-item label="类别" data-form-field="category" :validate-status="createErrors.category ? 'error' : undefined"><a-select v-model:value="form.category" aria-label="类别" v-bind="createFeedback.attrs('category')" :disabled="modalLoading" :options="categoryOptions" allow-clear placeholder="选填" /><p v-if="createErrors.category" :id="createFeedback.errorId('category')" class="field-error">{{ createErrors.category }}</p></a-form-item>
       <a-form-item label="说明" data-form-field="description" :validate-status="createErrors.description ? 'error' : undefined"><a-textarea v-model:value="form.description" aria-label="说明" v-bind="createFeedback.attrs('description')" :disabled="modalLoading" :rows="4" :maxlength="500" show-count /><p v-if="createErrors.description" :id="createFeedback.errorId('description')" class="field-error">{{ createErrors.description }}</p></a-form-item>
+      <a-form-item label="备注" data-form-field="remark" :validate-status="createErrors.remark ? 'error' : undefined"><a-textarea v-model:value="form.remark" aria-label="备注" v-bind="createFeedback.attrs('remark')" :disabled="modalLoading" :rows="3" :maxlength="500" show-count /><p v-if="createErrors.remark" :id="createFeedback.errorId('remark')" class="field-error">{{ createErrors.remark }}</p></a-form-item>
     </a-form>
     </div>
   </a-modal>
@@ -106,7 +108,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { formatDateTime } from '@/utils/format'
@@ -122,7 +124,10 @@ import { useFormModal } from '@/composables/useFormModal'
 import ListFooter from '@/components/ListFooter.vue'
 import ExampleDetailDrawer from './ExampleDetailDrawer.vue'
 import { statusOptions, statusLabel } from './example-options'
+import { buildExampleFields } from './example-fields'
+import { fieldsToColumns } from '@/utils/detail-fields'
 import { useDict } from '@/composables/useDict'
+import { useUserOptions } from '@/composables/useUserOptions'
 import { makeOnApplyView } from '@/composables/useSavedFilterViews'
 import { useListPage } from '@/composables/useListPage'
 import { useTableScrollY } from '@/composables/useTableScrollY'
@@ -180,28 +185,31 @@ const exampleResizable = computed(() => ({ colWidths, setColumnWidth }))
 const onApplyView = makeOnApplyView<Filters>({ sort, apply, defaults: exampleFilterDefaults })
 const appliedRecord = computed(() => ({ ...applied.value }) as Record<string, unknown>)
 const rowSelection = computed(() => ({ selectedRowKeys: selectedIds.value, columnWidth: 36, onChange: (keys: (string | number)[]) => { selectedIds.value = keys.map(Number) }, getCheckboxProps: () => ({ disabled: batchSaving.value }) }))
-const allColumns = ref([
-  { title: '标题', dataIndex: 'title', key: 'title', width: 220, sorter: true },
-  { title: '状态', dataIndex: 'status', key: 'status', width: 110 },
-  { title: '类别', dataIndex: 'category', key: 'category', width: 130 },
-  { title: '说明', dataIndex: 'description', key: 'description' },
-  { title: '更新时间', dataIndex: 'updatedAt', key: 'updatedAt', width: 180, sorter: true, customRender: ({ text }: { text: string }) => formatDateTime(text) },
-  // 操作列按当前「编辑 / 删除」两个链接收紧；后续新增按钮时再加宽即可。
-  { title: '操作', key: 'actions', width: 88, fixed: 'right' as const },
-])
-let columns = ref([...allColumns.value])
+// 列表列由字段注册表派生（./example-fields.ts，与详情抽屉同一来源）：新增字段自动进列设置、
+// 默认不勾选，勾选后才上列表；导出列随可见列走，后端 excelColumns 需保持同键对齐。
+// 编号链接、状态标签、长文本等专属渲染仍由 #bodyCell 分支接管（槽位未命中的列回落 customRender）。
+const { labelOf, loadUserOptions } = useUserOptions()
+const userLabel = (id: number | null | undefined) => labelOf(id) || '-'
+onMounted(() => { loadUserOptions() })
+// 操作列按当前「编辑 / 删除」两个链接收紧；后续新增按钮时再加宽即可。
+const actionsColumn: Record<string, any> = { title: '操作', key: 'actions', width: 88, fixed: 'right' as const }
+const allColumns = ref([...fieldsToColumns(buildExampleFields({ userLabel, categoryLabel: categoryLabelOfAny })), actionsColumn])
+// 初始快照取默认可见列（hidden !== true，与 useColumnConfig defaultsFor 同口径）；
+// 挂载后由 PageToolbar 按用户偏好回写覆盖。测试 stub 工具栏时也保持导出列口径正确。
+let columns = ref([...allColumns.value.filter(column => !column.hidden)])
 const tableColumns = computed(() => columns.value.map(column => ({ ...column, sortOrder: column.key === sort.value.sortBy ? sort.value.sortOrder === 'ASC' ? 'ascend' as const : 'descend' as const : null })))
-// v2：列结构变过（说明列改弹性、操作列收窄），旧 key 里保存的宽度会让整表被按比例撑开。
+// v3：列结构又变过（新增单据编号列），旧 key 里保存的列偏好/宽度不匹配新结构，升 key 重新记录。
 // 「说明」是弹性列：不给宽度，用来吸收表格剩余宽度。它一旦有了固定宽度，
 // 所有列就都变成定宽，fixed 布局会把剩余空间按比例摊给每一列（勾选列也会被撑宽）。
-const { resizeStart, colWidths, setColumnWidth, isFlexible } = useResizableColumns('starter-example-widths-v2', columns, { title: 220, status: 110, category: 130, updatedAt: 180 }, ['description'])
+const { resizeStart, colWidths, setColumnWidth, isFlexible } = useResizableColumns('starter-example-widths-v3', columns, { docNo: 170, title: 220, status: 110, category: 130, updatedAt: 180, ownerId: 150, createdBy: 140, createdAt: 180 }, ['description', 'remark'])
 const exportColumns = computed(() => columns.value.map(column => column.key).filter(key => !['index', 'action', 'actions'].includes(key)).join(','))
 const exportUrl = computed(() => exportColumns.value ? getExampleExportUrl({ ...activeQuery.value, cols: exportColumns.value }) : '')
 // 新增弹窗状态（本页只有"新增并继续录入"；编辑走详情抽屉原地编辑，不经过这里）
-interface ExampleForm { title: string; status: ExampleItem['status']; description: string; category: string }
-const exampleFormDefaults = (): ExampleForm => ({ title: '', status: 'pending', description: '', category: '' })
+// 单据编号由后端创建时生成，不进新增表单
+interface ExampleForm { title: string; status: ExampleItem['status']; description: string; remark: string; category: string }
+const exampleFormDefaults = (): ExampleForm => ({ title: '', status: 'pending', description: '', remark: '', category: '' })
 const createModal = useFormModal<ExampleForm>({
-  fields: () => ({ title: '标题', status: '状态', description: '说明', category: '类别' }),
+  fields: () => ({ title: '标题', status: '状态', description: '说明', remark: '备注', category: '类别' }),
   defaults: exampleFormDefaults,
   validate: form => {
     const errors: Record<string, string> = {}
@@ -210,6 +218,7 @@ const createModal = useFormModal<ExampleForm>({
     if (!statusOptions.some(option => option.value === form.status)) errors.status = '请选择有效状态'
     if (form.category && !categoryOptions.value.some(option => option.value === form.category)) errors.category = '请选择有效的类别'
     if (Array.from(form.description).length > 500) errors.description = '说明不能超过 500 字'
+    if (Array.from(form.remark).length > 500) errors.remark = '备注不能超过 500 字'
     return errors
   },
   save: async form => {
@@ -311,7 +320,7 @@ function onImported() { void fetchRows() }
 </script>
 
 <style scoped>
-.row-title {
+.row-link {
   display: block;
   width: 100%;
   max-width: 100%;
@@ -322,19 +331,20 @@ function onImported() { void fetchRows() }
   background: none;
   font-family: inherit;
   font-size: inherit;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.5;
   color: var(--color-link);
   text-align: left;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   cursor: pointer;
   transition: color var(--dur-fast) var(--ease-out);
 }
-/* 默认不加下划线，整列 8 行不会变成一排链接；悬停和键盘聚焦时才出现。 */
-.row-title:hover { color: var(--color-link-hover); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
-.row-title:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; text-decoration: underline; text-underline-offset: 3px; }
-.row-title.cell-dash { font-weight: 400; }
+/* 默认不加下划线，整列不会变成一排链接；悬停和键盘聚焦时才出现。 */
+.row-link:hover { color: var(--color-link-hover); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.row-link:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; text-decoration: underline; text-underline-offset: 3px; }
+.row-link.cell-dash { font-weight: 400; }
 /* 状态标签：色点 + 文字，进行中与待处理不再同为灰色。 */
 .status-tag { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
 .status-tag::before { content: ''; flex: none; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }

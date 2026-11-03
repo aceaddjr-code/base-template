@@ -1,24 +1,30 @@
 import { ValidationPipe } from '@nestjs/common';
 import { dataToExcel } from '../../common/utils/excel-helper';
 import * as XLSX from 'xlsx-js-style';
+import { CrudBaseService } from '../../common/services/crud-base.service';
 import { ExampleService } from './example.service';
 import { CreateExampleDto, UpdateExampleDto, validateExample } from './example.dto';
+import { User } from '../user/user.entity';
 
 // 事务、并发、真实旧值和停用类别保留改由 document-history.mysql.e2e-spec 的业务 HTTP 验证。
 // 原来 spy CrudBaseService.update 的断言不能验证本模块事务。
 describe('示例事项输入规则', () => {
  const pipe = new ValidationPipe({ transform:true, whitelist:true, forbidNonWhitelisted:true });
- it.each([{}, {title:'   '}, {title:'x'.repeat(101)}, {title:'事项',status:'unknown'}, {title:'事项',status:null}, {title:'事项',description:'x'.repeat(501)}, {title:'事项',ownerId:99}])('HTTP 新增拒绝非法输入 %j', async input => {
+ it.each([{}, {title:'   '}, {title:'x'.repeat(101)}, {title:'事项',status:'unknown'}, {title:'事项',status:null}, {title:'事项',description:'x'.repeat(501)}, {title:'事项',remark:'x'.repeat(501)}, {title:'事项',ownerId:99}])('HTTP 新增拒绝非法输入 %j', async input => {
   await expect(pipe.transform(input,{type:'body',metatype:CreateExampleDto})).rejects.toThrow();
  });
  it('标题规范化和默认状态，部分更新不重置状态',()=>{
   expect(validateExample({title:'  事项  '})).toMatchObject({title:'事项',status:'pending'});
+  expect(validateExample({title:'事项',remark:'  备注  '})).toMatchObject({remark:'备注'});
   expect(validateExample({description:'新说明',version:1},true).status).toBeUndefined();
   expect(()=>validateExample({version:1},true)).toThrow('没有可更新的字段');
  });
  it('页面和服务端修改都强制版本；系统字段不可写',async()=>{
   await expect(pipe.transform({title:'x',version:1},{type:'body',metatype:UpdateExampleDto})).resolves.toBeTruthy();
   for(const input of [{title:'x'}, {title:'x',version:'1'}, {title:null,version:1},{title:'x',version:1,ownerId:8}]) expect(()=>validateExample(input,true)).toThrow();
+ });
+ it('单据编号由系统生成，客户端提交被白名单拒绝',async()=>{
+  await expect(pipe.transform({title:'事项',docNo:'EX-20261102-999'},{type:'body',metatype:CreateExampleDto})).rejects.toThrow();
  });
  it('缺少身份在业务存储之前拒绝',async()=>{
   const service=new ExampleService({} as any);
@@ -48,5 +54,24 @@ describe('示例导入预检与字典翻译',()=>{
  });
  it('新增停用类别提供结构化字段错误',async()=>{
   await expect(fixture().create({title:'事项',category:'cat-old'},1,{sub:1})).rejects.toMatchObject({response:{fieldErrors:[{path:'category',code:'dict-disabled',message:'该类别已停用，请重新选择'}]}});
+ });
+});
+
+describe('导出行投影（与列表列设置勾选项同键对齐）',()=>{
+ afterEach(()=>jest.restoreAllMocks());
+ it('负责人/创建人投影为姓名（displayName 优先），时间转 Date，状态与类别翻译展示标签',async()=>{
+  const rows=[
+   {id:1,status:'pending',category:'cat-a',ownerId:1,createdBy:2,createdAt:'2026-01-02T03:04:05Z',updatedAt:'2026-01-03T00:00:00Z'},
+   {id:2,status:'doing',category:null,ownerId:null,createdBy:2,createdAt:null,updatedAt:null},
+  ];
+  jest.spyOn(CrudBaseService.prototype as any,'getExportRows').mockResolvedValue(rows);
+  const users=[{id:1,displayName:'张三',username:'zhang'},{id:2,displayName:'',username:'li'}];
+  const manager={getRepository:(entity:any)=>entity===User?{find:async()=>users}:{}};
+  const dict={getLabelBook:async()=>({display:(value:string)=>value==='cat-a'?'类别甲':undefined})};
+  const result=await (new ExampleService({manager} as any,dict as any) as any).getExportRows({sub:1},{});
+  expect(result[0]).toMatchObject({status:'待处理',category:'类别甲',ownerId:'张三',createdBy:'li'});
+  expect(result[0].createdAt).toBeInstanceOf(Date);
+  expect(result[0].updatedAt).toBeInstanceOf(Date);
+  expect(result[1]).toMatchObject({category:'',ownerId:'',createdBy:'li',createdAt:null});
  });
 });

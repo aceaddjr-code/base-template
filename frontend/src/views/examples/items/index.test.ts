@@ -2,7 +2,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import Items from './index.vue'
-import { batchDeleteExamples, listExamples } from '@/api/example'
+import { batchDeleteExamples, createExample, listExamples } from '@/api/example'
 import { createPinia, setActivePinia } from 'pinia'
 import { useAppStore } from '@/stores/app'
 import { clearListQueryState } from '@/composables/useListQuery'
@@ -25,6 +25,8 @@ const Button = defineComponent({ emits: ['click'], setup(_, { slots, emit }) { r
 const Filters = defineComponent({ props: ['dirty', 'tags'], emits: ['apply', 'remove', 'reset'], setup(_, { slots }) { return () => h('div', [slots.default?.(), slots.more?.()]) } })
 const Input = defineComponent({ props: ['value'], emits: ['update:value'], render: () => h('input') })
 const Select = defineComponent({ props: ['value'], emits: ['update:value'], render: () => h('div') })
+const Textarea = defineComponent({ props: ['value'], emits: ['update:value'], render: () => h('textarea') })
+const Modal = defineComponent({ emits: ['ok', 'cancel'], setup(_, { emit, slots }) { return () => h('div', [slots.default?.(), h('button', { class: 'modal-ok', onClick: () => emit('ok') })]) } })
 const Range = defineComponent({ props: ['value'], emits: ['update:value'], render: () => h('div') })
 function setup() {
   const pinia = createPinia()
@@ -35,8 +37,8 @@ function setup() {
   return mount(Items, { global: { plugins: [pinia, router], directives: { access: {} }, stubs: {
     Page: Pass, PageToolbar: Toolbar, ListFooter: Footer, ExampleDetailDrawer: true,
     ListFilters: Filters, ARangePicker: Range,
-    ATable: Table, AButton: Button, APopconfirm: Confirm, AModal: Pass, AAlert: Alert, ATag: Pass, ASpace: Pass,
-    AForm: Pass, AFormItem: Pass, AInput: Input, ASelect: Select, ATextarea: true,
+    ATable: Table, AButton: Button, APopconfirm: Confirm, AModal: Modal, AAlert: Alert, ATag: Pass, ASpace: Pass,
+    AForm: Pass, AFormItem: Pass, AInput: Input, ASelect: Select, ATextarea: Textarea,
   } } })
 }
 const exportParams = (url: string) => new URL(url, 'http://localhost').searchParams
@@ -81,11 +83,44 @@ describe('示例标准页导出和勾选联动', () => {
       const params = exportParams(String(opened.mock.lastCall?.[0]))
       expect(params.get('ids')).toBe('1,2')
       expect(params.get('keyword')).toBe('目标')
-      expect(params.get('cols')).toBe('title,status,category,description,updatedAt')
+      expect(params.get('cols')).toBe('docNo,title,status,category,description,updatedAt')
       wrapper.findComponent(Footer).vm.$emit('change', 2, 10)
       await flushPromises()
       expect(wrapper.findComponent(Table).props('rowSelection').selectedRowKeys).toEqual([])
     } finally { wrapper.unmount(); opened.mockRestore() }
+  })
+
+  it('字段注册表派生列设置全集：新增字段自动进列设置且默认不勾选', async () => {
+    const wrapper = setup()
+    await flushPromises()
+    const toolbar = wrapper.findComponent(Toolbar)
+    // 列设置全集 = 注册表全部字段 + 操作列（锁尾）；默认隐藏字段（勾选后才上列表）也在全集内
+    const allKeys = (toolbar.props('allColumns') as { key: string }[]).map(column => column.key)
+    expect(allKeys).toEqual(['docNo', 'title', 'status', 'category', 'description', 'ownerId', 'createdBy', 'createdAt', 'updatedAt', 'remark', 'actions'])
+    // 默认可见列保持原有 6 列 + 操作列：新增字段经列设置勾选开启，不静默改变存量列表
+    const visibleKeys = (toolbar.props('columns') as { key: string }[]).map(column => column.key)
+    expect(visibleKeys).toEqual(['docNo', 'title', 'status', 'category', 'description', 'updatedAt', 'actions'])
+    wrapper.unmount()
+  })
+
+  it('新增弹窗提交标题与备注，单据编号不进载荷（后端生成）', async () => {
+    vi.mocked(createExample).mockResolvedValue({ id: 9 } as any)
+    const wrapper = setup()
+    await flushPromises()
+    wrapper.findComponent(Toolbar).vm.$emit('create')
+    await flushPromises()
+    const inputs = wrapper.findAllComponents(Input)
+    // [0] 是工具栏筛选关键词输入，[1] 才是弹窗标题
+    inputs[1].vm.$emit('update:value', '事项')
+    const textareas = wrapper.findAllComponents(Textarea)
+    // 弹窗内说明在前、备注在后
+    textareas[1].vm.$emit('update:value', '加急处理')
+    await flushPromises()
+    await wrapper.findComponent(Modal).find('button.modal-ok').trigger('click')
+    await flushPromises()
+    expect(vi.mocked(createExample)).toHaveBeenCalledWith({ title: '事项', status: 'pending', description: '', remark: '加急处理', category: '' }, { errorFeedback: 'form' })
+    expect(JSON.stringify(vi.mocked(createExample).mock.calls[0][0])).not.toContain('docNo')
+    wrapper.unmount()
   })
 
   it('批量部分失败保留逐条结果，成功后刷新并清理勾选', async () => {

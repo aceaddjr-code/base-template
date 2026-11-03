@@ -21,7 +21,10 @@
             <time :datetime="event.occurredAt">{{ clockOf(event.occurredAt) }}</time>
           </div>
           <div class="activity-object"><span>{{ activityActionLabels[event.action] || actionLabels[event.action] }}</span><span class="activity-object-label">单据标题：</span><span>{{ event.objectLabel }}</span></div>
-          <div v-if="titleChange(event)" class="activity-change">标题：<span>{{ display(titleChange(event)!.beforeValue, titleChange(event)!.beforeLabel) }}</span><span aria-label="变更为"> → </span><span>{{ display(titleChange(event)!.afterValue, titleChange(event)!.afterLabel) }}</span></div>
+          <div v-if="changeSummary(event)" class="activity-change">
+            <span>{{ changeSummary(event) }}</span>
+            <a-button class="activity-view-changes" size="small" type="link" @click="emit('locate', event.id)">查看修改</a-button>
+          </div>
         </article>
       </div>
     </template>
@@ -57,8 +60,8 @@ const props = defineProps<{ recordId: number; tab: Exclude<HistoryTab, 'detail'>
 const emit = defineEmits<{ (e: 'locate', id: number): void; (e: 'clear-focus'): void }>()
 /** 与后端 ExampleHistoryQuery 的默认页大小一致；服务端每次都会回传实际 pageSize。 */
 const HISTORY_PAGE_SIZE = 20
-const actionLabels: Record<string, string> = { create: '创建', update: '修改', delete: '删除', view: '查看', print: '发起打印', no_change: '无变化保存', attachment_upload: '上传附件', attachment_delete: '删除附件' }
-const activityActionLabels: Record<string, string> = { create: '创建了单据', update: '修改了单据', delete: '删除了单据', view: '查看了单据', print: '发起了单据打印', no_change: '保存了单据（无字段变化）' }
+const actionLabels: Record<string, string> = { create: '创建', update: '修改', delete: '删除', restore: '恢复', view: '查看', print: '发起打印', no_change: '无变化保存', attachment_upload: '上传附件', attachment_delete: '删除附件', attachment_restore: '恢复附件' }
+const activityActionLabels: Record<string, string> = { create: '创建了单据', update: '修改了单据', delete: '删除了单据', restore: '恢复了单据', view: '查看了单据', print: '发起了单据打印', no_change: '保存了单据（无字段变化）' }
 const filters = reactive({ action: '', actorName: '', from: '', to: '' })
 const rows = ref<ExampleEvent[]>([]), result = ref<HistoryResult>(), loading = ref(false), error = ref(''), page = ref(1)
 let generation = 0, retryAppend = false
@@ -71,7 +74,14 @@ function time(value: string) { return timeFormat.format(new Date(value)) }
 function dayOf(value: string) { return dayFormat.format(new Date(value)) }
 function clockOf(value: string) { return clockFormat.format(new Date(value)) }
 function sourceLabel(event: ExampleEvent) { return `${event.source === 'import' ? 'Excel 导入' : '网页'}${event.batchId ? ` · 批次 ${event.batchId}${event.rowNumber ? ` · 第 ${event.rowNumber} 行` : ''}` : ''}` }
-function titleChange(event: ExampleEvent) { return event.changes?.find(change => change.fieldKey === 'title') }
+/** 动态摘要：展示前两个字段变化（含负责人改派），更多折叠为计数；明细经「查看修改」进入修改日志。 */
+function changeSummary(event: ExampleEvent): string {
+  const changes = event.changes ?? []
+  if (!changes.length) return ''
+  const shown = changes.slice(0, 2).map(change => `${change.fieldLabel}：${display(change.beforeValue, change.beforeLabel)} → ${display(change.afterValue, change.afterLabel)}`)
+  if (changes.length > 2) shown.push(`另修改 ${changes.length - 2} 个字段`)
+  return shown.join('；')
+}
 function display(value: unknown, label: string | null) {
   if (label != null) return label
   if (value === undefined) return '历史未记录'

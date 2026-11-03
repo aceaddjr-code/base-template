@@ -21,6 +21,8 @@
         <template v-if="!editing">
           <a-button v-if="printable" :disabled="loading || !record" :loading="printing" @click="printDetail"><PrinterOutlined /> 打印</a-button>
           <a-button v-access="saveAccess" :disabled="loading || !record" @click="startEdit"><EditOutlined /> 编辑</a-button>
+          <!-- 业务动作扩展位（如变更负责人）：查看态出现在「编辑」旁；编辑态收起，避免与保存/取消混排 -->
+          <slot name="actions" />
         </template>
         <template v-else>
           <a-tag color="processing">编辑中</a-tag>

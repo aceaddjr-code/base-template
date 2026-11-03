@@ -1,5 +1,8 @@
 <template>
-  <DetailDrawer ref="drawer" :open="open" title="示例事项详情" :record="detail" :fields="fields" :column="2" :loading="loading" :close-blocked="filesBusy" :show-fields="activeTab === 'detail'" editable printable :prepare-print="preparePrint" :preserve-navigation="preserveNavigation" :system-name="appStore.siteName" :save-access="['example-items:update']" :save-handler="save" :reload-handler="reload" @update:open="closeDetail($event)" @edit-started="setTab('detail')" @view-mode="setTab('detail')" @saved="onSaved">
+  <DetailDrawer ref="drawer" :open="open" title="示例事项详情" :record="detail" :fields="fields" :column="2" :show-audit-time="false" :loading="loading" :close-blocked="filesBusy" :show-fields="activeTab === 'detail'" editable printable :prepare-print="preparePrint" :preserve-navigation="preserveNavigation" :system-name="appStore.siteName" :save-access="['example-items:update']" :save-handler="save" :reload-handler="reload" @update:open="closeDetail($event)" @edit-started="setTab('detail')" @view-mode="setTab('detail')" @saved="onSaved">
+    <template #actions>
+      <a-button v-access="['example-items:owner']" :disabled="loading || !detail" @click="openOwnerModal"><UserSwitchOutlined /> 变更负责人</a-button>
+    </template>
     <template #navigation>
       <div class="document-tabs" role="tablist" aria-label="单据详情与履历"><button v-for="tab in tabs" :key="tab.key" role="tab" :aria-selected="activeTab === tab.key" @click="setTab(tab.key)">{{ tab.label }}</button></div>
     </template>
@@ -22,17 +25,30 @@
       </div>
     </template>
   </DetailDrawer>
+
+  <!-- 变更负责人：独立动作（权限码 example-items:owner），不混入字段编辑；负责人即记录归属人 -->
+  <a-modal :open="ownerModalOpen" title="变更负责人" :confirm-loading="ownerSaving" ok-text="确认变更" cancel-text="取消" @ok="confirmOwnerChange" @cancel="ownerModalOpen = false">
+    <p class="owner-hint">负责人即记录归属人：变更后数据范围的「本人 / 他人」按新负责人生效。</p>
+    <a-form layout="vertical">
+      <a-form-item label="单据负责人" required data-form-field="ownerId">
+        <a-select v-model:value="ownerForm.ownerId" :options="ownerSelectOptions" show-search option-filter-prop="label" allow-clear placeholder="请选择新的负责人" style="width:100%" />
+      </a-form-item>
+    </a-form>
+  </a-modal>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import DetailDrawer, { type DetailField } from '@/components/DetailDrawer.vue'
-import { accessExample, getExample, updateExample, type ExampleItem, type DocumentTab as HistoryTab } from '@/api/example'
+import { message } from 'ant-design-vue'
+import { UserSwitchOutlined } from '@ant-design/icons-vue'
+import DetailDrawer from '@/components/DetailDrawer.vue'
+import { accessExample, changeExampleOwner, getExample, updateExample, type ExampleItem, type DocumentTab as HistoryTab } from '@/api/example'
 import ExampleHistoryPanel from './ExampleHistoryPanel.vue'
 import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
 import ExampleAttachmentPanel from './ExampleAttachmentPanel.vue'
-import { statusColor, statusLabel, statusOptions } from './example-options'
+import { buildExampleFields } from './example-fields'
 import { useDict } from '@/composables/useDict'
+import { formatUserOptionLabel, useUserOptions } from '@/composables/useUserOptions'
 import { useAppStore } from '@/stores/app'
 import type { RouteLocationNormalized } from 'vue-router'
 
@@ -106,12 +122,39 @@ let requestVersion = 0
 const { options: categoryOptions, labelOfAny: categoryLabelOfAny } = useDict('item_category')
 
 // 类别为字典驱动字段（F40）：编辑候选仅启用项;存量停用值回显"名称（已停用）"
-const fields = computed((): DetailField[] => [
-  { label: '标题', dataIndex: 'title', editable: true, required: true, maxLength: 100 },
-  { label: '状态', dataIndex: 'status', valueType: 'tag', tagColor: statusColor, formatter: (record: Record<string, any>) => statusLabel(String(record.status)), editable: true, required: true, inputType: 'select', options: statusOptions },
-  { label: '类别', dataIndex: 'category', editable: true, inputType: 'select', options: categoryOptions.value, formatter: (record: Record<string, any>) => categoryLabelOfAny(record.category as string | null | undefined) },
-  { label: '说明', dataIndex: 'description', span: 2, editable: true, inputType: 'textarea', maxLength: 500 },
-])
+// 单据编号/负责人/创建人/时间只读：编号系统生成不可改；负责人变更走右上角专用动作（权限码 example-items:owner）
+const { userOptions, loadUserOptions, labelOf } = useUserOptions()
+const userLabel = (id: number | null | undefined) => labelOf(id) || '-'
+// 字段单一来源见 ./example-fields.ts（详情与列表列共用，新增字段只改注册表）；类别候选随字典刷新重建
+const fields = computed(() => buildExampleFields({ userLabel, categoryLabel: categoryLabelOfAny, categoryOptions: categoryOptions.value }))
+
+// ===== 变更负责人（独立动作，右上角按钮进入）=====
+const ownerModalOpen = ref(false)
+const ownerSaving = ref(false)
+const ownerForm = ref<{ ownerId: number | undefined }>({ ownerId: undefined })
+const ownerSelectOptions = computed(() => userOptions.value.map((o) => ({ label: formatUserOptionLabel(o), value: o.id })))
+function openOwnerModal() {
+  if (!detail.value) return
+  ownerForm.value = { ownerId: detail.value.ownerId ?? undefined }
+  loadUserOptions()
+  ownerModalOpen.value = true
+}
+async function confirmOwnerChange() {
+  const target = ownerForm.value.ownerId
+  if (!target) { message.warning('请选择新的单据负责人'); return }
+  if (!detail.value || ownerSaving.value) return
+  if (target === detail.value.ownerId) { ownerModalOpen.value = false; return }
+  ownerSaving.value = true
+  try {
+    await changeExampleOwner(detail.value.id, target)
+    ownerModalOpen.value = false
+    message.success('负责人已变更')
+    revision.value++
+    await reload()
+    emit('updated')
+  } catch { /* 拦截器已统一提示；弹窗保留供重试 */ }
+  finally { ownerSaving.value = false }
+}
 
 async function reload(enterEdit = false) {
   const id = props.recordId
@@ -174,10 +217,11 @@ watch([() => props.open, () => props.recordId], () => {
   detail.value = null
   filesBusy.value = false; filesPending.value = false
   conflict.value = false
+  ownerModalOpen.value = false; ownerSaving.value = false
   submitted = false; printIntent = ''; printError.value = ''; printConflict.value = ''; loadError.value = ''; visited.value = ['detail']; focusedEvent.value = undefined
   activeTab.value = props.tab ?? 'detail'; if (!visited.value.includes(activeTab.value)) visited.value.push(activeTab.value)
   viewIntent = interactionId()
-  if (props.open && props.recordId != null) void openRecord()
+  if (props.open && props.recordId != null) { loadUserOptions(); void openRecord() }
   else loading.value = false
 }, { immediate: true })
 onBeforeUnmount(() => { requestVersion++ })
@@ -192,6 +236,8 @@ defineExpose({ startEdit: () => drawer.value?.startEdit() })
 .document-tabs { display: flex; overflow-x: auto; gap: var(--space-2); margin-bottom: 0; border-bottom: var(--rule); align-items: center; }
 .document-tabs button[role=tab] { flex-shrink: 0; border: 0; border-bottom: 2px solid transparent; padding: var(--space-2); background: transparent; cursor: pointer; }
 .document-tabs button[aria-selected=true] { border-bottom-color: var(--color-text-primary); font-weight: 700; }
+/* 变更负责人弹窗：一句话说明后果，负责人即数据范围口径。 */
+.owner-hint { margin: 0 0 var(--space-2); color: var(--color-text-secondary); font-size: var(--text-aux); }
 </style>
 <style>
 .detail-drawer .ant-drawer-body:has(> .document-tabs) { padding-bottom: 0 !important; }

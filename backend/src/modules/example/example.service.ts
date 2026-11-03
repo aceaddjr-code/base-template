@@ -48,14 +48,19 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
       dateFilterableFields: ['createdAt', 'updatedAt'],
       sortableFields: ['createdAt', 'updatedAt', 'title', 'status', 'docNo'],
       mineField: 'ownerId',
+      // 列顺序与前端字段注册表（frontend/src/views/examples/items/example-fields.ts）保持同键对齐：
+      // 列设置勾选的字段经 cols 参数按 key 取列，键名漂移会被静默丢弃。
       excelColumns: [
         { header: '单据编号', key: 'docNo', width: 18 },
         { header: '标题', key: 'title', width: 24 },
         { header: '状态', key: 'status', width: 12 },
         { header: '类别', key: 'category', width: 18 },
         { header: '说明', key: 'description', width: 40 },
-        { header: '备注', key: 'remark', width: 30 },
+        { header: '单据负责人', key: 'ownerId', width: 14 },
+        { header: '创建人', key: 'createdBy', width: 14 },
+        { header: '创建时间', key: 'createdAt', width: 22 },
         { header: '更新时间', key: 'updatedAt', width: 22 },
+        { header: '备注', key: 'remark', width: 30 },
       ],
       excelImportMap: {
         title: ['标题'],
@@ -209,7 +214,8 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
       .skip(kind === 'activity' ? 0 : ((query.page ?? 1) - 1) * size).take(size + (kind === 'activity' ? 1 : 0)).getRawAndEntities();
     const hasMore = kind === 'activity' && result.entities.length > size;
     const events = result.entities.slice(0, size);
-    const diffs = events.length && kind !== 'operations' ? await manager.getRepository(ExampleChange).find({ where: { eventId: In(events.map(e => e.id)), ...(kind === 'activity' ? { fieldKey: 'title' } : {}) }, order: { id: 'ASC' } }) : [];
+    // 动态与修改日志共用事件 diff：动态摘要展示字段变化（如负责人改派），明细仍在修改日志。
+    const diffs = events.length && kind !== 'operations' ? await manager.getRepository(ExampleChange).find({ where: { eventId: In(events.map(e => e.id)) }, order: { id: 'ASC' } }) : [];
     const list = events.map(({ requestId: _request, interactionId: _interaction, ...event }) => ({ ...event, ...(kind !== 'operations' ? { changes: diffs.filter(d => d.eventId === event.id) } : {}) }));
     const last = events[events.length - 1];
     return { list, total, upper, page: query.page ?? 1, pageSize: size,
@@ -354,10 +360,23 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
   protected override async getExportRows(user?: ScopeUser, query: ListQuery = {}) {
     const rows = await super.getExportRows(user, query);
     const labelBook = await this.dictService?.getLabelBook(CATEGORY_DICT);
+    // 负责人/创建人投影为姓名展示（键与列表列设置勾选项对齐）；整批一次查询，已删除人员留空。
+    const userIds = [...new Set(rows.flatMap(row => [row.ownerId, row.createdBy]).filter((id): id is number => id != null))];
+    const users = userIds.length
+      ? await this.repo.manager.getRepository(User).find({ where: { id: In(userIds) }, select: { id: true, displayName: true, username: true } })
+      : [];
+    const nameOf = (id: number | null | undefined) => {
+      if (id == null) return '';
+      const row = users.find(item => item.id === id);
+      return row ? (row.displayName || row.username) : '';
+    };
     return rows.map(row => ({
       ...row,
       status: STATUS_LABELS[row.status] ?? row.status,
       category: row.category ? (labelBook?.display(row.category) ?? row.category) : '',
+      ownerId: nameOf(row.ownerId),
+      createdBy: nameOf(row.createdBy),
+      createdAt: row.createdAt ? new Date(row.createdAt) : null,
       updatedAt: row.updatedAt ? new Date(row.updatedAt) : null,
     }));
   }

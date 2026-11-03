@@ -52,7 +52,7 @@ async function currentMaxSeq(
     .createQueryBuilder('e')
     .withDeleted()
     .where(`e.${field} LIKE :pattern`, { pattern: likePrefix })
-    .select(`MAX(CAST(SUBSTRING(e.${field}, -${seqDigits}) AS UNSIGNED))`, 'maxSeq')
+    .select(`MAX(CAST(SUBSTRING_INDEX(e.${field}, '-', -1) AS UNSIGNED))`, 'maxSeq')
     .getRawOne();
   const n = Number(row?.maxSeq);
   return Number.isFinite(n) && n > 0 ? n : 0;

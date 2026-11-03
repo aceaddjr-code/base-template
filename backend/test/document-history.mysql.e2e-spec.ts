@@ -160,7 +160,8 @@ suite('单据履历：业务 HTTP 与隔离 MySQL', () => {
   expect(noChange.version).toBe(2);expect(new Date(noChange.updatedAt)).toEqual(new Date(after.updatedAt));
   const activity=(await history('activity',created.id)).body.data.list;
   expect(activity.map(e=>e.action)).toEqual(['update','create']);
-  expect(activity[0].changes).toEqual([expect.objectContaining({fieldKey:'title',beforeValue:'新事项',afterValue:'修改事项'})]);
+  // 动态摘要回传全部字段变化（负责人改派等由前端摘要展示），明细仍在修改日志。
+  expect(activity[0].changes).toEqual(expect.arrayContaining([expect.objectContaining({fieldKey:'title',beforeValue:'新事项',afterValue:'修改事项'}),expect.objectContaining({fieldKey:'status',beforeLabel:'待处理',afterLabel:'进行中'})]));
   expect(activity[1].changes).toEqual([]);expect((await history('changes',created.id)).body.data.list).toHaveLength(1);
   expect(await events().countBy({itemId:created.id,action:'no_change'})).toBe(1);
   await api().put(`/api/v1/examples/items/${created.id}`).send({title:'x',version:2,password:'secret'}).expect(400);

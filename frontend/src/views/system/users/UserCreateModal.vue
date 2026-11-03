@@ -106,14 +106,15 @@ import { useFormModal } from '@/composables/useFormModal'
 import { createUser } from '@/api/user'
 import type { RoleOption } from '@/api/role'
 import type { Department } from '@/api/department'
-import { formatLeaderOptionLabel, useLeaderOptions } from './leader-options'
+import { formatUserOptionLabel as formatLeaderOptionLabel, useUserOptions } from '@/composables/useUserOptions'
 import { IdcardOutlined, LockOutlined, MailOutlined, PhoneOutlined, UserAddOutlined, UserOutlined } from '@ant-design/icons-vue'
 
 /** 新增用户弹窗：纵向表单（编辑走 UserDetailDrawer，不经过这里） */
 const props = defineProps<{ open: boolean; depts: Department[]; roles: RoleOption[] }>()
 const emit = defineEmits<{ (e: 'update:open', v: boolean): void; (e: 'success'): void }>()
 
-const { leaderOptions, loadLeaderOptions } = useLeaderOptions()
+// 直属上级候选复用共享用户候选；「leader」是本页业务叫法
+const { userOptions: leaderOptions, loadUserOptions: loadLeaderOptions } = useUserOptions()
 const createModal = useFormModal<{
   loginid: string; displayName: string; password: string; email: string; phone: string
   roleId: number | undefined; roleIds: number[]; deptId: number | undefined; leaderId: number | undefined

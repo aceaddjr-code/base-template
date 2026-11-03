@@ -130,7 +130,7 @@ import { formatDateTime } from '@/utils/format'
 import { updateUser, type UserItem } from '@/api/user'
 import type { RoleOption } from '@/api/role'
 import type { Department } from '@/api/department'
-import { formatLeaderOptionLabel, useLeaderOptions } from './leader-options'
+import { formatUserOptionLabel as formatLeaderOptionLabel, useUserOptions } from '@/composables/useUserOptions'
 import { EditOutlined } from '@ant-design/icons-vue'
 
 /**
@@ -142,7 +142,8 @@ const props = defineProps<{ open: boolean; record: UserItem | null; startInEdit?
 const emit = defineEmits<{ (e: 'update:open', v: boolean): void; (e: 'updated'): void }>()
 
 const detail = ref<UserItem | null>(null)
-const { leaderOptions, loadLeaderOptions } = useLeaderOptions()
+// 直属上级候选复用共享用户候选；「leader」是本页业务叫法
+const { userOptions: leaderOptions, loadUserOptions: loadLeaderOptions } = useUserOptions()
 
 interface UserEditForm {
   displayName: string; email: string; phone: string; password: string

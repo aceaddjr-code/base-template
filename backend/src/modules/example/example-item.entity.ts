@@ -3,9 +3,9 @@ import { BaseEntity } from '../../common/entities/base.entity';
 
 @Entity('example_items')
 export class ExampleItem extends BaseEntity {
-  /** 单据编号：创建时由后端生成（EX-yyyymmdd-001），全库唯一且不可修改；软删行仍占用序号。 */
+  /** 单据编号：创建时由后端生成（EX-yyyymmdd-001），全库唯一且不可修改；软删行仍占用序号。列名显式蛇形，与 docs/sql 补丁一致。 */
   @Index({ unique: true })
-  @Column({ type: 'varchar', length: 32, nullable: true, comment: '单据编号（唯一，系统生成）' })
+  @Column({ name: 'doc_no', type: 'varchar', length: 32, nullable: true, comment: '单据编号（唯一，系统生成）' })
   docNo: string | null;
 
   @Index()

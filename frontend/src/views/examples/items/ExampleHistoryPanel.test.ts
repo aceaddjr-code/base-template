@@ -27,8 +27,24 @@ describe('单据履历外部行为', () => {
   vi.mocked(getExampleHistory).mockResolvedValue(result([changed, unchanged]))
   const wrapper = setup(); await flushPromises()
   const cards = wrapper.findAll('article')
-  expect(cards[0]!.text()).toContain('旧标题 → 新标题')
+  expect(cards[0]!.text()).toContain('标题：旧标题 → 新标题')
   expect(cards[1]!.text()).toContain('原标题'); expect(cards[1]!.text()).not.toContain('→')
+  wrapper.unmount()
+ })
+ it('负责人改派在动态摘要显示姓名变化，更多字段折叠计数并可跳转修改日志', async () => {
+  const ownerChange = event(5, '1123')
+  ownerChange.changes = [
+    { id: 9, fieldKey: 'ownerId', fieldLabel: '单据负责人', valueType: 'text', beforeValue: 1, afterValue: 2, beforeLabel: '系统管理员', afterLabel: '李嘉瑞' },
+    { id: 10, fieldKey: 'status', fieldLabel: '状态', valueType: 'enum', beforeValue: 'pending', afterValue: 'doing', beforeLabel: '待处理', afterLabel: '进行中' },
+    { id: 11, fieldKey: 'remark', fieldLabel: '备注', valueType: 'text', beforeValue: null, afterValue: '加急', beforeLabel: null, afterLabel: null },
+  ]
+  vi.mocked(getExampleHistory).mockResolvedValue(result([ownerChange]))
+  const wrapper = setup(); await flushPromises()
+  const card = wrapper.findAll('article')[0]!
+  expect(card.text()).toContain('单据负责人：系统管理员 → 李嘉瑞')
+  expect(card.text()).toContain('另修改 1 个字段')
+  await card.findAll('button').find(b => b.text() === '查看修改')!.trigger('click')
+  expect(wrapper.emitted('locate')).toEqual([[5]])
   wrapper.unmount()
  })
  it('快速切换记录时忽略旧响应，加载、失败与空态可区分并能独立重试', async () => {

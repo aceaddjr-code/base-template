@@ -7,8 +7,9 @@
 -- 执行顺序:停止单据写入 -> 本补丁 -> 同步发布后端 -> 前端 -> 管理员重新登录并按需配置角色。
 -- 执行前备份 example_items / menus / role_menus / users 并记录新增 ID。
 -- 前置确认:重复执行时列/索引已存在会跳过并提示,属预期;菜单按权限码判重,不覆盖已有节点。
--- 回填口径:EX-<created_at 日期>-<id 补零 3 位>。生成器按"末 3 位流水"取当日最大值,
---   单日新增超过 999 条时末 3 位空间会被占用(如 id 1000 末 3 位为 000),需人工核对该日编号;模板演示场景不会出现。
+-- 回填口径:EX-<created_at 日期>-<id 流水>,id 不足 1000 补零 3 位,达到 4 位及以上直接用原值——
+--   MySQL 的 LPAD 对超长字符串会截断保留左侧,不能直接 LPAD(id,3),否则同日所有大 id 撞成同一个编号。
+--   生成器按"末 3 位"取当日最大流水:单日新增超过 999 条时序号空间紧张,需人工核对该日编号;模板演示场景不会出现。
 
 START TRANSACTION;
 
@@ -38,7 +39,7 @@ DEALLOCATE PREPARE stmt;
 
 -- 3) 存量回填编号(含软删行:它们与在用行共用同一编号空间,回填后才便于追溯)
 UPDATE example_items
-SET doc_no = CONCAT('EX-', DATE_FORMAT(created_at, '%Y%m%d'), '-', LPAD(id, 3, '0'))
+SET doc_no = CONCAT('EX-', DATE_FORMAT(created_at, '%Y%m%d'), '-', CASE WHEN id < 1000 THEN LPAD(id, 3, '0') ELSE CAST(id AS CHAR) END)
 WHERE doc_no IS NULL;
 
 -- 4) 唯一索引:按"doc_no 上已存在唯一索引"判重,兼容开发库 synchronize 自动建索引的命名

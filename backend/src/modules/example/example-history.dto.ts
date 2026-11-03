@@ -1,7 +1,7 @@
 import { Transform, Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, ValidateIf } from 'class-validator';
 
-export const HISTORY_ACTIONS = ['create', 'update', 'delete', 'view', 'print', 'no_change', 'attachment_upload', 'attachment_delete'];
+export const HISTORY_ACTIONS = ['create', 'update', 'delete', 'restore', 'view', 'print', 'no_change', 'attachment_upload', 'attachment_delete', 'attachment_restore'];
 export class ExampleAccessDto {
   @IsIn(['view', 'print']) action: 'view' | 'print';
   @IsString() @Matches(/^[A-Za-z0-9_-]{16,64}$/) interactionId: string;

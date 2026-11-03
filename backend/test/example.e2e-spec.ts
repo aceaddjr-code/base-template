@@ -13,7 +13,7 @@ import { AuthService } from '../src/modules/auth/auth.service';
 describe('示例事项 HTTP 权限与验证', () => {
   let app: NestExpressApplication;
   let codes: string[] = [];
-  const service = { list:jest.fn().mockResolvedValue({list:[],total:0}), create:jest.fn().mockResolvedValue({id:1}), update:jest.fn(), batchRemove:jest.fn().mockResolvedValue({successCount:1,total:1,failures:[]}), exportExcel:jest.fn().mockResolvedValue({buffer:Buffer.from('test'),filename:'示例.xlsx'}) };
+  const service = { list:jest.fn().mockResolvedValue({list:[],total:0}), create:jest.fn().mockResolvedValue({id:1}), update:jest.fn(), changeOwner:jest.fn().mockResolvedValue({id:1,ownerId:2}), batchRemove:jest.fn().mockResolvedValue({successCount:1,total:1,failures:[]}), exportExcel:jest.fn().mockResolvedValue({buffer:Buffer.from('test'),filename:'示例.xlsx'}) };
 
   beforeAll(async () => {
     const module = await Test.createTestingModule({
@@ -47,7 +47,25 @@ describe('示例事项 HTTP 权限与验证', () => {
     codes=['example-items:create'];
     await request(app.getHttpServer()).post('/api/v1/examples/items').send({title:'   '}).expect(400);
     await request(app.getHttpServer()).post('/api/v1/examples/items').send({title:'事项',ownerId:99}).expect(400);
+    await request(app.getHttpServer()).post('/api/v1/examples/items').send({title:'事项',docNo:'EX-20261102-999'}).expect(400);
     expect(service.create).not.toHaveBeenCalled();
+  });
+
+  it('变更负责人走独立权限码，编辑权限不能替代', async () => {
+    codes=['example-items:update'];
+    await request(app.getHttpServer()).post('/api/v1/examples/items/1/owner').send({ownerId:2}).expect(403);
+    expect(service.changeOwner).not.toHaveBeenCalled();
+    codes=['example-items:owner'];
+    await request(app.getHttpServer()).post('/api/v1/examples/items/1/owner').send({ownerId:2}).expect(201);
+    expect(service.changeOwner).toHaveBeenCalledWith(1,2,expect.objectContaining({sub:1}),expect.anything());
+  });
+
+  it('变更负责人 DTO 拒绝缺失、非整数和越界 ID', async () => {
+    codes=['example-items:owner'];
+    for (const body of [{}, {ownerId:0}, {ownerId:'x'}, {ownerId:1.5}]) {
+      await request(app.getHttpServer()).post('/api/v1/examples/items/1/owner').send(body).expect(400);
+    }
+    expect(service.changeOwner).not.toHaveBeenCalled();
   });
 
   it('非法记录 ID 在调用存储前被拒绝', async () => {

@@ -53,7 +53,9 @@ export class UserController {
     return this.userService.findAll(p, ps, keyword, dId, statuses, range);
   }
 
+  /** 全量用户简表：登录即可读（@Roles() 覆盖类级 admin 限制）。业务单据的负责人候选与创建人/负责人姓名解析依赖它；仅含启用用户的最小字段。 */
   @Get('simple')
+  @Roles()
   async findAllSimple() {
     return this.userService.findAllSimple();
   }

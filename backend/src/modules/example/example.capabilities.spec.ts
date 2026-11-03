@@ -46,25 +46,28 @@ describe('示例事项导出与批量删除', () => {
     const book = XLSX.read(exported.buffer, { type: 'buffer', cellDates: true, cellNF: true });
     const sheet = book.Sheets[book.SheetNames[0]];
     const values = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1 });
-    expect(values[0]).toEqual(['说明', '标题', '状态', '更新时间']);
+    expect(values[0]).toEqual(['说明', '标题', '状态', '更新时间', '单据负责人']);
     expect(values[1].slice(0, 3)).toEqual(['第一行\n第二行', '目标甲', '进行中']);
     expect(values).toHaveLength(2);
     expect(values[1][3]).toBeInstanceOf(Date);
+    // 负责人投影为姓名展示；fixture 无用户仓库时留空占位，不输出原始 ID
+    expect(values[1][4]).toBe('');
     expect(sheet.D2.z).toBe('yyyy-mm-dd hh:mm:ss');
     expect(exported.filename).toContain('选中1条_');
   });
 
   it('无 cols 使用默认列表列；显式无有效列拒绝，不能回退导出其他列', async () => {
     const { service, repo } = fixture();
-    await expect(service.exportExcel(admin, { cols: ['ownerId', 'actions'] })).rejects.toBeInstanceOf(BadRequestException);
+    // actions 不在导出白名单；ownerId 已入白名单（负责人列），不能再作反例
+    await expect(service.exportExcel(admin, { cols: ['actions'] })).rejects.toBeInstanceOf(BadRequestException);
     expect(repo.createQueryBuilder).not.toHaveBeenCalled();
     const exported = await service.exportExcel(admin);
     const book = XLSX.read(exported.buffer);
     const rows = XLSX.utils.sheet_to_json<any[]>(book.Sheets[book.SheetNames[0]], { header: 1 });
-    expect(rows[0]).toEqual(['单据编号', '标题', '状态', '类别', '说明', '备注', '更新时间']);
+    expect(rows[0]).toEqual(['单据编号', '标题', '状态', '类别', '说明', '单据负责人', '创建人', '创建时间', '更新时间', '备注']);
     const target = rows.find(row => row[1] === '目标甲');
     expect(target?.[0]).toBe('EX-20261018-001');
-    expect(target?.[5]).toBe('核对备注');
+    expect(target?.[9]).toBe('核对备注');
   });
 
   it('标准导出可重新导入，展示状态在模块内转换并继续执行创建验证', async () => {

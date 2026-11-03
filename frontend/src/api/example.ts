@@ -2,11 +2,16 @@ import request, { API_BASE, type FormRequestOptions } from './request'
 
 export interface ExampleItem {
   id: number
+  /** 单据编号：创建时后端生成（EX-yyyymmdd-001），全库唯一、不可修改 */
+  docNo: string | null
   title: string
   status: 'pending' | 'doing' | 'done'
   description: string | null
+  remark: string | null
   category?: string | null
+  /** 单据负责人（记录归属人），创建时默认为创建人 */
   ownerId: number | null
+  createdBy: number | null
   /** 乐观锁版本（F06）：编辑保存时回传，服务端按原值做条件更新 */
   version: number
   createdAt: string
@@ -33,6 +38,8 @@ export function getExampleHistory(id: number, tab: Exclude<HistoryTab, 'detail'>
 }
 export function createExample(data: Partial<ExampleItem>, options?: FormRequestOptions): Promise<ExampleItem> { return request.post('/examples/items', data, options) as unknown as Promise<ExampleItem> }
 export function updateExample(id: number, data: Partial<ExampleItem>, options?: FormRequestOptions): Promise<ExampleItem> { return request.put(`/examples/items/${id}`, data, options) as unknown as Promise<ExampleItem> }
+/** 变更单据负责人：独立权限码 example-items:owner，负责人即记录归属人。失败由拦截器统一提示。 */
+export function changeExampleOwner(id: number, ownerId: number): Promise<ExampleItem> { return request.post(`/examples/items/${id}/owner`, { ownerId }) as unknown as Promise<ExampleItem> }
 export function deleteExample(id: number): Promise<void> { return request.delete(`/examples/items/${id}`) as unknown as Promise<void> }
 export interface ImportRowError { row: number; message: string }
 export interface ImportPreviewResult { total: number; valid: number; errors: ImportRowError[] }
