@@ -33,6 +33,7 @@ const Empty = defineComponent({ props: ['description'], setup(props) { return ()
 const Button = defineComponent({ emits: ['click'], setup(_, { slots, emit }) { return () => h('button', { onClick: () => emit('click') }, slots.default?.()) } })
 const Footer = defineComponent({ props: ['totalText'], setup(props) { return () => h('div', props.totalText?.(0)) } })
 const Tag = defineComponent({ setup(_, { slots }) { return () => h('span', slots.default?.()) } })
+const Search = defineComponent({ props: ['value'], emits: ['update:value', 'search'], setup(props, { emit }) { return () => h('input', { value: props.value, onInput: (event: Event) => emit('update:value', (event.target as HTMLInputElement).value), onKeydown: (event: KeyboardEvent) => { if (event.key === 'Enter') emit('search') } }) } })
 
 function mountPage() {
   const pinia = createPinia()
@@ -41,7 +42,7 @@ function mountPage() {
   const wrapper = mount(Attachments, { global: { plugins: [pinia], directives: { access: {} }, stubs: {
     Page: Pass, PageToolbar: Pass, ListFooter: Footer, AAlert: Alert, ATable: Table, AEmpty: Empty, AButton: Button, ATag: Tag,
     ATabs: Pass, ATabPane: Pass, ARadioGroup: Pass, ARadioButton: Pass, AUpload: Pass, APopconfirm: Pass,
-    AInputSearch: Pass, ASelect: Pass, ASpace: Pass,
+    AInputSearch: Search, ASelect: Pass, ASpace: Pass,
   } } })
   return wrapper
 }
@@ -110,5 +111,19 @@ it('无目标模块查看权限时穿透入口置灰为纯文本，并给出提�
   expect(bound.find('button[title="查看示例事项详情"]').exists()).toBe(false)
   expect(bound.find('[title="需要示例事项查看权限"]').exists()).toBe(true)
   expect(routerPush).not.toHaveBeenCalled()
+  wrapper.unmount()
+})
+
+it('搜索无结果时区分筛选空态与文件库本身为空', async () => {
+  vi.mocked(getAttachments).mockResolvedValue(emptyPage)
+  const wrapper = mountPage()
+  await flushPromises()
+  expect(wrapper.text()).toContain('暂无文件')
+  const input = wrapper.findAll('input')[0]!
+  await input.setValue('不存在的文件')
+  await input.trigger('keydown', { key: 'Enter' })
+  await flushPromises()
+  expect(getAttachments).toHaveBeenLastCalledWith(expect.objectContaining({ origin: 'center', keyword: '不存在的文件' }), expect.any(AbortSignal))
+  expect(wrapper.text()).toContain('没有匹配的文件')
   wrapper.unmount()
 })

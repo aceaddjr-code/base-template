@@ -13,6 +13,7 @@ const routes: RouteRecordRaw[] = [
     redirect: '/home',
     meta: { requiresAuth: true },
     children: [
+      { path: 'system/recycle-bin', component: () => import('@/views/system/recycle-bin/index.vue'), meta: { title: '回收站', requiresAuth: true } },
       { path: 'home', component: () => import('@/views/home/index.vue'), meta: { title: '首页', requiresAuth: true } },
       { path: 'examples/items', component: () => import('@/views/examples/items/index.vue'), meta: { title: '示例事项', requiresAuth: true } },
       { path: 'system/users', component: () => import('@/views/system/users/index.vue'), meta: { title: '用户管理', searchAliases: ['账号', '人员'], requiresAuth: true } },

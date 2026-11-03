@@ -5,6 +5,7 @@ export interface FixedMenuEntry {
 }
 
 export const FIXED_MENU_ENTRIES: FixedMenuEntry[] = [
+  { name: '回收站', path: '/system/recycle-bin' },
   { name: '首页', path: '/home' },
   { name: '我的通知', path: '/system/notifications' },
   { name: '历史公告', path: '/announcements' },

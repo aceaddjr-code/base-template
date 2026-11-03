@@ -17,9 +17,6 @@
               >
                 <a-button v-access="['attachments:upload']" type="primary" :loading="uploading">上传附件</a-button>
               </a-upload>
-              <a-popconfirm title="确认回收已删除附件的残留文件？" ok-text="确定" cancel-text="取消" @confirm="handleCleanup">
-                <a-button v-access="['attachments:cleanup']" danger :loading="cleaning">回收已删除文件</a-button>
-              </a-popconfirm>
             </template>
           </PageToolbar>
 
@@ -35,7 +32,7 @@
             :pagination="false"
             row-key="id"
             size="middle"
-            :scroll="{ x: 'max-content' }"
+            :scroll="{ x: 750 }"
           >
             <template #headerCell="{ column }">
               <span>{{ column.title }}</span>
@@ -49,21 +46,21 @@
                 {{ formatSize(record.size) }}
               </template>
               <template v-else-if="column.key === 'uploaderName'">
-                {{ record.uploaderName || '—' }}
+                {{ record.uploaderName || '-' }}
               </template>
               <template v-else-if="column.key === 'createdAt'">
-                {{ formatDateTime(record.createdAt) }}
+                <span class="att-time">{{ formatDateTime(record.createdAt) }}</span>
               </template>
               <template v-else-if="column.key === 'action'">
                 <a-space :size="0">
                   <a-button v-access="['attachments:download']" type="link" size="small" :aria-label="`下载${record.name}`" @click="handleDownload(record as AttachmentItem)">下载</a-button>
-                  <a-popconfirm title="确定删除该附件？删除后不可恢复。" ok-text="确定" cancel-text="取消" @confirm="handleDelete(record as AttachmentItem)">
+                  <a-popconfirm title="确定删除该附件？删除后可在回收站恢复。" ok-text="确定" cancel-text="取消" @confirm="handleDelete(record as AttachmentItem)">
                     <a-button v-access="['attachments:delete']" type="link" size="small" danger>删除</a-button>
                   </a-popconfirm>
                 </a-space>
               </template>
             </template>
-            <template #emptyText><a-empty :description="libFailed ? '文件库列表未加载' : '暂无文件'" /></template>
+            <template #emptyText><a-empty :description="libFailed ? '文件库列表未加载' : libApplied.keyword ? '没有匹配的文件' : '暂无文件'" /></template>
           </a-table>
         </a-tab-pane>
 
@@ -94,7 +91,7 @@
             :pagination="false"
             row-key="id"
             size="middle"
-            :scroll="{ x: 'max-content' }"
+            :scroll="{ x: 1260 }"
           >
             <template #headerCell="{ column }">
               <span>{{ column.title }}</span>
@@ -109,7 +106,7 @@
               </template>
               <template v-else-if="column.key === 'entityType'">
                 <a-tag v-if="record.entityType">{{ attachmentTargetLabel(record.entityType) }}</a-tag>
-                <span v-else>—</span>
+                <span v-else>-</span>
               </template>
               <template v-else-if="column.key === 'entity'">
                 <template v-if="record.status === 'bound' && record.entityType && record.entityId">
@@ -123,13 +120,13 @@
                   >{{ record.entityTitle || `#${record.entityId}` }}</a-button>
                   <span v-else :title="noDrillHint(record as AttachmentItem)">{{ record.entityTitle || `#${record.entityId}` }}</span>
                 </template>
-                <span v-else>—</span>
+                <span v-else>-</span>
               </template>
               <template v-else-if="column.key === 'uploaderName'">
-                {{ record.uploaderName || '—' }}
+                {{ record.uploaderName || '-' }}
               </template>
               <template v-else-if="column.key === 'createdAt'">
-                {{ formatDateTime(record.createdAt) }}
+                <span class="att-time">{{ formatDateTime(record.createdAt) }}</span>
               </template>
               <template v-else-if="column.key === 'status'">
                 <a-tag v-if="record.status === 'bound'" color="processing">已挂接</a-tag>
@@ -149,7 +146,7 @@
                 </a-space>
               </template>
             </template>
-            <template #emptyText><a-empty :description="bizFailed ? '业务附件列表未加载' : '暂无业务附件'" /></template>
+            <template #emptyText><a-empty :description="bizFailed ? '业务附件列表未加载' : bizApplied.keyword || bizApplied.status || bizApplied.entityType ? '没有匹配的业务附件' : '暂无业务附件'" /></template>
           </a-table>
         </a-tab-pane>
       </a-tabs>
@@ -165,7 +162,7 @@ import { computed, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import { useRouter } from 'vue-router'
 import {
-  getAttachments, uploadAttachment, deleteAttachment, cleanupAttachments,
+  getAttachments, uploadAttachment, deleteAttachment,
   attachmentDownloadUrl, formatSize, ATTACHMENT_MAX_SIZE, type AttachmentItem, type AttachmentStatus,
 } from '@/api/attachment'
 import { ATTACHMENT_TARGET_META, attachmentTargetLabel, type AttachmentTargetMeta } from '@/constants/attachment-targets'
@@ -182,19 +179,18 @@ import { hasAccessByCodes } from '@/utils/access'
 const router = useRouter()
 const activeKey = ref<'library' | 'business'>('library')
 const uploading = ref(false)
-const cleaning = ref(false)
 // 表格函数 ref 与页脚横滚条来源统一走 useListPage；两个页签各持一份，页脚取当前激活页
 const lib = useListPage()
 const biz = useListPage()
 const app = useAppStore()
 
-const { draft: libDraft, loading: libLoading, failed: libFailed, rows: libRows, page: libPage, pageSize: libPageSize, total: libTotal, refresh: libRefresh, apply: libApply, changePage: changeLibPage, totalText: libTotalText } = useListQuery<{ keyword: string }, AttachmentItem>({
+const { draft: libDraft, applied: libApplied, loading: libLoading, failed: libFailed, rows: libRows, page: libPage, pageSize: libPageSize, total: libTotal, refresh: libRefresh, apply: libApply, changePage: changeLibPage, totalText: libTotalText } = useListQuery<{ keyword: string }, AttachmentItem>({
   key: 'system-attachments-library', account: () => app.userInfo?.id, pageSize: 20,
   defaults: () => ({ keyword: '' }),
   normalize: query => ({ keyword: query.keyword.trim() }),
   load: (query, signal) => getAttachments({ page: query.page, pageSize: query.pageSize, origin: 'center', keyword: query.keyword || undefined }, signal),
 })
-const { draft: bizDraft, loading: bizLoading, failed: bizFailed, rows: bizRows, page: bizPage, pageSize: bizPageSize, total: bizTotal, refresh: bizRefresh, apply: bizApply, changePage: changeBizPage, totalText: bizTotalText } = useListQuery<{ keyword: string; status: AttachmentStatus | ''; entityType: string }, AttachmentItem>({
+const { draft: bizDraft, applied: bizApplied, loading: bizLoading, failed: bizFailed, rows: bizRows, page: bizPage, pageSize: bizPageSize, total: bizTotal, refresh: bizRefresh, apply: bizApply, changePage: changeBizPage, totalText: bizTotalText } = useListQuery<{ keyword: string; status: AttachmentStatus | ''; entityType: string }, AttachmentItem>({
   key: 'system-attachments-business', account: () => app.userInfo?.id, pageSize: 20,
   defaults: () => ({ keyword: '', status: '', entityType: '' }),
   normalize: query => ({ keyword: query.keyword.trim(), status: query.status || '', entityType: query.entityType || '' }),
@@ -206,21 +202,21 @@ const libColumns = ref([
   { title: '文件名', key: 'name' },
   { title: '大小', key: 'size', width: 90 },
   { title: '上传人', key: 'uploaderName', width: 130 },
-  { title: '上传时间', key: 'createdAt', width: 170 },
+  { title: '上传时间', key: 'createdAt', width: 190 },
   { title: '操作', key: 'action', width: 140 },
 ])
-const { resizeStart: libResizeStart, isFlexible: libIsFlexible } = useResizableColumns('system-attachments-library-widths', libColumns, { size: 90, uploaderName: 130, createdAt: 170, action: 140 }, ['name'])
+const { resizeStart: libResizeStart, isFlexible: libIsFlexible } = useResizableColumns('system-attachments-library-widths-v2', libColumns, { size: 90, uploaderName: 130, createdAt: 190, action: 140 }, ['name'])
 const bizColumns = ref([
   { title: '文件名', key: 'name' },
   { title: '大小', key: 'size', width: 90 },
   { title: '所属模块', key: 'entityType', width: 120 },
   { title: '关联单据', key: 'entity', width: 220 },
   { title: '上传人', key: 'uploaderName', width: 130 },
-  { title: '上传时间', key: 'createdAt', width: 170 },
+  { title: '上传时间', key: 'createdAt', width: 190 },
   { title: '状态', key: 'status', width: 100 },
   { title: '操作', key: 'action', width: 150 },
 ])
-const { resizeStart: bizResizeStart, isFlexible: bizIsFlexible } = useResizableColumns('system-attachments-business-widths', bizColumns, { size: 90, entityType: 120, entity: 220, uploaderName: 130, createdAt: 170, status: 100, action: 150 }, ['name'])
+const { resizeStart: bizResizeStart, isFlexible: bizIsFlexible } = useResizableColumns('system-attachments-business-widths-v2', bizColumns, { size: 90, entityType: 120, entity: 220, uploaderName: 130, createdAt: 190, status: 100, action: 150 }, ['name'])
 
 /** 模块筛选项来自前端业务注册表；未登记类型仍会出现在列表（显示技术标识），但不在筛选项中 */
 const targetOptions = Object.entries(ATTACHMENT_TARGET_META).map(([value, meta]) => ({ value, label: meta.label }))
@@ -289,22 +285,21 @@ async function handleDelete(record: AttachmentItem) {
   } catch { /* 拦截器已提示 */ }
 }
 
-async function handleCleanup() {
-  cleaning.value = true
-  try {
-    const removed = await cleanupAttachments()
-    message.success(removed > 0 ? `已回收 ${removed} 个已删除附件的残留文件` : '没有需要回收的文件')
-    await libApply()
-  } catch { /* 拦截器已提示 */ } finally {
-    cleaning.value = false
-  }
-}
 </script>
 
 <style scoped>
+/* Hallmark · app screen · modern-minimal · existing project theme · attachment management */
+/* Critique: keep file actions and source records legible at desktop and narrow widths. */
 .att-tabs :deep(.ant-tabs-nav) {
   margin-bottom: 0;
 }
+.att-tabs :deep(.ant-btn:focus-visible),
+.att-tabs :deep(.ant-input:focus-visible),
+.att-tabs :deep(.ant-select-selector:focus-visible) {
+  outline: var(--focus-width) solid var(--color-link);
+  outline-offset: var(--focus-offset);
+}
+.att-tabs :deep(.ant-btn:active:not(:disabled)) { opacity: .85; }
 .att-name {
   display: inline-block;
   max-width: 100%;
@@ -318,9 +313,16 @@ async function handleCleanup() {
   text-align: left;
   overflow-wrap: anywhere;
 }
+.att-time { white-space: nowrap; }
 .filter-field {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
+  min-width: 0;
+  white-space: nowrap;
+}
+@media (max-width: 768px) {
+  .filter-field { flex: 1 1 100%; }
+  .filter-field :deep(.ant-input-search) { flex: 1; min-width: 0; width: auto !important; }
 }
 </style>
