@@ -19,6 +19,9 @@ import { AttachmentService } from '../attachment/attachment.service';
 import { AttachmentUploadInterceptor } from '../attachment/attachment-upload.interceptor';
 import { ExampleController } from '../example/example.controller';
 import { ExampleService } from '../example/example.service';
+import { UserController } from '../user/user.controller';
+import { UserService } from '../user/user.service';
+import { UserDataScopeService } from '../user/user-data-scope.service';
 
 describe('管理权限 HTTP 边界（真实控制器、角色守卫与权限守卫）', () => {
   let app: INestApplication;
@@ -38,6 +41,7 @@ describe('管理权限 HTTP 边界（真实控制器、角色守卫与权限守�
     resolveForDownload: jest.fn(), openDownload: jest.fn(),
   };
   const example = { uploadAttachment: jest.fn() };
+  const user = { resetPassword: jest.fn(async () => ({ temporaryPassword: 'generated-once', expiresAt: '2026-11-05T00:00:00.000Z' })) };
   const upload = jest.fn((context, next) => {
     context.switchToHttp().getRequest().file = { filename: 'fixture.pdf' };
     return next.handle();
@@ -45,12 +49,14 @@ describe('管理权限 HTTP 边界（真实控制器、角色守卫与权限守�
 
   beforeAll(async () => {
     const module = await Test.createTestingModule({
-      controllers: [AnnouncementController, DictController, SystemLogController, AttachmentController, ExampleController],
+      controllers: [AnnouncementController, DictController, SystemLogController, AttachmentController, ExampleController, UserController],
       providers: [
         { provide: AnnouncementService, useValue: announcement }, { provide: DictService, useValue: dict },
         { provide: SystemLogService, useValue: logs }, { provide: AttachmentService, useValue: attachment },
         { provide: ExampleService, useValue: example }, { provide: ConfigService, useValue: new ConfigService() },
         { provide: AuthService, useValue: { getUserAccessCodes: async () => codes } },
+        { provide: UserService, useValue: user },
+        { provide: UserDataScopeService, useValue: { listScopeForms: jest.fn(), getPanelRows: jest.fn() } },
         { provide: APP_GUARD, useClass: RolesGuard }, { provide: APP_GUARD, useClass: PermissionGuard },
       ],
     }).overrideInterceptor(AttachmentUploadInterceptor).useValue({ intercept: upload }).compile();
@@ -93,14 +99,27 @@ describe('管理权限 HTTP 边界（真实控制器、角色守卫与权限守�
   ] as const;
   const send = (method: string, path: string) => (request(app.getHttpServer()) as any)[method](path).send({});
 
-  /** 账号安全第一批：权限码已随任务 01 注册（种子＋补丁），端点由任务 03/04 实现；
-   *  实现后把用例加入 cases 并删除本豁免，恢复全覆盖守护。 */
-  const pendingEndpointCodes = new Set(['users:reset-password', 'users:revoke-sessions']);
+  /** 账号安全第一批：users 页动作保留 UserController 类级 admin 边界（规格 3.4），
+   *  不能按普通「精确授权即可用」形态进 cases，用专用用例验证；revoke-sessions 端点由任务 04 实现。 */
+  const dedicatedAdminOnlyCodes = new Set(['users:reset-password']);
+  const pendingEndpointCodes = new Set(['users:revoke-sessions']);
 
   it('用例覆盖种子声明的全部管理权限码，无遗漏也无拼写漂移', () => {
     const caseCodes = new Set<string>(cases.map(([, , code]) => code as string));
     expect(new Set(MANAGEMENT_PERMISSION_CODES).size).toBe(MANAGEMENT_PERMISSION_CODES.length);
-    for (const code of MANAGEMENT_PERMISSION_CODES) expect(caseCodes.has(code) || pendingEndpointCodes.has(code)).toBe(true);
+    for (const code of MANAGEMENT_PERMISSION_CODES) {
+      expect(caseCodes.has(code) || pendingEndpointCodes.has(code) || dedicatedAdminOnlyCodes.has(code)).toBe(true);
+    }
+  });
+
+  it('重置密码：admin 系统例外可用；普通角色即使持有权限码也被类级 admin 边界拒绝', async () => {
+    codes = ['users:reset-password'];
+    await send('post', '/users/5/reset-password').expect(403);
+    expect(user.resetPassword).not.toHaveBeenCalled();
+    role = 'admin';
+    await send('post', '/users/5/reset-password').expect(201);
+    expect(user.resetPassword).toHaveBeenCalledTimes(1);
+    expect(user.resetPassword.mock.calls[0][0]).toBe(5);
   });
 
   it.each(cases)('%s %s：无权限和错误权限均拒绝，精确授权后普通角色可用', async (method, path, code, handler) => {

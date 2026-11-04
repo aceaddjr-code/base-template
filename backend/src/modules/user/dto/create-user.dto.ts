@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsString, IsNotEmpty, IsOptional, IsInt, IsArray, Min, MinLength, MaxLength, IsEmail, IsByteLength, ValidateIf } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsInt, IsArray, Min, MaxLength, IsEmail, ValidateIf } from 'class-validator';
 
 export class CreateUserDto {
   @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
@@ -8,11 +8,10 @@ export class CreateUserDto {
   @MaxLength(50, { message: '登录账号不能超过 50 字' })
   loginid: string;
 
+  /** 兼容字段：创建不再接受密码入参，非空一律被服务层拒绝（临时密码由系统生成）。 */
+  @IsOptional()
   @IsString()
-  @MinLength(3, { message: '密码至少 3 位' })
-  @MaxLength(72, { message: '密码不能超过 72 字' })
-  @IsByteLength(0, 72, { message: '密码最多 72 字节' })
-  password: string;
+  password?: string;
 
   @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   @IsString()

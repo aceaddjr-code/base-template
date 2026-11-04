@@ -11,6 +11,7 @@ import { Public } from '../../common/decorators/public.decorator';
 import { SystemLogService } from '../system/system-log.service';
 import type { JwtPayload } from './jwt.strategy';
 import { SkipRequestAudit } from '../../common/decorators/skip-request-audit.decorator';
+import { AllowDuringPasswordChange } from './decorators/allow-during-password-change.decorator';
 
 @Controller('auth')
 @SkipRequestAudit()
@@ -62,14 +63,13 @@ export class AuthController {
     return this.authService.updateMyProfile(req.user as JwtPayload, dto);
   }
 
-  /** 本人改密，仅从当前登录身份取 ID；不接受请求指定其他账号。 */
+  /** 本人改密，仅从当前登录身份取 ID；不接受请求指定其他账号。待改密白名单端点。 */
+  @AllowDuringPasswordChange()
   @Throttle({ default: { ttl: 60000, limit: 5 } })
   @Patch('password')
   async changeMyPassword(@Body() dto: ChangePasswordDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const user = req.user as JwtPayload;
-    const result = await this.authService.changeMyPassword(user, dto);
-    await this.logService.write({ userId: user.sub, username: user.username, action: 'update', entityType: 'auth', entityId: user.sub,
-      detail: JSON.stringify({ event: 'password_changed', sessionsRevoked: true }), ip: req.ip });
+    const result = await this.authService.changeMyPassword(user, dto, { ip: req.ip });
     res.clearCookie('access_token', { path: '/' });
     return result;
   }
@@ -103,7 +103,8 @@ export class AuthController {
     return { message: '已退出登录' };
   }
 
-  /** 获取当前用户信息 */
+  /** 获取当前用户信息；待改密受限会话仅返回最小身份与标志（规格 3.3 白名单）。 */
+  @AllowDuringPasswordChange()
   @UseGuards(JwtAuthGuard)
   @Get('profile')
   async getProfile(@CurrentUser() user: JwtPayload) {

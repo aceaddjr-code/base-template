@@ -8,11 +8,16 @@ import {
   Body,
   Param,
   Query,
+  Req,
+  Res,
 } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { UserService } from './user.service';
 import { UserDataScopeService } from './user-data-scope.service';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
+import { SkipRequestAudit } from '../../common/decorators/skip-request-audit.decorator';
 import { safeParseInt } from '../../common/utils/service-helpers';
 import { dateRangeBounds } from '../../common/utils/date-range';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -71,10 +76,29 @@ export class UserController {
     return this.userService.findById(parseInt(id, 10));
   }
 
-  /** 新增用户 */
+  /** 新增用户 — 响应携带一次性临时密码，禁止缓存 */
   @Post()
-  async create(@CurrentUser() caller: JwtPayload, @Body() dto: CreateUserDto) {
+  async create(
+    @CurrentUser() caller: JwtPayload,
+    @Body() dto: CreateUserDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    res.setHeader('Cache-Control', 'no-store');
     return this.userService.create(dto, caller);
+  }
+
+  /** 管理员重置密码：生成一次性临时密码并要求目标下次登录改密（users:reset-password） */
+  @SkipRequestAudit()
+  @RequirePermission('users:reset-password')
+  @Post(':id/reset-password')
+  async resetPassword(
+    @CurrentUser() caller: JwtPayload,
+    @Param('id') id: string,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    res.setHeader('Cache-Control', 'no-store');
+    return this.userService.resetPassword(parseInt(id, 10), caller, { ip: req.ip });
   }
 
   /** 编辑用户 */

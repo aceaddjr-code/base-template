@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
@@ -14,6 +15,8 @@ import * as bcrypt from 'bcryptjs';
 import type { JwtPayload } from '../auth/jwt.strategy';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { generateTemporaryPassword, TEMPORARY_PASSWORD_TTL_HOURS } from '../auth/account-security.contracts';
+import { SystemLogService } from '../system/system-log.service';
 import { deptSubtreeSelect } from '../../common/utils/dept-subtree';
 
 @Injectable()
@@ -28,6 +31,7 @@ export class UserService {
     private deptRepo: Repository<Department>,
     @InjectRepository(UserRole)
     private userRoleRepo: Repository<UserRole>,
+    private readonly logService: SystemLogService,
   ) {}
 
   private async syncUserRoles(
@@ -178,15 +182,22 @@ export class UserService {
     return user;
   }
 
-  /** 创建本地账号，用户和多角色关联在同一事务内保存。 */
+  /** 创建本地账号：密码由服务端生成一次性临时密码（成功响应仅返回一次），用户和多角色关联在同一事务内保存。 */
   async create(dto: CreateUserDto, caller: JwtPayload) {
+    if (dto.password !== undefined && dto.password !== '') {
+      throw new BadRequestException('创建用户不再接受密码入参，临时密码由系统生成并在成功响应中一次性返回');
+    }
     const existing = await this.userRepo.findOne({ where: { username: dto.loginid }, withDeleted: true });
     if (existing) throw new BadRequestException({ message: '账号已存在', fieldErrors: [{ path: 'loginid', code: 'unique', message: '账号已存在，请更换登录账号' }] });
     await this.validateReferences(dto);
+    const temporaryPassword = generateTemporaryPassword();
+    const temporaryPasswordExpiresAt = new Date(Date.now() + TEMPORARY_PASSWORD_TTL_HOURS * 3600000);
     const user = await this.userRepo.manager.transaction(async manager => {
       const saved = await manager.save(User, {
         username: dto.loginid,
-        password: await bcrypt.hash(dto.password, 10),
+        password: await bcrypt.hash(temporaryPassword, 10),
+        mustChangePassword: 1,
+        temporaryPasswordExpiresAt,
         displayName: dto.displayName,
         email: dto.email || null,
         phone: dto.phone || null,
@@ -199,7 +210,9 @@ export class UserService {
       await this.syncUserRoles(saved.id, dto.roleId ?? null, dto.roleIds ?? [], manager);
       return saved;
     });
-    return this.findById(user.id);
+    const created = await this.findById(user.id);
+    // 一次性凭据：仅本响应返回，列表/详情/日志不保存明文（响应头 no-store 由控制器设置）。
+    return { ...created, temporaryPassword, expiresAt: temporaryPasswordExpiresAt.toISOString() };
   }
 
   private async validateReferences(dto: CreateUserDto | UpdateUserDto) {
@@ -249,10 +262,13 @@ export class UserService {
     for (const k of ['email', 'phone', 'roleId', 'deptId', 'status', 'displayName', 'leaderId'] as const) {
       if (dto[k] !== undefined) updateData[k] = dto[k];
     }
-    if (dto.password) updateData.password = await bcrypt.hash(dto.password, 10);
+    // 普通编辑不再改密码：非空 password 一律拒绝并指向专用重置动作（规格 3.4）。
+    if (dto.password !== undefined && dto.password !== '') {
+      throw new BadRequestException('编辑用户不能修改密码，请使用「重置密码」生成临时密码');
+    }
     await this.userRepo.manager.transaction(async manager => {
       if (Object.keys(updateData).length) await manager.update(User, id, updateData);
-      if (roleChanged || roleIdsChanged || deptChanged || dto.password || (dto.status !== undefined && dto.status !== user.status)) {
+      if (roleChanged || roleIdsChanged || deptChanged || (dto.status !== undefined && dto.status !== user.status)) {
         await manager.increment(User, { id }, 'tokenVersion', 1);
       }
       if (dto.roleIds !== undefined || roleChanged) {
@@ -261,6 +277,51 @@ export class UserService {
       }
     });
     return this.findById(id);
+  }
+
+  /**
+   * 管理员重置密码（规格 3.2/3.4）：生成一次性临时密码、标记待改密并原子递增
+   * tokenVersion——旧密码与旧会话立即失效。条件更新防本人改密并发竞争，
+   * 审计与状态变更同事务提交，失败整体回滚。凭据仅本响应返回一次。
+   */
+  async resetPassword(id: number, caller: JwtPayload, meta?: { ip?: string | null; via?: string; allowSelf?: boolean }) {
+    // 本机恢复命令（recovery-cli）显式允许对目标管理员本人执行，HTTP 入口不允许。
+    if (caller.sub === id && !meta?.allowSelf) {
+      throw new ForbiddenException('不能重置自己的密码；本人改密请在登录后自助修改');
+    }
+    const target = await this.userRepo.findOne({
+      where: { id },
+      select: { id: true, username: true, displayName: true, status: true, tokenVersion: true },
+    });
+    if (!target) throw new NotFoundException('用户不存在或已删除');
+    if (target.status !== 1) throw new BadRequestException('目标账号已被禁用，请先启用再重置密码');
+    const temporaryPassword = generateTemporaryPassword();
+    const expiresAt = new Date(Date.now() + TEMPORARY_PASSWORD_TTL_HOURS * 3600000);
+    await this.userRepo.manager.transaction(async manager => {
+      const result = await manager
+        .createQueryBuilder()
+        .update(User)
+        .set({
+          password: await bcrypt.hash(temporaryPassword, 10),
+          mustChangePassword: 1,
+          temporaryPasswordExpiresAt: expiresAt,
+          tokenVersion: () => 'token_version + 1',
+        })
+        .where('id = :id AND token_version = :version AND status = 1', { id, version: target.tokenVersion })
+        .execute();
+      if (result.affected !== 1) throw new ConflictException('目标账号状态已变化，请刷新后重试');
+      await this.logService.writeInTransaction(manager, {
+        userId: caller.sub,
+        username: caller.username,
+        action: 'update',
+        entityType: 'users',
+        entityId: id,
+        entityDesc: target.displayName || target.username,
+        detail: JSON.stringify({ event: 'password_reset', target: target.username, expiresAt: expiresAt.toISOString(), via: meta?.via ?? 'admin' }),
+        ip: meta?.ip ?? null,
+      });
+    });
+    return { temporaryPassword, expiresAt: expiresAt.toISOString() };
   }
 
   /** 启用/禁用 */

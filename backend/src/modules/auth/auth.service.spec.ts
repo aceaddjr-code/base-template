@@ -11,7 +11,7 @@ const chain = (rows: unknown[] = []) => ({
 
 describe('本地认证、菜单和权限缓存', () => {
   let service: AuthService;
-  let users: any, roles: any, menus: any, links: any, userDataScopes: any, jwt: any, rateLimit: any, loginQuery: any, roleQuery: any;
+  let users: any, roles: any, menus: any, links: any, userDataScopes: any, jwt: any, rateLimit: any, logService: any, loginQuery: any, roleQuery: any;
   const defaultScope = { scopeKey:'__global__', scopeType:'self', viewOthers:1, editOthers:0, deleteOthers:0, targets:[] };
   const account = { id:1, username:'alice', password:'hash', status:1, roleId:2, tokenVersion:1,
     displayName:'用户甲', deptId:3, role:{ id:2, name:'普通用户', code:'user' } };
@@ -33,7 +33,8 @@ describe('本地认证、菜单和权限缓存', () => {
       recordAccountFailure: jest.fn().mockResolvedValue(undefined),
       recordAccountSuccess: jest.fn().mockResolvedValue(undefined),
     };
-    service = new AuthService(jwt,users,roles,menus,links,userDataScopes,rateLimit);
+    logService = { write: jest.fn(async () => undefined), writeInTransaction: jest.fn(async () => undefined) };
+    service = new AuthService(jwt,users,roles,menus,links,userDataScopes,rateLimit,logService);
     (bcrypt.compare as jest.Mock).mockResolvedValue(true);
   });
 
@@ -108,6 +109,33 @@ describe('本地认证、菜单和权限缓存', () => {
     await expect(service.login('alice','password','1.2.3.4')).rejects.toThrow(ForbiddenException);
     expect(rateLimit.recordAccountFailure).not.toHaveBeenCalled();
     expect(rateLimit.recordAccountSuccess).not.toHaveBeenCalled();
+  });
+
+  it('待改密账号登录：签发受限会话，仅返回最小身份与待改密标志', async () => {
+    loginQuery.getOne.mockResolvedValue({ ...account, mustChangePassword:1, temporaryPasswordExpiresAt:new Date(Date.now()+3600000) });
+    const result = await service.login('alice','password','1.2.3.4');
+    expect(result.token).toBe('signed-token');
+    expect(result.user).toEqual({ id:1, username:'alice', displayName:'用户甲', mustChangePassword:true });
+    expect(result.user).not.toHaveProperty('email');
+    expect(result.user).not.toHaveProperty('roles');
+  });
+
+  it('临时密码过期登录：凭据正确也不签发会话，返回稳定业务码', async () => {
+    loginQuery.getOne.mockResolvedValue({ ...account, mustChangePassword:1, temporaryPasswordExpiresAt:new Date(Date.now()-1000) });
+    const error:any = await service.login('alice','password','1.2.3.4').catch(e => e);
+    expect(error.getStatus()).toBe(401);
+    expect(error.getResponse()).toMatchObject({ reason:'TEMPORARY_PASSWORD_EXPIRED' });
+    expect(jwt.sign).not.toHaveBeenCalled();
+  });
+
+  it('待改密标志缺失到期时间视为过期；受限 profile 仅返回最小身份', async () => {
+    loginQuery.getOne.mockResolvedValue({ ...account, mustChangePassword:1, temporaryPasswordExpiresAt:null });
+    const error:any = await service.login('alice','password','1.2.3.4').catch(e => e);
+    expect(error.getStatus()).toBe(401);
+    users.findOne.mockResolvedValue({ id:1, username:'alice', displayName:'用户甲', status:1 });
+    const profile = await service.getProfile({ ...account, sub:1, mustChangePassword:true } as any);
+    expect(profile).toEqual({ id:1, username:'alice', displayName:'用户甲', mustChangePassword:true });
+    expect(users.findOne).toHaveBeenCalledWith(expect.objectContaining({ select:{ id:true, username:true, displayName:true, status:true } }));
   });
 
   it('用户的表单范围和目标随登录签发', async () => {

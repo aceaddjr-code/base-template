@@ -1,11 +1,10 @@
 import { Transform } from 'class-transformer';
-import { IsString, IsOptional, IsInt, IsArray, Min, MinLength, MaxLength, IsIn, IsNotEmpty } from 'class-validator';
+import { IsString, IsOptional, IsInt, IsArray, Min, MaxLength, IsIn, IsNotEmpty } from 'class-validator';
 
 export class UpdateUserDto {
+  /** 兼容字段：普通编辑不能改密码，非空一律被服务层拒绝并指向「重置密码」。 */
   @IsOptional()
   @IsString()
-  @MinLength(3, { message: '密码至少 3 位' })
-  @MaxLength(72)
   password?: string;
 
   @IsOptional()

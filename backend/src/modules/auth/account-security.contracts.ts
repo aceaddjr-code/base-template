@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomInt } from 'node:crypto';
 
 /**
  * 账号安全闭环（第一批）跨任务共享契约：稳定业务码、临时密码常量、
@@ -30,6 +30,16 @@ export const TEMPORARY_PASSWORD_TTL_HOURS = 24;
 
 /** 临时密码字符集与长度：后端密码学随机源、可复制 ASCII，不含易混淆字符。 */
 export const TEMPORARY_PASSWORD_LENGTH = 20;
+const TEMPORARY_PASSWORD_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+
+/** 生成一次性临时密码明文：crypto 随机整数逐字符取样（20 位 ASCII，≤72 字节恒成立）。 */
+export function generateTemporaryPassword(): string {
+  let value = '';
+  for (let i = 0; i < TEMPORARY_PASSWORD_LENGTH; i++) {
+    value += TEMPORARY_PASSWORD_ALPHABET[randomInt(TEMPORARY_PASSWORD_ALPHABET.length)];
+  }
+  return value;
+}
 
 /**
  * 一次性凭据响应：仅创建/重置成功响应返回一次，界面提供主动复制；

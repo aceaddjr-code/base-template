@@ -8,6 +8,7 @@ import { AppController } from './app.controller';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { PermissionGuard } from './modules/auth/guards/permission.guard';
+import { MustChangePasswordGuard } from './modules/auth/guards/must-change-password.guard';
 import { CsrfGuard } from './common/guards/csrf.guard';
 import { AuditInterceptor } from './common/interceptors/audit.interceptor';
 import { AuthModule } from './modules/auth/auth.module';
@@ -67,6 +68,8 @@ import { validateEnvironment } from './config/environment';
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: CsrfGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    // 待改密门禁位于认证之后、角色/操作权限之前（规格 3.3）。
+    { provide: APP_GUARD, useClass: MustChangePasswordGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
     { provide: APP_GUARD, useClass: PermissionGuard },
     { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },

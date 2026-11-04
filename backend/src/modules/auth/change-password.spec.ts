@@ -9,9 +9,14 @@ describe('本人自助改密', () => {
   const actor = { sub: 7, tokenVersion: 5 } as any;
   function setup() {
     const query: any = { update: jest.fn().mockReturnThis(), set: jest.fn().mockReturnThis(), where: jest.fn().mockReturnThis(), execute: jest.fn().mockResolvedValue({ affected: 1 }) };
-    const users: any = { findOne: jest.fn().mockResolvedValue({ id: 7, status: 1, password: 'stored-hash', tokenVersion: 5 }), createQueryBuilder: jest.fn(() => query) };
-    const service = new AuthService({} as any, users, {} as any, {} as any, {} as any, {} as any, {} as any);
-    return { service, users, query };
+    const users: any = {
+      findOne: jest.fn().mockResolvedValue({ id: 7, status: 1, password: 'stored-hash', tokenVersion: 5 }),
+      createQueryBuilder: jest.fn(() => query),
+      manager: { transaction: jest.fn(async (fn: any) => fn({ createQueryBuilder: () => query })) },
+    };
+    const logService = { write: jest.fn(), writeInTransaction: jest.fn(async () => undefined) };
+    const service = new AuthService({} as any, users, {} as any, {} as any, {} as any, {} as any, {} as any, logService as any);
+    return { service, users, query, logService };
   }
   const dto = { oldPassword: 'old', newPassword: 'abc', confirmPassword: 'abc' };
   beforeEach(() => {
@@ -19,13 +24,20 @@ describe('本人自助改密', () => {
     (bcrypt.compare as jest.Mock).mockImplementation(async value => value === 'old');
     (bcrypt.hash as jest.Mock).mockResolvedValue('new-bcrypt-hash');
   });
-  it('三位新密码可提交；密码与会话版本在同一条件更新中保存', async () => {
-    const { service, users, query } = setup();
-    await expect(service.changeMyPassword(actor, dto)).resolves.toEqual({ message: '密码已修改，请重新登录' });
+  it('三位新密码可提交；密码、待改密状态、临时密码到期与会话版本在同一事务内保存，审计同事务', async () => {
+    const { service, users, query, logService } = setup();
+    await expect(service.changeMyPassword(actor, dto, { ip: '127.0.0.1' })).resolves.toEqual({ message: '密码已修改，请重新登录' });
     expect(users.findOne).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 7, status: 1 } }));
-    expect(query.where).toHaveBeenCalledWith({ id: 7, password: 'stored-hash', tokenVersion: 5, status: 1 });
-    expect(query.set.mock.calls[0][0].password).toBe('new-bcrypt-hash');
-    expect(query.set.mock.calls[0][0].tokenVersion()).toBe('token_version + 1');
+    expect(query.where).toHaveBeenCalledWith('id = :id AND password = :hash AND token_version = :version AND status = 1', {
+      id: 7, hash: 'stored-hash', version: 5,
+    });
+    const patch = query.set.mock.calls[0][0];
+    expect(patch.password).toBe('new-bcrypt-hash');
+    expect(patch.tokenVersion()).toBe('token_version + 1');
+    expect(patch.mustChangePassword).toBe(0);
+    expect(patch.temporaryPasswordExpiresAt).toBeNull();
+    expect(logService.writeInTransaction).toHaveBeenCalledTimes(1);
+    expect(logService.writeInTransaction.mock.calls[0][1]).toMatchObject({ userId: 7, ip: '127.0.0.1' });
     expect(bcrypt.hash).toHaveBeenCalledWith('abc', 10);
   });
   it('错误原密码、重复新密码与并发变化均不误报成功', async () => {

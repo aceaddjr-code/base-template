@@ -14,12 +14,13 @@ import { Role } from '../role/role.entity';
 import { Menu } from '../menu/menu.entity';
 import { UserRole } from '../user/user-role.entity';
 import { UserDataScopeService } from '../user/user-data-scope.service';
+import { SystemLogService } from '../system/system-log.service';
 import { type UserScopeEntry } from '../../common/utils/data-scope';
 import { getUserId } from '../../common/utils/service-helpers';
 import type { JwtPayload } from './jwt.strategy';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { LoginRateLimitService } from './login-rate-limit.service';
-import { accountBucketKey, pendingAccountBucketKey } from './account-security.contracts';
+import { ACCOUNT_SECURITY_REASONS, accountBucketKey, pendingAccountBucketKey } from './account-security.contracts';
 
 /** 未知账号的等成本校验目标：惰性生成固定占位哈希，避免响应时间泄露账号是否存在。 */
 let dummyCredentialHash: string | null = null;
@@ -43,6 +44,7 @@ export class AuthService {
     private userRoleRepo: Repository<UserRole>,
     private readonly userDataScopeService: UserDataScopeService,
     private readonly rateLimit: LoginRateLimitService,
+    private readonly logService: SystemLogService,
   ) {}
 
   /**
@@ -76,10 +78,36 @@ export class AuthService {
     // 凭据正确但账号停用：不是猜测失败，不计连续失败，也不清成功计数。
     if (user!.status !== 1) throw new ForbiddenException('账号已被禁用');
     await this.rateLimit.recordAccountSuccess(bucketKey, decision.observedWindow);
+    // 临时密码到期只在凭据校验正确后提示，且不签发会话（统一提示不泄露账号存在性）。
+    if (Number(user!.mustChangePassword) === 1) {
+      const expiresAt = user!.temporaryPasswordExpiresAt;
+      if (!expiresAt || expiresAt.getTime() <= Date.now()) {
+        throw new UnauthorizedException({
+          message: '临时密码已过期，请联系管理员重置',
+          reason: ACCOUNT_SECURITY_REASONS.TEMPORARY_PASSWORD_EXPIRED,
+        });
+      }
+      return this.generateToken(user!, true);
+    }
     return this.generateToken(user!);
   }
 
   async getProfile(user: JwtPayload) {
+    // 待改密受限会话：仅最小身份与待改密标志，不加载菜单、部门与角色（规格 3.3）。
+    if (user.mustChangePassword) {
+      const minimal = await this.userRepo.findOne({
+        where: { id: user.sub },
+        select: { id: true, username: true, displayName: true, status: true },
+      });
+      if (!minimal || minimal.status !== 1) throw new UnauthorizedException('用户不存在');
+      return {
+        id: minimal.id,
+        username: minimal.username,
+        displayName: minimal.displayName,
+        mustChangePassword: true,
+      };
+    }
+
     const full = await this.userRepo.findOne({
       where: { id: user.sub },
       relations: { role: true, dept: true },
@@ -284,7 +312,7 @@ export class AuthService {
     }
   }
 
-  private async generateToken(user: User) {
+  private async generateToken(user: User, restricted = false) {
     const { roles, roleIds, dataScopes } = await this.resolveUserPermission(user);
     const payload = {
       sub: user.id,
@@ -296,6 +324,19 @@ export class AuthService {
       dataScopes,
       tokenVersion: user.tokenVersion,
     };
+
+    // 受限会话（待改密）只返回最小身份信息，不加载角色详情等（规格 3.3）。
+    if (restricted) {
+      return {
+        token: this.jwtService.sign(payload),
+        user: {
+          id: user.id,
+          username: user.username,
+          displayName: user.displayName,
+          mustChangePassword: true,
+        },
+      };
+    }
 
     return {
       token: this.jwtService.sign(payload),
@@ -339,7 +380,7 @@ export class AuthService {
     return this.getProfile(user);
   }
 
-  async changeMyPassword(user: JwtPayload, dto: ChangePasswordDto) {
+  async changeMyPassword(user: JwtPayload, dto: ChangePasswordDto, meta?: { ip?: string | null }) {
     if (!user?.sub) throw new UnauthorizedException('请重新登录');
     if (dto.newPassword !== dto.confirmPassword) throw new BadRequestException('两次新密码不一致');
     if (dto.newPassword.length < 3 || Buffer.byteLength(dto.newPassword, 'utf8') > 72) {
@@ -354,11 +395,33 @@ export class AuthService {
     if (!(await bcrypt.compare(dto.oldPassword, current.password))) throw new BadRequestException('原密码不正确');
     if (await bcrypt.compare(dto.newPassword, current.password)) throw new BadRequestException('新密码不能与原密码相同');
     const password = await bcrypt.hash(dto.newPassword, 10);
-    // 条件更新同时防止并发改密和管理员重置覆盖；会话版本与密码一起原子更新。
-    const result = await this.userRepo.createQueryBuilder().update(User).set({
-      password, tokenVersion: () => 'token_version + 1',
-    }).where({ id: current.id, password: current.password, tokenVersion: current.tokenVersion, status: 1 }).execute();
-    if (result.affected !== 1) throw new ConflictException('账号信息已变化，请重新登录后再试');
+    // 条件更新同时防并发改密与管理员重置覆盖；密码、待改密状态、临时密码到期与会话版本
+    // 在同一事务内原子更新，审计同事务提交——审计失败整体回滚，不留部分更新。
+    await this.userRepo.manager.transaction(async manager => {
+      const result = await manager
+        .createQueryBuilder()
+        .update(User)
+        .set({
+          password,
+          tokenVersion: () => 'token_version + 1',
+          mustChangePassword: 0,
+          temporaryPasswordExpiresAt: null,
+        })
+        .where('id = :id AND password = :hash AND token_version = :version AND status = 1', {
+          id: current.id, hash: current.password, version: current.tokenVersion,
+        })
+        .execute();
+      if (result.affected !== 1) throw new ConflictException('账号信息已变化，请重新登录后再试');
+      await this.logService.writeInTransaction(manager, {
+        userId: user.sub,
+        username: user.username,
+        action: 'update',
+        entityType: 'auth',
+        entityId: user.sub,
+        detail: JSON.stringify({ event: 'password_changed', sessionsRevoked: true }),
+        ip: meta?.ip ?? null,
+      });
+    });
     return { message: '密码已修改，请重新登录' };
   }
 }

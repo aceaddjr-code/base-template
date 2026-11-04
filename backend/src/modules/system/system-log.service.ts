@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, EntityManager } from 'typeorm';
 import { SystemLog } from './entities/system-log.entity';
 import { serializeAuditDetail } from '../../common/utils/log-sanitizer';
 import { requestContext } from '../../common/utils/request-context';
@@ -70,6 +70,14 @@ export class SystemLogService implements OnModuleInit, OnModuleDestroy {
     } catch (e) {
       this.logger.warn(`审计日志写入失败 requestId=${requestContext.getStore()?.requestId ?? 'none'}`);
     }
+  }
+
+  /**
+   * 事务内审计（账号安全第一批）：失败必须让整个事务回滚，不吞错。
+   * 用于「审计与状态变更同事务提交」的敏感动作（改密、重置、撤销会话）。
+   */
+  async writeInTransaction(manager: EntityManager, entry: LogEntry) {
+    await manager.save(SystemLog, { ...entry, detail: serializeAuditDetail(entry.detail) });
   }
 
   /** 审计日志查询（admin，操作日志管理页） */
