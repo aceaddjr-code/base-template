@@ -13,12 +13,13 @@ import { Menu } from '../menu/menu.entity';
 import { Department } from '../department/department.entity';
 import { SysDictType } from '../system/entities/sys-dict-type.entity';
 import { SysDictItem } from '../system/entities/sys-dict-item.entity';
+import { LoginAttemptCounter } from './login-attempt-counter.entity';
 
 @Module({
   imports: [
     PassportModule,
     UserModule,
-    TypeOrmModule.forFeature([User, Role, Menu, Department, UserRole, SysDictType, SysDictItem]),
+    TypeOrmModule.forFeature([User, Role, Menu, Department, UserRole, SysDictType, SysDictItem, LoginAttemptCounter]),
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, SeedService],

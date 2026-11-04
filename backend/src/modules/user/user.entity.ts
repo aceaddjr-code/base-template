@@ -29,6 +29,14 @@ export class User extends BaseEntity {
   @Column({ name: 'token_version', type: 'int', default: 1, comment: 'Token版本号，递增可使旧Token失效' })
   tokenVersion: number;
 
+  /** 账号安全（第一批）：1=下次登录必须修改密码；存量用户迁移默认 0。 */
+  @Column({ name: 'must_change_password', type: 'tinyint', default: 0, comment: '登录后必须修改密码（0/1）' })
+  mustChangePassword: number;
+
+  /** 临时密码到期时间（绝对时间点，服务端裁决）；NULL=非临时密码。 */
+  @Column({ name: 'temporary_password_expires_at', type: 'datetime', nullable: true, comment: '临时密码到期时间，NULL=非临时' })
+  temporaryPasswordExpiresAt: Date | null;
+
   @Column({ name: 'role_id', type: 'int', nullable: true, comment: '角色ID' })
   roleId: number | null;
 

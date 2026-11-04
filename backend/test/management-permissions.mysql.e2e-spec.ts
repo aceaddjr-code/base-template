@@ -8,7 +8,9 @@ suite('管理权限补丁：隔离 MySQL', () => {
   let connection: Awaited<ReturnType<typeof createConnection>>;
   let created = false;
   const database = process.env.TEST_PERMISSION_DATABASE!;
-  const sql = readFileSync(resolve('..', 'docs/sql/20261031-management-permissions.sql'), 'utf8');
+  // 权限节点补丁按文件名顺序执行；清单以 MANAGEMENT_PERMISSION_CODES 为准交叉核对。
+  const patches = ['20261031-management-permissions.sql', '20261104-account-security.sql']
+    .map((file) => readFileSync(resolve('..', 'docs/sql', file), 'utf8'));
   beforeAll(async () => {
     const host = process.env.DB_HOST || 'localhost';
     if (!['localhost', '127.0.0.1', '::1'].includes(host)) throw Error('只允许本机隔离 MySQL');
@@ -41,7 +43,7 @@ suite('管理权限补丁：隔离 MySQL', () => {
   });
 
   it('补齐种子声明的全部管理权限并挂到对应页面，只授予 admin；重复执行无重复节点或授权', async () => {
-    await connection.query(sql); await connection.query(sql);
+    for (const sql of patches) { await connection.query(sql); await connection.query(sql); }
     const [buttons] = await connection.query('SELECT b.permission, p.path FROM menus b JOIN menus p ON p.id = b.parent_id WHERE b.type = ?', ['button']);
     expect(buttons).toHaveLength(MANAGEMENT_PERMISSION_CODES.length);
     expect((buttons as any[]).map(row => row.permission).sort()).toEqual([...MANAGEMENT_PERMISSION_CODES].sort());
@@ -52,8 +54,9 @@ suite('管理权限补丁：隔离 MySQL', () => {
     const [grants] = await connection.query('SELECT role_id FROM role_menus');
     expect(grants).toHaveLength(MANAGEMENT_PERMISSION_CODES.length);
     expect((grants as any[]).every(row => row.role_id === 1)).toBe(true);
+    // 两份补丁各执行两次：admin 用户每次执行各递增一次版本（1 + 2×2）；普通用户不变。
     const [users] = await connection.query('SELECT id, token_version FROM users ORDER BY id');
-    expect(users).toEqual([{ id: 1, token_version: 3 }, { id: 2, token_version: 1 }, { id: 3, token_version: 3 }]);
+    expect(users).toEqual([{ id: 1, token_version: 5 }, { id: 2, token_version: 1 }, { id: 3, token_version: 5 }]);
   });
 
   it('保留已有停用、软删除权限与普通角色自定义授权，不覆盖或复活', async () => {
@@ -63,7 +66,7 @@ suite('管理权限补丁：隔离 MySQL', () => {
         (22, 20, '旧删除', 'button', 'announcements:delete', 1, '2026-01-01');
       INSERT INTO role_menus VALUES (2, 21);
     `);
-    await connection.query(sql);
+    await connection.query(patches.join('\n'));
     const [existing] = await connection.query<any[]>('SELECT id, name, status, deleted_at FROM menus WHERE id IN (20, 21, 22) ORDER BY id');
     expect(existing).toHaveLength(3);
     expect(existing[0].name).toBe('自定义公告页面');

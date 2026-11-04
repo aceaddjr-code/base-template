@@ -1,5 +1,13 @@
 # 数据库变更
 
+## 2026-11-04 账号安全闭环（第一批）
+
+`20261104-account-security.sql` 为账号安全第一批补结构与管理权限：`users` 新增 `must_change_password`（默认 0，存量用户行为不变）与 `temporary_password_expires_at`（NULL=非临时）；新建 `login_attempt_counters` 登录限流计数表（主键桶键支持原子额度预占，`updated_at` 索引支持有界清理）；「用户管理」页下补 `users:reset-password`、`users:revoke-sessions` 两个按钮节点并仅授予 admin。对应端点由后续任务实现后发布，补丁不提前开放任何接口。新库由 SeedService 初始化（admin 初始密码同时标记待改密）；开发库列与表由 synchronize 自动建。
+
+执行顺序：完成此前适用补丁 → 停止管理写入，备份 `users` / `menus` / `role_menus` 并记录新增 ID → 隔离库验证（含重复执行）→ 维护窗口停止登录流量后执行 → 配套发布全部后端与匹配前端（旧后端不认识待改密约束，禁止新旧实例混跑）→ 冒烟验证 → 恢复流量 → 管理员重新登录。补丁幂等可重复执行，但每次执行都会递增 admin 角色用户的 `token_version`。
+
+回滚：DDL 隐式提交。未启用（配套代码未发布）按补丁逆序——先按备份与新增 ID 定向移除新增 `role_menus`/`menus`，再 `DROP TABLE login_attempt_counters`，确认无依赖后删两列；不回降 `token_version`。已启用后禁止直接回滚到不检查待改密标志的旧服务：先停登录流量、撤销相关会话、逐个处置仍有效的临时密码与待改密账号，回退代码验证后再恢复流量；删除结构是最后一步。详见补丁尾部注释与 `.scratch/account-security-phase1/migration-and-release.md`。
+
 ## 2026-11-02 示例事项单据编号与负责人权限
 
 `20261102-example-doc-fields.sql` 为 `example_items` 新增 `doc_no`（单据编号，回填 `EX-<创建日期>-<id>` 后建唯一索引；此后由后端创建时生成 `EX-yyyymmdd-001`）、`remark`（备注）两列，并在「示例事项」菜单下补「变更负责人」按钮节点（`example-items:owner`），仅授予 admin；普通角色由管理员在角色管理显式配置，配置后重新登录生效。开发库列由 synchronize 自动建，菜单节点仍需本补丁。
