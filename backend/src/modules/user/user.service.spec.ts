@@ -138,6 +138,20 @@ describe('UserService 组织汇报关系', () => {
     expect(result.temporaryPassword).toMatch(/^[A-HJ-NP-Za-km-z2-9]{20}$/);
     expect(logService.writeInTransaction.mock.calls[0][1].detail).toContain('"via":"recovery-cli"');
   });
+
+  it('账号安全：revokeSessions 校验目标与本人，同事务递增版本并审计；审计失败整体抛出', async () => {
+    await expect(service.revokeSessions(1, { sub: 1, username: 'zhangsan' } as any)).rejects.toThrow(ForbiddenException);
+    await expect(service.revokeSessions(3, ADMIN)).rejects.toThrow(BadRequestException);
+    await expect(service.revokeSessions(999, ADMIN)).rejects.toThrow(NotFoundException);
+    const result = await service.revokeSessions(1, ADMIN, { ip: '127.0.0.1' });
+    expect(result.message).toContain('已退出全部登录');
+    expect(userRepo.increment).toHaveBeenCalledWith({ id: 1 }, 'tokenVersion', 1);
+    expect(logService.writeInTransaction).toHaveBeenCalledTimes(1);
+    expect(logService.writeInTransaction.mock.calls[0][1].detail).toContain('"event":"sessions_revoked"');
+    // 审计写入失败：事务整体失败，版本更新随之回滚（同一事务语义）
+    logService.writeInTransaction.mockRejectedValueOnce(new Error('audit down'));
+    await expect(service.revokeSessions(2, ADMIN)).rejects.toThrow('audit down');
+  });
 });
 
 describe('UserService 列表筛选（F01/F04）', () => {

@@ -324,6 +324,38 @@ export class UserService {
     return { temporaryPassword, expiresAt: expiresAt.toISOString() };
   }
 
+  /**
+   * 撤销目标账号全部会话（规格 3.4）：仅原子递增 tokenVersion——提交后的新鉴权
+   * 一律拒绝旧版本；不改变密码、待改密状态或启用状态，也不禁止重新登录。
+   * 已通过鉴权的在途请求不被取消；重试撤销可再次递增，绝不降低版本。
+   * 审计与版本递增同事务提交，失败整体回滚。
+   */
+  async revokeSessions(id: number, caller: JwtPayload, meta?: { ip?: string | null }) {
+    if (caller.sub === id) {
+      throw new ForbiddenException('不能对自己执行「退出全部登录」；本人请直接修改密码或退出登录');
+    }
+    const target = await this.userRepo.findOne({
+      where: { id },
+      select: { id: true, username: true, displayName: true, status: true, tokenVersion: true },
+    });
+    if (!target) throw new NotFoundException('用户不存在或已删除');
+    if (target.status !== 1) throw new BadRequestException('目标账号已被禁用，旧会话已随禁用失效');
+    await this.userRepo.manager.transaction(async manager => {
+      await manager.increment(User, { id }, 'tokenVersion', 1);
+      await this.logService.writeInTransaction(manager, {
+        userId: caller.sub,
+        username: caller.username,
+        action: 'update',
+        entityType: 'users',
+        entityId: id,
+        entityDesc: target.displayName || target.username,
+        detail: JSON.stringify({ event: 'sessions_revoked', target: target.username, fromVersion: target.tokenVersion }),
+        ip: meta?.ip ?? null,
+      });
+    });
+    return { message: '已退出全部登录，该账号可重新登录' };
+  }
+
   /** 启用/禁用 */
   async toggleStatus(id: number, caller: JwtPayload) {
     // 系统管理员可禁用自己 → 自己的 tokenVersion 立即递增 → 当场锁死

@@ -174,6 +174,44 @@ suite('临时密码与强制改密闭环：隔离 MySQL + HTTP', () => {
     expect(denied.body.reason).toBe('TEMPORARY_PASSWORD_EXPIRED');
   });
 
+  it('退出全部登录：Cookie/Bearer 旧凭据同失效，他人不受影响，原密码可重登，重试只增版本', async () => {
+    const adminLogin = await loginPost('admin', 'admin-renewed-2026');
+    const adminCookie = cookieOf(adminLogin)!;
+    // user-b 走完整激活（临时密码 → 改密）后建立两份正常会话
+    const created = await request(server()).post('/api/v1/users').set('Cookie', adminCookie)
+      .send({ loginid: 'e2e-user-b', displayName: '用户乙' });
+    const tempB = created.body.data.temporaryPassword as string;
+    const restricted = await loginPost('e2e-user-b', tempB);
+    const changeB = await request(server()).patch('/api/v1/auth/password').set('Cookie', cookieOf(restricted)!)
+      .send({ oldPassword: tempB, newPassword: 'user-b-final-2026', confirmPassword: 'user-b-final-2026' });
+    expect(changeB.status).toBe(200);
+    const sessionA = await loginPost('e2e-user-b', 'user-b-final-2026');
+    const sessionB = await loginPost('e2e-user-b', 'user-b-final-2026');
+    const bearerToken = cookieOf(sessionA)!.slice('access_token='.length);
+    const targetId = await userIdOf('e2e-user-b');
+    const [beforeRows] = await admin.query(`SELECT token_version AS v FROM \`${database}\`.users WHERE id = ?`, [targetId]);
+    const beforeVersion = Number((beforeRows as any[])[0].v);
+
+    const revoke = await request(server()).post(`/api/v1/users/${targetId}/revoke-sessions`).set('Cookie', adminCookie).send({});
+    expect(revoke.status).toBe(201);
+    expect(revoke.body.data.message).toContain('重新登录');
+
+    // 提交后的新鉴权：Cookie 与 Bearer 旧凭据一并失效
+    await request(server()).get('/api/v1/auth/profile').set('Cookie', cookieOf(sessionB)!).expect(401);
+    await request(server()).get('/api/v1/auth/profile').set('Authorization', `Bearer ${bearerToken}`).expect(401);
+    // 其他账号会话不受影响
+    await request(server()).get('/api/v1/auth/profile').set('Cookie', adminCookie).expect(200);
+    // 撤销不等于禁用：原密码仍可重新登录
+    const relogin = await loginPost('e2e-user-b', 'user-b-final-2026');
+    expect(relogin.status).toBe(201);
+    // 重试撤销只递增不降低，且使重登会话再次失效
+    const retry = await request(server()).post(`/api/v1/users/${targetId}/revoke-sessions`).set('Cookie', adminCookie).send({});
+    expect(retry.status).toBe(201);
+    const [afterRows] = await admin.query(`SELECT token_version AS v FROM \`${database}\`.users WHERE id = ?`, [targetId]);
+    expect(Number((afterRows as any[])[0].v)).toBeGreaterThanOrEqual(beforeVersion + 2);
+    await request(server()).get('/api/v1/auth/profile').set('Cookie', cookieOf(relogin)!).expect(401);
+  });
+
   it('审计链路：改密/重置事件入库且不含明文密码', async () => {
     const [logs] = await admin.query(
       `SELECT detail FROM \`${database}\`.system_logs WHERE entity_type IN ('auth','users')`,
@@ -181,6 +219,7 @@ suite('临时密码与强制改密闭环：隔离 MySQL + HTTP', () => {
     const details = (logs as any[]).map((r) => String(r.detail)).join('\n');
     expect(details).toContain('"event":"password_changed"');
     expect(details).toContain('"event":"password_reset"');
+    expect(details).toContain('"event":"sessions_revoked"');
     expect(details).not.toContain('admin-renewed-2026');
     expect(details).not.toMatch(/[A-HJ-NP-Za-km-z2-9]{20}/);
   });

@@ -41,7 +41,10 @@ describe('管理权限 HTTP 边界（真实控制器、角色守卫与权限守�
     resolveForDownload: jest.fn(), openDownload: jest.fn(),
   };
   const example = { uploadAttachment: jest.fn() };
-  const user = { resetPassword: jest.fn(async () => ({ temporaryPassword: 'generated-once', expiresAt: '2026-11-05T00:00:00.000Z' })) };
+  const user = {
+    resetPassword: jest.fn(async () => ({ temporaryPassword: 'generated-once', expiresAt: '2026-11-05T00:00:00.000Z' })),
+    revokeSessions: jest.fn(async () => ({ message: '已退出全部登录，该账号可重新登录' })),
+  };
   const upload = jest.fn((context, next) => {
     context.switchToHttp().getRequest().file = { filename: 'fixture.pdf' };
     return next.handle();
@@ -100,9 +103,9 @@ describe('管理权限 HTTP 边界（真实控制器、角色守卫与权限守�
   const send = (method: string, path: string) => (request(app.getHttpServer()) as any)[method](path).send({});
 
   /** 账号安全第一批：users 页动作保留 UserController 类级 admin 边界（规格 3.4），
-   *  不能按普通「精确授权即可用」形态进 cases，用专用用例验证；revoke-sessions 端点由任务 04 实现。 */
-  const dedicatedAdminOnlyCodes = new Set(['users:reset-password']);
-  const pendingEndpointCodes = new Set(['users:revoke-sessions']);
+   *  不能按普通「精确授权即可用」形态进 cases，用专用用例验证。 */
+  const dedicatedAdminOnlyCodes = new Set(['users:reset-password', 'users:revoke-sessions']);
+  const pendingEndpointCodes = new Set<string>();
 
   it('用例覆盖种子声明的全部管理权限码，无遗漏也无拼写漂移', () => {
     const caseCodes = new Set<string>(cases.map(([, , code]) => code as string));
@@ -112,14 +115,16 @@ describe('管理权限 HTTP 边界（真实控制器、角色守卫与权限守�
     }
   });
 
-  it('重置密码：admin 系统例外可用；普通角色即使持有权限码也被类级 admin 边界拒绝', async () => {
-    codes = ['users:reset-password'];
-    await send('post', '/users/5/reset-password').expect(403);
-    expect(user.resetPassword).not.toHaveBeenCalled();
+  it.each([
+    ['post', '/users/5/reset-password', 'users:reset-password', user.resetPassword],
+    ['post', '/users/5/revoke-sessions', 'users:revoke-sessions', user.revokeSessions],
+  ])('%s %s：admin 系统例外可用；普通角色即使持有权限码也被类级 admin 边界拒绝', async (method, path, _code, handler) => {
+    codes = ['users:reset-password', 'users:revoke-sessions'];
+    await send(method, path).expect(403);
+    expect(handler).not.toHaveBeenCalled();
     role = 'admin';
-    await send('post', '/users/5/reset-password').expect(201);
-    expect(user.resetPassword).toHaveBeenCalledTimes(1);
-    expect(user.resetPassword.mock.calls[0][0]).toBe(5);
+    await send(method, path).expect(201);
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 
   it.each(cases)('%s %s：无权限和错误权限均拒绝，精确授权后普通角色可用', async (method, path, code, handler) => {

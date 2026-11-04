@@ -101,6 +101,18 @@ export class UserController {
     return this.userService.resetPassword(parseInt(id, 10), caller, { ip: req.ip });
   }
 
+  /** 退出目标账号全部登录：旧凭据立即失效，可重新登录（users:revoke-sessions） */
+  @SkipRequestAudit()
+  @RequirePermission('users:revoke-sessions')
+  @Post(':id/revoke-sessions')
+  async revokeSessions(
+    @CurrentUser() caller: JwtPayload,
+    @Param('id') id: string,
+    @Req() req: Request,
+  ) {
+    return this.userService.revokeSessions(parseInt(id, 10), caller, { ip: req.ip });
+  }
+
   /** 编辑用户 */
   @Put(':id')
   async update(
