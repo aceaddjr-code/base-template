@@ -1,5 +1,13 @@
 # 数据库变更
 
+## 2026-11-04 权限效果解释（第二批）
+
+`20261104-permission-explain.sql` 为「用户管理」页补 `users:permission-explain` 按钮节点并仅授予 admin，无表结构变更。对应 `GET /users/:id/permission-explanation` 诊断端点由第二批任务 02 实现后发布，补丁不提前开放接口。新库由 SeedService 初始化；普通角色不自动授权。
+
+执行顺序：完成此前适用补丁 → 停止管理写入，备份 `menus` / `role_menus` / `users` → 隔离库验证（含重复执行）→ 维护窗口执行 → 配套发布前后端 → 管理员重新登录。补丁幂等；每次执行递增 admin 角色用户 `token_version`。
+
+回滚：提交前 `ROLLBACK`；提交后先回退配套代码，再按备份与新增 ID 定向移除节点与授权，不回降 `token_version`。诊断接口的移除不改变任何实际授权裁决。
+
 ## 2026-11-04 账号安全闭环（第一批）
 
 `20261104-account-security.sql` 为账号安全第一批补结构与管理权限：`users` 新增 `must_change_password`（默认 0，存量用户行为不变）与 `temporary_password_expires_at`（NULL=非临时）；新建 `login_attempt_counters` 登录限流计数表（主键桶键支持原子额度预占，`updated_at` 索引支持有界清理）；「用户管理」页下补 `users:reset-password`、`users:revoke-sessions` 两个按钮节点并仅授予 admin。对应端点由后续任务实现后发布，补丁不提前开放任何接口。新库由 SeedService 初始化（admin 初始密码同时标记待改密）；开发库列与表由 synchronize 自动建。

@@ -9,7 +9,7 @@ suite('管理权限补丁：隔离 MySQL', () => {
   let created = false;
   const database = process.env.TEST_PERMISSION_DATABASE!;
   // 权限节点补丁按文件名顺序执行；清单以 MANAGEMENT_PERMISSION_CODES 为准交叉核对。
-  const patches = ['20261031-management-permissions.sql', '20261104-account-security.sql']
+  const patches = ['20261031-management-permissions.sql', '20261104-account-security.sql', '20261104-permission-explain.sql']
     .map((file) => readFileSync(resolve('..', 'docs/sql', file), 'utf8'));
   beforeAll(async () => {
     const host = process.env.DB_HOST || 'localhost';
@@ -54,9 +54,9 @@ suite('管理权限补丁：隔离 MySQL', () => {
     const [grants] = await connection.query('SELECT role_id FROM role_menus');
     expect(grants).toHaveLength(MANAGEMENT_PERMISSION_CODES.length);
     expect((grants as any[]).every(row => row.role_id === 1)).toBe(true);
-    // 两份补丁各执行两次：admin 用户每次执行各递增一次版本（1 + 2×2）；普通用户不变。
+    // 三份补丁各执行两次：admin 用户每次执行各递增一次版本（1 + 2×3）；普通用户不变。
     const [users] = await connection.query('SELECT id, token_version FROM users ORDER BY id');
-    expect(users).toEqual([{ id: 1, token_version: 5 }, { id: 2, token_version: 1 }, { id: 3, token_version: 5 }]);
+    expect(users).toEqual([{ id: 1, token_version: 7 }, { id: 2, token_version: 1 }, { id: 3, token_version: 7 }]);
   });
 
   it('保留已有停用、软删除权限与普通角色自定义授权，不覆盖或复活', async () => {
@@ -81,9 +81,10 @@ suite('管理权限补丁：隔离 MySQL', () => {
   it('启用前回滚演练：按补丁尾部说明逆向移除节点/授权与结构，恢复补丁前形态', async () => {
     await connection.query(patches.join('\n'));
     // 逆向一：按本次新增权限码定向移除 role_menus / menus（不按路径批量删，不降 token_version）
-    await connection.query(`DELETE FROM role_menus WHERE menu_id IN (SELECT id FROM menus WHERE permission IN ('users:reset-password','users:revoke-sessions'));
-      DELETE FROM menus WHERE permission IN ('users:reset-password','users:revoke-sessions');
-      DROP TEMPORARY TABLE IF EXISTS account_security_permissions_20261104;`);
+    await connection.query(`DELETE FROM role_menus WHERE menu_id IN (SELECT id FROM menus WHERE permission IN ('users:reset-password','users:revoke-sessions','users:permission-explain'));
+      DELETE FROM menus WHERE permission IN ('users:reset-password','users:revoke-sessions','users:permission-explain');
+      DROP TEMPORARY TABLE IF EXISTS account_security_permissions_20261104;
+      DROP TEMPORARY TABLE IF EXISTS permission_explain_20261104;`);
     // 逆向二：删除计数表与 users 两列（未启用路径：配套代码未发布）
     await connection.query('DROP TABLE IF EXISTS login_attempt_counters');
     await connection.query('ALTER TABLE users DROP COLUMN must_change_password, DROP COLUMN temporary_password_expires_at');

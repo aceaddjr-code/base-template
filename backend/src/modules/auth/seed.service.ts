@@ -13,18 +13,18 @@ import { TEMPORARY_PASSWORD_TTL_HOURS } from './account-security.contracts';
 
 /**
  * 管理页操作权限声明（docs/管理功能权限码.md）：新库种子、HTTP 边界测试与升级补丁
- * （docs/sql/20261031-management-permissions.sql、20261104-account-security.sql）共用同一
- * 清单；新增管理权限时四处同步。
+ * （docs/sql/20261031-management-permissions.sql、20261104-account-security.sql、
+ * 20261104-permission-explain.sql）共用同一清单；新增管理权限时四处同步。
  */
 export const MANAGEMENT_ACTION_SPEC: Record<string, { prefix: string; actions: Array<[string, string]> }> = {
   announcements: { prefix: 'announcements', actions: [['view', '查看'], ['create', '新增'], ['update', '编辑'], ['publish', '发布'], ['withdraw', '撤回'], ['delete', '删除']] },
   dict: { prefix: 'dicts', actions: [['view', '查看'], ['create', '新增'], ['update', '编辑'], ['delete', '删除']] },
   logs: { prefix: 'system-logs', actions: [['view', '查看']] },
   attachments: { prefix: 'attachments', actions: [['view', '查看'], ['upload', '上传'], ['download', '下载'], ['delete', '删除'], ['cleanup', '回收已删除附件文件']] },
-  users: { prefix: 'users', actions: [['reset-password', '重置密码'], ['revoke-sessions', '退出全部登录']] },
+  users: { prefix: 'users', actions: [['reset-password', '重置密码'], ['revoke-sessions', '退出全部登录'], ['permission-explain', '权限效果']] },
 };
 
-/** 全部管理操作权限码（18 项）；测试用它交叉核对种子与补丁不漏项 */
+/** 全部管理操作权限码（19 项）；测试用它交叉核对种子与补丁不漏项 */
 export const MANAGEMENT_PERMISSION_CODES: string[] = Object.values(MANAGEMENT_ACTION_SPEC)
   .flatMap(({ prefix, actions }) => actions.map(([action]) => `${prefix}:${action}`));
 

@@ -103,9 +103,10 @@ describe('管理权限 HTTP 边界（真实控制器、角色守卫与权限守�
   const send = (method: string, path: string) => (request(app.getHttpServer()) as any)[method](path).send({});
 
   /** 账号安全第一批：users 页动作保留 UserController 类级 admin 边界（规格 3.4），
-   *  不能按普通「精确授权即可用」形态进 cases，用专用用例验证。 */
+   *  不能按普通「精确授权即可用」形态进 cases，用专用用例验证。
+   *  第二批 permission-explain 端点由任务 02 实现，届时移出豁免。 */
   const dedicatedAdminOnlyCodes = new Set(['users:reset-password', 'users:revoke-sessions']);
-  const pendingEndpointCodes = new Set<string>();
+  const pendingEndpointCodes = new Set(['users:permission-explain']);
 
   it('用例覆盖种子声明的全部管理权限码，无遗漏也无拼写漂移', () => {
     const caseCodes = new Set<string>(cases.map(([, , code]) => code as string));
