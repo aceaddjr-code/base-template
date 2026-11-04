@@ -15,15 +15,18 @@ import { SysDictType } from '../system/entities/sys-dict-type.entity';
 import { SysDictItem } from '../system/entities/sys-dict-item.entity';
 import { LoginAttemptCounter } from './login-attempt-counter.entity';
 import { LoginRateLimitService } from './login-rate-limit.service';
+import { PermissionExplanationService } from './permission-explanation.service';
+import { ExampleItem } from '../example/example-item.entity';
+import { forwardRef } from '@nestjs/common';
 
 @Module({
   imports: [
     PassportModule,
-    UserModule,
-    TypeOrmModule.forFeature([User, Role, Menu, Department, UserRole, SysDictType, SysDictItem, LoginAttemptCounter]),
+    forwardRef(() => UserModule),
+    TypeOrmModule.forFeature([User, Role, Menu, Department, UserRole, SysDictType, SysDictItem, LoginAttemptCounter, ExampleItem]),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, SeedService, LoginRateLimitService],
-  exports: [AuthService],
+  providers: [AuthService, JwtStrategy, SeedService, LoginRateLimitService, PermissionExplanationService],
+  exports: [AuthService, PermissionExplanationService],
 })
 export class AuthModule {}

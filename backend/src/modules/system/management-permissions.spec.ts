@@ -22,6 +22,7 @@ import { ExampleService } from '../example/example.service';
 import { UserController } from '../user/user.controller';
 import { UserService } from '../user/user.service';
 import { UserDataScopeService } from '../user/user-data-scope.service';
+import { PermissionExplanationService } from '../auth/permission-explanation.service';
 
 describe('管理权限 HTTP 边界（真实控制器、角色守卫与权限守卫）', () => {
   let app: INestApplication;
@@ -45,6 +46,7 @@ describe('管理权限 HTTP 边界（真实控制器、角色守卫与权限守�
     resetPassword: jest.fn(async () => ({ temporaryPassword: 'generated-once', expiresAt: '2026-11-05T00:00:00.000Z' })),
     revokeSessions: jest.fn(async () => ({ message: '已退出全部登录，该账号可重新登录' })),
   };
+  const permissionExplain = { explain: jest.fn(async () => ({ targetUserId: 5 })) };
   const upload = jest.fn((context, next) => {
     context.switchToHttp().getRequest().file = { filename: 'fixture.pdf' };
     return next.handle();
@@ -60,6 +62,7 @@ describe('管理权限 HTTP 边界（真实控制器、角色守卫与权限守�
         { provide: AuthService, useValue: { getUserAccessCodes: async () => codes } },
         { provide: UserService, useValue: user },
         { provide: UserDataScopeService, useValue: { listScopeForms: jest.fn(), getPanelRows: jest.fn() } },
+        { provide: PermissionExplanationService, useValue: permissionExplain },
         { provide: APP_GUARD, useClass: RolesGuard }, { provide: APP_GUARD, useClass: PermissionGuard },
       ],
     }).overrideInterceptor(AttachmentUploadInterceptor).useValue({ intercept: upload }).compile();
@@ -102,11 +105,10 @@ describe('管理权限 HTTP 边界（真实控制器、角色守卫与权限守�
   ] as const;
   const send = (method: string, path: string) => (request(app.getHttpServer()) as any)[method](path).send({});
 
-  /** 账号安全第一批：users 页动作保留 UserController 类级 admin 边界（规格 3.4），
-   *  不能按普通「精确授权即可用」形态进 cases，用专用用例验证。
-   *  第二批 permission-explain 端点由任务 02 实现，届时移出豁免。 */
-  const dedicatedAdminOnlyCodes = new Set(['users:reset-password', 'users:revoke-sessions']);
-  const pendingEndpointCodes = new Set(['users:permission-explain']);
+  /** 账号安全第一批＋第二批：users 页动作保留 UserController 类级 admin 边界，
+   *  不能按普通「精确授权即可用」形态进 cases，用专用用例验证。 */
+  const dedicatedAdminOnlyCodes = new Set(['users:reset-password', 'users:revoke-sessions', 'users:permission-explain']);
+  const pendingEndpointCodes = new Set<string>();
 
   it('用例覆盖种子声明的全部管理权限码，无遗漏也无拼写漂移', () => {
     const caseCodes = new Set<string>(cases.map(([, , code]) => code as string));
@@ -119,12 +121,13 @@ describe('管理权限 HTTP 边界（真实控制器、角色守卫与权限守�
   it.each([
     ['post', '/users/5/reset-password', 'users:reset-password', user.resetPassword],
     ['post', '/users/5/revoke-sessions', 'users:revoke-sessions', user.revokeSessions],
+    ['get', '/users/5/permission-explanation?scopeKey=example-items', 'users:permission-explain', permissionExplain.explain],
   ])('%s %s：admin 系统例外可用；普通角色即使持有权限码也被类级 admin 边界拒绝', async (method, path, _code, handler) => {
-    codes = ['users:reset-password', 'users:revoke-sessions'];
+    codes = ['users:reset-password', 'users:revoke-sessions', 'users:permission-explain'];
     await send(method, path).expect(403);
     expect(handler).not.toHaveBeenCalled();
     role = 'admin';
-    await send(method, path).expect(201);
+    await send(method, path).expect(method === 'post' ? 201 : 200);
     expect(handler).toHaveBeenCalledTimes(1);
   });
 

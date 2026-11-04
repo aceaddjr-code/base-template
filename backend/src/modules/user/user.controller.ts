@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Post,
@@ -18,6 +19,8 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { SkipRequestAudit } from '../../common/decorators/skip-request-audit.decorator';
+import { PermissionExplanationService } from '../auth/permission-explanation.service';
+import { SCOPE_FORM_REGISTRY } from './scope-form.registry';
 import { safeParseInt } from '../../common/utils/service-helpers';
 import { dateRangeBounds } from '../../common/utils/date-range';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -30,6 +33,7 @@ export class UserController {
   constructor(
     private readonly userService: UserService,
     private readonly userDataScopeService: UserDataScopeService,
+    private readonly permissionExplain: PermissionExplanationService,
   ) {}
 
   /**
@@ -111,6 +115,31 @@ export class UserController {
     @Req() req: Request,
   ) {
     return this.userService.revokeSessions(parseInt(id, 10), caller, { ip: req.ip });
+  }
+
+  /**
+   * 权限效果解释（第二批）：按目标当前配置推演重新登录后的效果。
+   * 只读诊断：不签发目标 Token、不改 tokenVersion；审计只记目标/表单/是否查询记录。
+   */
+  @SkipRequestAudit()
+  @RequirePermission('users:permission-explain')
+  @Get(':id/permission-explanation')
+  async explainPermissions(
+    @CurrentUser() caller: JwtPayload,
+    @Param('id') id: string,
+    @Query('scopeKey') scopeKey: string,
+    @Query('recordId') recordId: string | undefined,
+    @Req() req: Request,
+  ) {
+    if (!scopeKey || !SCOPE_FORM_REGISTRY.some((item) => item.scopeKey === scopeKey)) {
+      throw new BadRequestException('未知业务表单，请从已注册表单中选择');
+    }
+    let record: number | null = null;
+    if (recordId !== undefined && recordId !== '') {
+      record = safeParseInt(recordId) ?? NaN;
+      if (!Number.isSafeInteger(record) || record <= 0) throw new BadRequestException('记录 ID 必须是正整数');
+    }
+    return this.permissionExplain.explain(parseInt(id, 10), scopeKey, record, { sub: caller.sub, username: caller.username }, { ip: req.ip });
   }
 
   /** 编辑用户 */
