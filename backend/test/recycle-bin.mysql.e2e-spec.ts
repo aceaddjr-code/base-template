@@ -5,15 +5,25 @@ import { createConnection } from 'mysql2/promise';
 import { mkdtempSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Test } from '@nestjs/testing';
+import { APP_GUARD } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import request from 'supertest';
 import { ExampleItem } from '../src/modules/example/example-item.entity';
 import { ExampleRecycle, ExampleReservedNumber } from '../src/modules/example/example-recycle.entity';
 import { ExampleEvent, ExampleChange } from '../src/modules/example/example-event.entity';
 import { ExampleService } from '../src/modules/example/example.service';
 import { ExampleRecycleService } from '../src/modules/example/example-recycle.service';
+import { ExampleRecycleController } from '../src/modules/example/example-recycle.controller';
+import { AuthService } from '../src/modules/auth/auth.service';
 import { Attachment } from '../src/modules/attachment/attachment.entity';
 import { AttachmentService } from '../src/modules/attachment/attachment.service';
 import { AttachmentRecycle } from '../src/modules/attachment/attachment-recycle.entity';
 import { AttachmentRecycleService } from '../src/modules/example/attachment-recycle.service';
+import { PermissionGuard } from '../src/modules/auth/guards/permission.guard';
+import { CsrfGuard } from '../src/common/guards/csrf.guard';
+import { AllExceptionsFilter } from '../src/common/filters/http-exception.filter';
+import { configureApplication } from '../src/app.setup';
 import { User } from '../src/modules/user/user.entity';
 import { Role } from '../src/modules/role/role.entity';
 import { Menu } from '../src/modules/menu/menu.entity';
@@ -26,6 +36,7 @@ suite('回收站隔离 MySQL 生命周期', () => {
   let db: DataSource, connection: Awaited<ReturnType<typeof createConnection>>, created = false;
   let docs: ExampleService, recycle: ExampleRecycleService, files: AttachmentService;
   let recycledFiles: AttachmentRecycleService;
+  let httpApp: NestExpressApplication;
   const root = mkdtempSync(join(tmpdir(), 'recycle-test-'));
   const user: any = { sub: 7, username: 'tester', roleCode: 'user' };
   let scopes: any[] = [];
@@ -51,8 +62,24 @@ suite('回收站隔离 MySQL 生命周期', () => {
     docs = new ExampleService(db.getRepository(ExampleItem), undefined, db.getRepository(Attachment), files);
     recycle = new ExampleRecycleService(db, files, { loadForSession: async () => scopes } as any);
     recycledFiles = new AttachmentRecycleService(db, files, { loadForSession: async () => scopes } as any);
+    // E1：HTTP 层挂真实控制器与守卫链（CsrfGuard + PermissionGuard + 统一异常过滤器），身份由中间件注入（JWT 守卫不在本验证范围）。
+    const module = await Test.createTestingModule({
+      controllers: [ExampleRecycleController],
+      providers: [
+        { provide: ExampleRecycleService, useValue: recycle },
+        { provide: AttachmentRecycleService, useValue: recycledFiles },
+        { provide: AuthService, useValue: { getUserAccessCodes: async () => [] } },
+        { provide: APP_GUARD, useClass: CsrfGuard },
+        { provide: APP_GUARD, useClass: PermissionGuard },
+      ],
+    }).compile();
+    httpApp = module.createNestApplication<NestExpressApplication>({ bodyParser: false });
+    httpApp.use((req: any, _res: any, next: () => void) => { req.user = user; next(); });
+    configureApplication(httpApp, new ConfigService({ ATTACHMENT_PRIVATE_DIR: root }));
+    await httpApp.init();
   }, 30000);
   afterAll(async () => {
+    if (httpApp) await httpApp.close();
     if (db?.isInitialized) await db.destroy();
     if (created) await connection.query(`DROP DATABASE \`${database}\``);
     await connection?.end();
@@ -114,6 +141,27 @@ suite('回收站隔离 MySQL 生命周期', () => {
     await expect(recycle.detail(item.id, user)).rejects.toThrow('单据不存在');
     await expect(recycle.restore(item.id, user)).rejects.toThrow('单据不存在');
     await expect(recycle.purge(item.id, user)).rejects.toThrow('单据不存在');
+  });
+  it('E1：范围外已删单据的 HTTP 恢复请求返回 404，不出错也不泄露存在性', async () => {
+    const deptB = await db.getRepository(Department).save({ name: 'B部门', code: 'recycle-dept-b', status: 1 });
+    const ownerB = await db.getRepository(User).save({ username: 'owner-b', password: 'unused', deptId: deptB.id });
+    const outside = await db.getRepository(ExampleItem).save({ title: '范围外已删单据', ownerId: ownerB.id });
+    await docs.remove(outside.id, { sub: 7, roles: ['admin'] });
+    // 当前用户范围限定在另一个部门（不含 deptB），对范围外单据发 HTTP 恢复请求。
+    scopes = [{ scopeKey: 'example-items', scopeType: 'by_depts', targets: [0], viewOthers: 1, editOthers: 1, deleteOthers: 1 }];
+    const res = await request(httpApp.getHttpServer())
+      .post('/api/v1/recycle-bin/batch')
+      .set('Content-Type', 'application/json')
+      .send({ ids: [outside.id], action: 'restore' });
+    // 批量端点为逐条结果语义（HTTP 201），范围外条目必须失败且只给 404 语义文案，不泄露单据细节。
+    expect(res.status).toBe(201);
+    expect(res.body.data[0]).toMatchObject({ id: outside.id, success: false, reason: '单据不存在或不在当前操作范围内' });
+    // 单据仍在回收站（未被越权恢复），正文未动。
+    expect(await db.getRepository(ExampleRecycle).findOneBy({ itemId: outside.id })).not.toBeNull();
+    expect(await db.getRepository(ExampleItem).findOne({ where: { id: outside.id }, withDeleted: true })).not.toBeNull();
+    // 同请求的 detail 直接 ID 访问同样 404。
+    const detail = await request(httpApp.getHttpServer()).get(`/api/v1/recycle-bin/${outside.id}`);
+    expect(detail.status).toBe(404);
   });
   it('并发恢复只执行一次；彻底删除磁盘失败后禁止恢复并允许重试', async () => {
     const { item } = await fixture(); await docs.remove(item.id, user);
