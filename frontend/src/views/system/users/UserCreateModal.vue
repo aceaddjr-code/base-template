@@ -33,13 +33,6 @@
             <p v-if="createErrors.displayName" :id="createFeedback.errorId('displayName')" class="field-error">{{ createErrors.displayName }}</p></a-form-item>
         </a-col>
         <a-col :span="24">
-          <a-form-item label="初始密码" required data-form-field="password" :validate-status="createErrors.password ? 'error' : undefined">
-            <a-input-password v-model:value="createForm.password" :disabled="createLoading" aria-label="初始密码" v-bind="createFeedback.attrs('password')" placeholder="设置登录密码，至少 3 位" :maxlength="72">
-              <template #prefix><LockOutlined class="prefix-icon" /></template>
-            </a-input-password>
-            <p v-if="createErrors.password" :id="createFeedback.errorId('password')" class="field-error">{{ createErrors.password }}</p></a-form-item>
-        </a-col>
-        <a-col :span="24">
           <a-form-item label="邮箱" data-form-field="email" :validate-status="createErrors.email ? 'error' : undefined">
             <a-input v-model:value="createForm.email" :disabled="createLoading" aria-label="邮箱" v-bind="createFeedback.attrs('email')" placeholder="选填">
               <template #prefix><MailOutlined class="prefix-icon" /></template>
@@ -100,45 +93,42 @@
 
 <script setup lang="ts">
 import { watch } from 'vue'
-import { message } from 'ant-design-vue'
 import FormFeedback from '@/components/FormFeedback.vue'
 import { useFormModal } from '@/composables/useFormModal'
 import { createUser } from '@/api/user'
 import type { RoleOption } from '@/api/role'
 import type { Department } from '@/api/department'
 import { formatUserOptionLabel as formatLeaderOptionLabel, useUserOptions } from '@/composables/useUserOptions'
-import { IdcardOutlined, LockOutlined, MailOutlined, PhoneOutlined, UserAddOutlined, UserOutlined } from '@ant-design/icons-vue'
+import { IdcardOutlined, MailOutlined, PhoneOutlined, UserAddOutlined, UserOutlined } from '@ant-design/icons-vue'
 
-/** 新增用户弹窗：纵向表单（编辑走 UserDetailDrawer，不经过这里） */
+/** 新增用户弹窗：纵向表单（编辑走 UserDetailDrawer，不经过这里）。
+ *  初始密码由服务端生成，成功后经 success 事件把一次性凭据交给父页面展示。 */
 const props = defineProps<{ open: boolean; depts: Department[]; roles: RoleOption[] }>()
-const emit = defineEmits<{ (e: 'update:open', v: boolean): void; (e: 'success'): void }>()
+const emit = defineEmits<{ (e: 'update:open', v: boolean): void; (e: 'success', credential: { temporaryPassword: string; expiresAt: string }): void }>()
 
 // 直属上级候选复用共享用户候选；「leader」是本页业务叫法
 const { userOptions: leaderOptions, loadUserOptions: loadLeaderOptions } = useUserOptions()
 const createModal = useFormModal<{
-  loginid: string; displayName: string; password: string; email: string; phone: string
+  loginid: string; displayName: string; email: string; phone: string
   roleId: number | undefined; roleIds: number[]; deptId: number | undefined; leaderId: number | undefined
 }>({
-  fields: () => ({ loginid: '登录账号', displayName: '姓名', password: '初始密码', email: '邮箱', phone: '手机号', deptId: '部门', leaderId: '直属上级', roleId: '角色', roleIds: '附加角色' }),
-  defaults: () => ({ loginid: '', displayName: '', password: '', email: '', phone: '', roleId: undefined, roleIds: [], deptId: undefined, leaderId: undefined }),
+  fields: () => ({ loginid: '登录账号', displayName: '姓名', email: '邮箱', phone: '手机号', deptId: '部门', leaderId: '直属上级', roleId: '角色', roleIds: '附加角色' }),
+  defaults: () => ({ loginid: '', displayName: '', email: '', phone: '', roleId: undefined, roleIds: [], deptId: undefined, leaderId: undefined }),
   // 可见性由父页面持有（v-model:open），未保存确认按弹窗实际开合判断
   active: () => props.open,
   validate: form => {
     const errors: Record<string, string> = {}
     if (!form.loginid.trim()) errors.loginid = '请输入登录账号'
     if (!form.displayName.trim()) errors.displayName = '请填写姓名'
-    if (Array.from(form.password).length < 3) errors.password = '请设置至少 3 位的初始密码'
-    else if (new TextEncoder().encode(form.password).length > 72) errors.password = '密码最多 72 字节'
     if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) errors.email = '请输入有效的邮箱地址'
     else if (form.email.length > 100) errors.email = '邮箱不能超过 100 字'
     if (form.phone.length > 20) errors.phone = '手机号不能超过 20 字'
     return errors
   },
   save: async form => {
-    await createUser({
+    const created = await createUser({
       loginid: form.loginid.trim(),
       displayName: form.displayName.trim(),
-      password: form.password,
       email: form.email || undefined,
       phone: form.phone || undefined,
       roleId: form.roleId,
@@ -146,17 +136,16 @@ const createModal = useFormModal<{
       deptId: form.deptId,
       leaderId: form.leaderId ?? undefined,
     }, { errorFeedback: 'form' })
-    message.success('新增成功')
-    emit('success')
+    emit('success', { temporaryPassword: created.temporaryPassword, expiresAt: created.expiresAt })
   },
   onClosed: () => emit('update:open', false),
 })
 const { loading: createLoading, form: createForm, feedback: createFeedback, modalProps, close: closeCreate, submit: handleCreate } = createModal
 const { errors: createErrors, summary: createFeedbackItems, requestId: createRequestId } = createFeedback
 const createFeedbackRoot = createModal.bindRoot
-// 打开时重置表单并拉取直属上级候选；关闭时清空密码与错误反馈
+// 打开时重置表单并拉取直属上级候选；关闭时清空错误反馈
 watch(() => props.open, (open) => {
-  if (!open) { createForm.password = ''; createFeedback.clear(); return }
+  if (!open) { createFeedback.clear(); return }
   createModal.open()
   loadLeaderOptions()
 })

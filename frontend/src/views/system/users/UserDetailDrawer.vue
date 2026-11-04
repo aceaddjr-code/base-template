@@ -9,9 +9,11 @@
     :custom-extra="true"
     @update:open="onRequestClose"
   >
-    <!-- 编辑切换按钮：与 DetailDrawer 内置模式同一位置与形态 -->
+    <!-- 查看态动作区：编辑切换＋账号安全动作（本人目标不显示管理动作） -->
     <template #extra>
       <template v-if="!editing">
+        <a-button v-access="['users:reset-password']" :disabled="actionLoading || !detail || isSelf" @click="confirmResetPassword"><KeyOutlined /> 重置密码</a-button>
+        <a-button v-access="['users:revoke-sessions']" class="mr-2" :disabled="actionLoading || !detail || isSelf" @click="confirmRevokeSessions"><LogoutOutlined /> 退出全部登录</a-button>
         <a-button :disabled="saving || !detail" @click="startEdit"><EditOutlined /> 编辑</a-button>
       </template>
       <template v-else>
@@ -100,13 +102,7 @@
               <span v-if="!extraRoleNames.length">-</span>
             </template>
           </a-descriptions-item>
-          <!-- 重设密码只在编辑态出现：查看态不展示空密码占位 -->
-          <a-descriptions-item v-if="editing" label="重设密码">
-            <div data-form-field="password">
-              <a-input-password v-model:value="form.password" :disabled="saving" aria-label="重设密码" v-bind="feedback.attrs('password')" placeholder="留空保持原密码，修改时至少 3 位" :maxlength="72" />
-              <p v-if="errors.password" :id="feedback.errorId('password')" class="field-error">{{ errors.password }}</p>
-            </div>
-          </a-descriptions-item>
+          <!-- 普通编辑不再提供密码：改密走「重置密码」专用动作 -->
           <a-descriptions-item label="创建时间">
             <span class="detail-text">{{ formatDateTime(detail.createdAt) }}</span>
           </a-descriptions-item>
@@ -117,42 +113,94 @@
       </template>
       <a-empty v-else-if="open" description="详情加载失败或记录不可见" />
     </div>
+
+    <!-- 重置密码产生的一次性临时凭据：关闭后不可再读 -->
+    <OneTimeCredentialModal v-model:open="credentialVisible" :credential="credential" :target-label="targetLabel" />
   </DetailDrawer>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import FormFeedback from '@/components/FormFeedback.vue'
 import { useFormModal } from '@/composables/useFormModal'
 import { formatDateTime } from '@/utils/format'
-import { updateUser, type UserItem } from '@/api/user'
+import { resetUserPassword, revokeUserSessions, updateUser, type TemporaryCredential, type UserItem } from '@/api/user'
 import type { RoleOption } from '@/api/role'
 import type { Department } from '@/api/department'
 import { formatUserOptionLabel as formatLeaderOptionLabel, useUserOptions } from '@/composables/useUserOptions'
-import { EditOutlined } from '@ant-design/icons-vue'
+import { useAppStore } from '@/stores/app'
+import { EditOutlined, KeyOutlined, LogoutOutlined } from '@ant-design/icons-vue'
+import OneTimeCredentialModal from './OneTimeCredentialModal.vue'
 
 /**
  * 用户查看/编辑共用抽屉：字段原地切换，保存/取消后留在查看态。
  * 用户接口没有单条详情端点，数据来自列表行快照；保存成功用 updateUser 响应回填查看态。
- * 附加角色多选与重设密码控件超出 DetailDrawer 内置编辑控件集合，字段区在默认插槽自渲染。
+ * 账号安全动作（重置密码/退出全部登录）按权限码显示，本人目标不显示（本人走自助流程）。
  */
 const props = defineProps<{ open: boolean; record: UserItem | null; startInEdit?: boolean; depts: Department[]; roles: RoleOption[] }>()
 const emit = defineEmits<{ (e: 'update:open', v: boolean): void; (e: 'updated'): void }>()
 
+const appStore = useAppStore()
 const detail = ref<UserItem | null>(null)
+const actionLoading = ref(false)
+const credentialVisible = ref(false)
+const credential = ref<TemporaryCredential | null>(null)
+const targetLabel = computed(() => (detail.value ? `${detail.value.displayName || detail.value.username}` : '该账号'))
+const isSelf = computed(() => !!detail.value && appStore.userInfo?.id === detail.value.id)
 // 直属上级候选复用共享用户候选；「leader」是本页业务叫法
 const { userOptions: leaderOptions, loadUserOptions: loadLeaderOptions } = useUserOptions()
 
+function confirmResetPassword() {
+  const row = detail.value
+  if (!row || actionLoading.value) return
+  Modal.confirm({
+    title: '重置密码',
+    content: `将为「${row.displayName || row.username}」生成新的临时密码：原密码与全部旧登录立即失效，该账号首次登录后必须修改密码。`,
+    okText: '确认重置',
+    okType: 'danger',
+    cancelText: '取消',
+    onOk: async () => {
+      actionLoading.value = true
+      try {
+        const result = await resetUserPassword(row.id)
+        credential.value = result
+        credentialVisible.value = true
+        emit('updated')
+      } catch { /* 拦截器已提示 */ }
+      finally { actionLoading.value = false }
+    },
+  })
+}
+
+function confirmRevokeSessions() {
+  const row = detail.value
+  if (!row || actionLoading.value) return
+  Modal.confirm({
+    title: '退出全部登录',
+    content: `「${row.displayName || row.username}」的全部旧登录将立即失效；密码不变，仍可重新登录。`,
+    okText: '确认退出',
+    cancelText: '取消',
+    onOk: async () => {
+      actionLoading.value = true
+      try {
+        const result = await revokeUserSessions(row.id)
+        message.success(result.message || '已退出全部登录')
+      } catch { /* 拦截器已提示 */ }
+      finally { actionLoading.value = false }
+    },
+  })
+}
+
 interface UserEditForm {
-  displayName: string; email: string; phone: string; password: string
+  displayName: string; email: string; phone: string
   roleId: number | undefined; roleIds: number[]; deptId: number | undefined; leaderId: number | undefined; _origLeaderId: number | undefined
 }
 const editSession = useFormModal<UserEditForm, number>({
-  fields: () => ({ displayName: '姓名', email: '邮箱', phone: '手机号', password: '重设密码', deptId: '部门', leaderId: '直属上级', roleId: '角色', roleIds: '附加角色' }),
-  defaults: () => ({ displayName: '', email: '', phone: '', password: '', roleId: undefined, roleIds: [], deptId: undefined, leaderId: undefined, _origLeaderId: undefined }),
-  validate: form => (form.password && form.password.length < 3 ? { password: '密码至少 3 位' } : {}),
+  fields: () => ({ displayName: '姓名', email: '邮箱', phone: '手机号', deptId: '部门', leaderId: '直属上级', roleId: '角色', roleIds: '附加角色' }),
+  defaults: () => ({ displayName: '', email: '', phone: '', roleId: undefined, roleIds: [], deptId: undefined, leaderId: undefined, _origLeaderId: undefined }),
+  validate: () => ({}),
   save: async (form, userId) => {
     if (!detail.value || userId == null) return
     // 直属上级未变化时不提交该字段，避免误清空服务端汇报关系
@@ -161,7 +209,6 @@ const editSession = useFormModal<UserEditForm, number>({
       email: form.email || undefined,
       phone: form.phone || undefined,
       roleId: form.roleId ?? null,
-      password: form.password || undefined,
       roleIds: form.roleIds,
       displayName: form.displayName || undefined,
       deptId: form.deptId ?? null,
@@ -214,7 +261,6 @@ function startEdit() {
     displayName: row.displayName || '',
     email: row.email || '',
     phone: row.phone || '',
-    password: '',
     roleId: row.role?.id,
     roleIds: (row.roleIds ?? []).filter((x) => x !== row.role?.id),
     deptId: row.deptId ?? undefined,

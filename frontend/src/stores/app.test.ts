@@ -208,6 +208,46 @@ describe('登录会话完整行为', () => {
   })
 })
 
+describe('待改密受限会话', () => {
+  const restrictedProfile: UserInfo = {
+    id: 9, username: 'tempuser', displayName: '临时用户', mustChangePassword: true,
+  }
+
+  it('受限会话不请求业务初始化接口，不带菜单与权限码，标志置位', async () => {
+    auth.getProfile.mockResolvedValue(restrictedProfile)
+    const store = useAppStore()
+    expect(await store.ensureSession()).toBe(true)
+    expect(auth.getAccessCodes).not.toHaveBeenCalled()
+    expect(settingApi.getPublicSettings).not.toHaveBeenCalled()
+    expect(store.mustChangePassword).toBe(true)
+    expect(store.userInfo).toMatchObject({ id: 9, username: 'tempuser' })
+    expect(store.menus).toEqual([])
+    expect(useAccessStore().accessCodes).toEqual([])
+  })
+
+  it('受限登录同样成立：登录后 initialize 直接进入受限态', async () => {
+    auth.login.mockResolvedValue({ user: { ...restrictedProfile } })
+    auth.getProfile.mockResolvedValue(restrictedProfile)
+    const store = useAppStore()
+    await store.signIn({ loginid: 'tempuser', password: 'test-only' })
+    expect(store.mustChangePassword).toBe(true)
+    expect(auth.getAccessCodes).not.toHaveBeenCalled()
+  })
+
+  it('改密完成（clearAuth）后标志复位，可重新完整初始化', async () => {
+    auth.getProfile.mockResolvedValueOnce(restrictedProfile).mockResolvedValueOnce(profile())
+    const store = useAppStore()
+    await store.ensureSession()
+    expect(store.mustChangePassword).toBe(true)
+    store.clearAuth()
+    expect(store.mustChangePassword).toBe(false)
+    expect(await store.ensureSession()).toBe(true)
+    expect(store.mustChangePassword).toBe(false)
+    expect(auth.getAccessCodes).toHaveBeenCalledTimes(1)
+    expect(store.menus).toEqual(profile().menus)
+  })
+})
+
 describe('公开系统参数', () => {
   it('初始化后加载公共参数，品牌名与帮助联系方式跟随', async () => {
     settingApi.getPublicSettings.mockResolvedValue({ 'site.name': '供应链平台', 'help.contact': 'support@example.com' })

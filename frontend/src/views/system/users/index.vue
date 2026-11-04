@@ -89,9 +89,11 @@
     </template>
   </Page>
 
-  <UserCreateModal v-model:open="createVisible" :depts="allDepts" :roles="allRoles" @success="onUserMutated" />
+  <UserCreateModal v-model:open="createVisible" :depts="allDepts" :roles="allRoles" @success="onUserCreated" />
   <UserDetailDrawer v-model:open="detailOpen" :record="detailRecord" :start-in-edit="detailEditRequested" :depts="allDepts" :roles="allRoles" @updated="onUserMutated" />
   <ScopeMatrixModal v-model:open="scopeVisible" :target="scopeTarget" />
+  <!-- 一次性临时凭据：新增/重置共用，明文仅此处展示，不落任何持久化 -->
+  <OneTimeCredentialModal v-model:open="credentialVisible" :credential="credential" :target-label="credentialTargetLabel" />
 </template>
 
 <script setup lang="ts">
@@ -106,6 +108,7 @@ import OrgTreePanel from './OrgTreePanel.vue'
 import UserCreateModal from './UserCreateModal.vue'
 import UserDetailDrawer from './UserDetailDrawer.vue'
 import ScopeMatrixModal from './ScopeMatrixModal.vue'
+import OneTimeCredentialModal from './OneTimeCredentialModal.vue'
 import { formatDate, withEmptyDash } from '@/utils/format'
 import { filterDatePresets } from '@/utils/filter-dates'
 import { deleteUser, getUsers, toggleUserStatus, type UserItem } from '@/api/user'
@@ -150,6 +153,22 @@ function reloadDepts(withList: boolean) {
 function onUserMutated() {
   void fetchUsers()
   orgPanelRef.value?.reload()
+}
+
+// ============ 一次性临时凭据展示（新增/重置共用） ============
+const credentialVisible = ref(false)
+const credential = ref<{ temporaryPassword: string; expiresAt: string } | null>(null)
+const credentialTargetLabel = ref('')
+function showCredential(target: { temporaryPassword: string; expiresAt: string }, label: string) {
+  credential.value = target
+  credentialTargetLabel.value = label
+  credentialVisible.value = true
+}
+
+/** 新增成功：刷新列表并一次性展示临时密码 */
+function onUserCreated(credentialPayload: { temporaryPassword: string; expiresAt: string }) {
+  onUserMutated()
+  showCredential(credentialPayload, '新账号')
 }
 
 // ============ 列表查询（筛选/分页） ============

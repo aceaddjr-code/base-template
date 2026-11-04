@@ -31,6 +31,8 @@ const routes: RouteRecordRaw[] = [
   { path: '/announcements', component: () => import('@/views/announcements/index.vue'), meta: { title: '历史公告', searchAliases: ['公告'], requiresAuth: true } },
   { path: '/help', component: () => import('@/views/help/index.vue'), meta: { title: '帮助中心', requiresAuth: true } },
   { path: '/login', component: () => import('@/views/login/index.vue'), meta: { title: '登录' } },
+  // 待改密受限会话专用页：独立于业务布局，改密完成或退出后回到登录页
+  { path: '/change-password', component: () => import('@/views/change-password/index.vue'), meta: { title: '修改初始密码', requiresAuth: true } },
   { path: '/:pathMatch(.*)*', component: () => import('@/views/error/404.vue'), meta: { title: '404' } },
 ]
 
@@ -48,8 +50,15 @@ router.beforeEach(async (to) => {
   // 标题跟随系统参数 site.name（未登录/未加载时回退构建配置）
   document.title = `${String(to.meta.title || '')} - ${useAppStore().siteName}`
   if (!to.matched.some(record => record.meta.requiresAuth)) return true
-  if (!(await useAppStore().ensureSession())) return { path: '/login', query: { redirect: to.fullPath === '/' ? undefined : to.fullPath } }
-  if (!collectMenuPaths(useAppStore().menus).has(to.path)) {
+  const appStore = useAppStore()
+  if (!(await appStore.ensureSession())) return { path: '/login', query: { redirect: to.fullPath === '/' ? undefined : to.fullPath } }
+  // 待改密受限会话：任何页面（含手输 URL/刷新）都强制进入改密页；已改密完成则不允许停留该页
+  if (appStore.mustChangePassword) {
+    if (to.path !== '/change-password') return { path: '/change-password' }
+    return true
+  }
+  if (to.path === '/change-password') return { path: '/home' }
+  if (!collectMenuPaths(appStore.menus).has(to.path)) {
     message.warning('无权访问该页面')
     return '/404'
   }

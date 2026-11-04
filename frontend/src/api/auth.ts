@@ -13,14 +13,17 @@ export interface UserInfo {
   id: number
   username: string
   displayName: string
-  email: string | null
-  phone: string | null
+  email?: string | null
+  phone?: string | null
   avatar?: string | null
-  deptId: number | null
+  deptId?: number | null
   deptName?: string | null
-  role: { id: number; name: string; code: string } | null
+  role?: { id: number; name: string; code: string } | null
   roles?: string[]
-  menus: MenuItem[]
+  /** 受限会话（待改密）时不返回菜单与角色详情 */
+  menus?: MenuItem[]
+  /** 数据库读回的待改密标志：登录/profile 受限形态为 true */
+  mustChangePassword?: boolean
 }
 
 export interface MenuItem {

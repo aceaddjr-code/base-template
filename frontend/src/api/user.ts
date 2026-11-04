@@ -50,14 +50,31 @@ export function getUsers(params: {
   return request.get('/users', { params, signal })
 }
 
-/** 新增本地账号 */
-export function createUser(data: { loginid: string; password: string; displayName: string; email?: string; phone?: string; roleId?: number | null; roleIds?: number[]; deptId?: number | null; leaderId?: number | null }, options?: FormRequestOptions): Promise<UserItem> {
+/** 一次性临时凭据：仅创建/重置成功响应返回一次，不落任何持久化 */
+export interface TemporaryCredential {
+  temporaryPassword: string
+  /** ISO UTC 到期时间 */
+  expiresAt: string
+}
+
+/** 新增本地账号：临时密码由服务端生成，随响应一次性返回 */
+export function createUser(data: { loginid: string; displayName: string; email?: string; phone?: string; roleId?: number | null; roleIds?: number[]; deptId?: number | null; leaderId?: number | null }, options?: FormRequestOptions): Promise<UserItem & TemporaryCredential> {
   return request.post('/users', data, options)
 }
 
-/** 编辑用户 */
-export function updateUser(id: number, data: { password?: string; email?: string; phone?: string; roleId?: number | null; roleIds?: number[]; status?: number; displayName?: string; deptId?: number | null; leaderId?: number | null }, options?: FormRequestOptions): Promise<UserItem> {
+/** 编辑用户（密码不再经普通编辑修改，使用重置动作） */
+export function updateUser(id: number, data: { email?: string; phone?: string; roleId?: number | null; roleIds?: number[]; status?: number; displayName?: string; deptId?: number | null; leaderId?: number | null }, options?: FormRequestOptions): Promise<UserItem> {
   return request.put(`/users/${id}`, data, options)
+}
+
+/** 管理员重置密码：生成一次性临时密码并要求目标下次登录改密 */
+export function resetUserPassword(id: number): Promise<TemporaryCredential> {
+  return request.post(`/users/${id}/reset-password`)
+}
+
+/** 退出目标账号全部登录：旧凭据立即失效，可重新登录 */
+export function revokeUserSessions(id: number): Promise<{ message: string }> {
+  return request.post(`/users/${id}/revoke-sessions`)
 }
 
 /** 启用/禁用 */

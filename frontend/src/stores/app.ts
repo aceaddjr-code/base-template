@@ -22,6 +22,8 @@ export const useAppStore = defineStore('app', () => {
   const sidebarCollapsed = ref(false)
   const userInfo = ref<SessionUser | null>(null)
   const menus = ref<MenuItem[]>([])
+  /** 待改密受限会话：不加载菜单/权限码，路由守卫强制进入改密页 */
+  const mustChangePassword = ref(false)
   const access = useAccessStore()
   // 公开系统参数（登录后加载；失败保留默认值，重新登录重试）
   const publicSettings = ref<Record<string, string>>({})
@@ -57,6 +59,7 @@ export const useAppStore = defineStore('app', () => {
     initialization = null
     userInfo.value = null
     menus.value = []
+    mustChangePassword.value = false
     publicSettings.value = {}
     access.clearCodes()
   }
@@ -84,6 +87,16 @@ export const useAppStore = defineStore('app', () => {
       try {
         const profile = await getProfile()
         if (version !== generation) return false
+        // 受限会话（待改密）：先处理标志，不请求业务初始化接口（/auth/codes 等会被门禁 403）。
+        // 会话成立但无菜单无权限码，由路由守卫统一送入改密页。
+        if (profile.mustChangePassword) {
+          applyProfile(profile)
+          menus.value = []
+          access.clearCodes()
+          mustChangePassword.value = true
+          ready = true
+          return true
+        }
         const codes = await getAccessCodes()
         if (version !== generation) return false
         if (expectedId !== undefined && profile.id !== expectedId) throw new Error('登录账号不一致')
@@ -146,5 +159,5 @@ export const useAppStore = defineStore('app', () => {
     return syncProfile(() => updateMyProfile(data))
   }
 
-  return { sidebarCollapsed, userInfo, menus, siteName, helpContact, toggleSidebar, clearAuth, ensureSession, signIn, signOut, refreshProfile, updateProfile, refreshPublicSettings }
+  return { sidebarCollapsed, userInfo, menus, mustChangePassword, siteName, helpContact, toggleSidebar, clearAuth, ensureSession, signIn, signOut, refreshProfile, updateProfile, refreshPublicSettings }
 })

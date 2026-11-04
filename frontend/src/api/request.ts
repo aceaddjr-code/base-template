@@ -67,6 +67,11 @@ request.interceptors.response.use(
       }
 
       const serverMessage = error.response.data?.message
+      // 待改密受限会话访问业务接口：跳改密页（location 防守卫竞态，与 401 同口径），不再弹错
+      if (error.response.status === 403 && error.response.data?.reason === 'PASSWORD_CHANGE_REQUIRED') {
+        if (location.pathname !== '/change-password') location.href = '/change-password'
+        return Promise.reject(error)
+      }
       if (error.config?.errorFeedback !== 'form') message.error(failureText(serverMessage || error.message || '网络错误', requestId))
     } else {
       const cfg = error.config as (typeof error.config & { __retried?: boolean }) | undefined
