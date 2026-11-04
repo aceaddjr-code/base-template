@@ -9,11 +9,12 @@
     :custom-extra="true"
     @update:open="onRequestClose"
   >
-    <!-- 查看态动作区：编辑切换＋账号安全动作（本人目标不给管理入口） -->
+    <!-- 查看态动作区：编辑切换＋账号安全动作（本人目标不给管理入口）＋权限效果诊断 -->
     <template #extra>
       <template v-if="!editing">
         <a-button v-if="!isSelf" v-access="['users:reset-password']" :disabled="actionLoading || !detail" @click="confirmResetPassword"><KeyOutlined /> 重置密码</a-button>
         <a-button v-if="!isSelf" v-access="['users:revoke-sessions']" class="mr-2" :disabled="actionLoading || !detail" @click="confirmRevokeSessions"><LogoutOutlined /> 退出全部登录</a-button>
+        <a-button v-access="['users:permission-explain']" class="mr-2" :disabled="!detail" @click="explainVisible = true"><SafetyCertificateOutlined /> 权限效果</a-button>
         <a-button :disabled="saving || !detail" @click="startEdit"><EditOutlined /> 编辑</a-button>
       </template>
       <template v-else>
@@ -116,6 +117,8 @@
 
     <!-- 重置密码产生的一次性临时凭据：关闭后不可再读 -->
     <OneTimeCredentialModal v-model:open="credentialVisible" :credential="credential" :target-label="targetLabel" />
+    <!-- 权限效果解释（第二批）：按当前配置推演，后端裁决 -->
+    <PermissionExplainModal v-model:open="explainVisible" :target="detail" />
   </DetailDrawer>
 </template>
 
@@ -131,8 +134,9 @@ import type { RoleOption } from '@/api/role'
 import type { Department } from '@/api/department'
 import { formatUserOptionLabel as formatLeaderOptionLabel, useUserOptions } from '@/composables/useUserOptions'
 import { useAppStore } from '@/stores/app'
-import { EditOutlined, KeyOutlined, LogoutOutlined } from '@ant-design/icons-vue'
+import { EditOutlined, KeyOutlined, LogoutOutlined, SafetyCertificateOutlined } from '@ant-design/icons-vue'
 import OneTimeCredentialModal from './OneTimeCredentialModal.vue'
+import PermissionExplainModal from './PermissionExplainModal.vue'
 
 /**
  * 用户查看/编辑共用抽屉：字段原地切换，保存/取消后留在查看态。
@@ -147,6 +151,7 @@ const detail = ref<UserItem | null>(null)
 const actionLoading = ref(false)
 const credentialVisible = ref(false)
 const credential = ref<TemporaryCredential | null>(null)
+const explainVisible = ref(false)
 const targetLabel = computed(() => (detail.value ? `${detail.value.displayName || detail.value.username}` : '该账号'))
 const isSelf = computed(() => !!detail.value && appStore.userInfo?.id === detail.value.id)
 // 直属上级候选复用共享用户候选；「leader」是本页业务叫法

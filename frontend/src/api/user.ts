@@ -120,3 +120,32 @@ export interface ScopeFormMeta {
 export function getScopeForms(): Promise<ScopeFormMeta[]> {
   return request.get('/users/scope-forms')
 }
+
+/** 权限效果解释（第二批）：按目标当前配置推演重新登录后的效果，后端裁决、前端不复算 */
+export interface PermissionExplanation {
+  evaluatedAt: string
+  targetUserId: number
+  tokenVersion: number
+  configSource: { scopeKey: string; scopeFormLabel: string; configured: boolean; fallback: 'self_only' | null }
+  account: { status: 0 | 1; mustChangePassword: boolean }
+  operationPermissions: Array<{
+    action: string
+    permissionCode: string
+    effective: boolean
+    sources: Array<{ roleId: number; roleCode: string; roleName: string; roleEnabled: boolean }>
+    adminException: boolean
+  }>
+  dataScope: {
+    scopeType: string
+    flags: Record<string, number>
+    targetUsers?: Array<{ id: number; label: string }>
+    targetDepts?: Array<{ id: number; label: string }>
+    description: string
+  }
+  recordEvaluation: Array<{ action: string; result: 'allowed' | 'denied' | 'unsupported'; reasonCodes: string[]; readableReason: string }> | null
+  record?: { id: number; docNo: string | null; title: string; ownerId: number | null; ownerLabel: string | null; deleted: boolean } | null
+}
+
+export function explainUserPermissions(id: number, params: { scopeKey: string; recordId?: number }): Promise<PermissionExplanation> {
+  return request.get(`/users/${id}/permission-explanation`, { params })
+}
