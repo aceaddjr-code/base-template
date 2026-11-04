@@ -11,7 +11,7 @@ const chain = (rows: unknown[] = []) => ({
 
 describe('本地认证、菜单和权限缓存', () => {
   let service: AuthService;
-  let users: any, roles: any, menus: any, links: any, userDataScopes: any, jwt: any, loginQuery: any, roleQuery: any;
+  let users: any, roles: any, menus: any, links: any, userDataScopes: any, jwt: any, rateLimit: any, loginQuery: any, roleQuery: any;
   const defaultScope = { scopeKey:'__global__', scopeType:'self', viewOthers:1, editOthers:0, deleteOthers:0, targets:[] };
   const account = { id:1, username:'alice', password:'hash', status:1, roleId:2, tokenVersion:1,
     displayName:'用户甲', deptId:3, role:{ id:2, name:'普通用户', code:'user' } };
@@ -27,7 +27,13 @@ describe('本地认证、菜单和权限缓存', () => {
     links = { createQueryBuilder:jest.fn().mockReturnValue(roleQuery), manager:{ query:jest.fn().mockResolvedValue([]) } };
     userDataScopes = { loadForSession:jest.fn().mockResolvedValue([defaultScope]) };
     jwt = { sign:jest.fn().mockReturnValue('signed-token') };
-    service = new AuthService(jwt,users,roles,menus,links,userDataScopes);
+    rateLimit = {
+      reserveIpBucket: jest.fn().mockResolvedValue({ allowed: true, observedWindow: new Date('2026-11-04T00:00:00Z') }),
+      reserveAccountBucket: jest.fn().mockResolvedValue({ allowed: true, observedWindow: new Date('2026-11-04T00:00:00Z') }),
+      recordAccountFailure: jest.fn().mockResolvedValue(undefined),
+      recordAccountSuccess: jest.fn().mockResolvedValue(undefined),
+    };
+    service = new AuthService(jwt,users,roles,menus,links,userDataScopes,rateLimit);
     (bcrypt.compare as jest.Mock).mockResolvedValue(true);
   });
 
@@ -53,6 +59,55 @@ describe('本地认证、菜单和权限缓存', () => {
   it('停用账号不能登录', async () => {
     loginQuery.getOne.mockResolvedValue({ ...account,status:0 });
     await expect(service.login('alice','password')).rejects.toThrow(ForbiddenException);
+  });
+
+  it('联合限流：先 IP 后账号，预占通过才校验密码，成功后复位账号计数', async () => {
+    await service.login('alice','password','203.0.113.5');
+    expect(rateLimit.reserveIpBucket).toHaveBeenCalledWith('203.0.113.5');
+    expect(rateLimit.reserveAccountBucket).toHaveBeenCalledWith('acct:1', expect.any(Date), { ip:'203.0.113.5' });
+    expect(rateLimit.reserveIpBucket.mock.invocationCallOrder[0]).toBeLessThan(rateLimit.reserveAccountBucket.mock.invocationCallOrder[0]);
+    expect(bcrypt.compare).toHaveBeenCalledWith('password','hash');
+    expect(rateLimit.recordAccountSuccess).toHaveBeenCalledWith('acct:1', expect.any(Date));
+    expect(rateLimit.recordAccountFailure).not.toHaveBeenCalled();
+  });
+
+  it('IP 桶拒绝抛 429 稳定业务码，不查账号不做密码校验', async () => {
+    rateLimit.reserveIpBucket.mockResolvedValueOnce({ allowed:false, rejectedBy:'window', retryAfterSeconds:30 });
+    const error:any = await service.login('alice','password','1.2.3.4').catch(e => e);
+    expect(error.getStatus()).toBe(429);
+    expect(error.getResponse()).toMatchObject({ reason:'LOGIN_RATE_LIMITED', retryAfterSeconds:30 });
+    expect(rateLimit.reserveAccountBucket).not.toHaveBeenCalled();
+    expect(bcrypt.compare).not.toHaveBeenCalled();
+    expect(jwt.sign).not.toHaveBeenCalled();
+  });
+
+  it('账号桶拒绝抛 429，不做密码校验', async () => {
+    rateLimit.reserveAccountBucket.mockResolvedValueOnce({ allowed:false, rejectedBy:'backoff', retryAfterSeconds:300 });
+    const error:any = await service.login('alice','password','1.2.3.4').catch(e => e);
+    expect(error.getStatus()).toBe(429);
+    expect(bcrypt.compare).not.toHaveBeenCalled();
+    expect(jwt.sign).not.toHaveBeenCalled();
+  });
+
+  it('未知账号用不可逆键计数并做等成本校验，随后记一次失败', async () => {
+    loginQuery.getOne.mockResolvedValue(null);
+    await expect(service.login('ghost','whatever','1.2.3.4')).rejects.toThrow('账号或密码错误');
+    expect(rateLimit.reserveAccountBucket).toHaveBeenCalledWith(expect.stringMatching(/^acct:pending:[0-9a-f]{64}$/), expect.any(Date), { ip:'1.2.3.4' });
+    expect(bcrypt.compare).toHaveBeenCalledTimes(1);
+    expect(rateLimit.recordAccountFailure).toHaveBeenCalledTimes(1);
+    expect(rateLimit.recordAccountSuccess).not.toHaveBeenCalled();
+  });
+
+  it('错误密码记一次失败；停用账号凭据正确时不计失败也不清计数', async () => {
+    (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+    await expect(service.login('alice','wrong','1.2.3.4')).rejects.toThrow('账号或密码错误');
+    expect(rateLimit.recordAccountFailure).toHaveBeenCalledWith('acct:1');
+    rateLimit.recordAccountFailure.mockClear();
+    (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+    loginQuery.getOne.mockResolvedValue({ ...account,status:0 });
+    await expect(service.login('alice','password','1.2.3.4')).rejects.toThrow(ForbiddenException);
+    expect(rateLimit.recordAccountFailure).not.toHaveBeenCalled();
+    expect(rateLimit.recordAccountSuccess).not.toHaveBeenCalled();
   });
 
   it('用户的表单范围和目标随登录签发', async () => {

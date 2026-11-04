@@ -23,7 +23,7 @@ export class AuthController {
     private readonly jwtService: JwtService,
   ) {}
 
-  /** 登录 — JWT 写入 httpOnly Cookie（每 IP 每分钟 20 次） */
+  /** 登录 — JWT 写入 httpOnly Cookie（外层每 IP 每分钟 20 次；账号/IP 联合限流见服务层） */
   @Public()
   @Throttle({ default: { ttl: 60000, limit: 20 } })
   @Post('login')
@@ -32,7 +32,7 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
     @Req() req: Request,
   ) {
-    const result = await this.authService.login(dto.loginid, dto.password);
+    const result = await this.authService.login(dto.loginid, dto.password, req.ip);
     // httpOnly Cookie：JS 不可读，防 XSS 窃取
     res.cookie('access_token', result.token, {
       httpOnly: true,

@@ -28,6 +28,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     let message: string;
     let fieldErrors: FieldError[] | undefined;
     let reason: string | undefined;
+    let retryAfterSeconds: number | undefined;
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -40,10 +41,14 @@ export class AllExceptionsFilter implements ExceptionFilter {
         typeof exceptionResponse === 'object' &&
         exceptionResponse !== null
       ) {
-        // 处理 ValidationPipe 的错误（包含 message 数组）；reason 为结构化冲突原因（如 409 乐观锁），前端按码分派、不匹配文案
-        const resp = exceptionResponse as { message?: string | string[]; fieldErrors?: unknown; reason?: unknown };
+        // 处理 ValidationPipe 的错误（包含 message 数组）；reason 为结构化冲突原因（如 409 乐观锁、
+        // 429 登录限流），前端按码分派、不匹配文案；retryAfterSeconds 随 429 写入 Retry-After 头
+        const resp = exceptionResponse as { message?: string | string[]; fieldErrors?: unknown; reason?: unknown; retryAfterSeconds?: unknown };
         if (status >= 400 && status < 500) fieldErrors = publicFieldErrors(resp.fieldErrors);
         if (typeof resp.reason === 'string' && resp.reason) reason = resp.reason;
+        if (typeof resp.retryAfterSeconds === 'number' && Number.isFinite(resp.retryAfterSeconds) && resp.retryAfterSeconds >= 0) {
+          retryAfterSeconds = Math.ceil(resp.retryAfterSeconds);
+        }
         if (Array.isArray(resp.message)) {
           message = resp.message.join('; ');
         } else {
@@ -62,6 +67,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       );
     }
 
+    if (retryAfterSeconds !== undefined) response.setHeader('Retry-After', String(retryAfterSeconds));
     response.status(status).json({
       code: status,
       message,

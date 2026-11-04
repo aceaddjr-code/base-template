@@ -31,6 +31,11 @@ export function validateEnvironment(input: Record<string, unknown>) {
   integer('PORT', 3010, 1, 65535);
   integer('DB_PORT', 3306, 1, 65535);
   integer('TRUST_PROXY_HOPS', 0, 0, 32);
+  // 登录联合限流阈值（账号安全第一批）：IP 固定窗口与账号固定窗口，白名单校验上下界，不进系统参数页。
+  integer('LOGIN_IP_WINDOW_SECONDS', 60, 10, 3600);
+  integer('LOGIN_IP_MAX', 20, 1, 1000);
+  integer('LOGIN_ACCOUNT_WINDOW_SECONDS', 900, 60, 86400);
+  integer('LOGIN_ACCOUNT_MAX', 10, 1, 1000);
   integer('BACKUP_TIMEOUT_MS', 120000, 1000, 3600000);
   integer('KEEP_DAYS', 30, 0, 36500);
   integer('AUDIT_RETENTION_DAYS', 0, 0, 36500);

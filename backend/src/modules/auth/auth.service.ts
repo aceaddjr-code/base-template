@@ -18,6 +18,14 @@ import { type UserScopeEntry } from '../../common/utils/data-scope';
 import { getUserId } from '../../common/utils/service-helpers';
 import type { JwtPayload } from './jwt.strategy';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { LoginRateLimitService } from './login-rate-limit.service';
+import { accountBucketKey, pendingAccountBucketKey } from './account-security.contracts';
+
+/** 未知账号的等成本校验目标：惰性生成固定占位哈希，避免响应时间泄露账号是否存在。 */
+let dummyCredentialHash: string | null = null;
+function getDummyCredentialHash(): string {
+  return (dummyCredentialHash ??= bcrypt.hashSync('account-security-invalid-credential', 10));
+}
 
 @Injectable()
 export class AuthService {
@@ -34,20 +42,41 @@ export class AuthService {
     @InjectRepository(UserRole)
     private userRoleRepo: Repository<UserRole>,
     private readonly userDataScopeService: UserDataScopeService,
+    private readonly rateLimit: LoginRateLimitService,
   ) {}
 
-  /** 本地账号登录，密码统一使用 bcrypt 验证。 */
-  async login(loginid: string, password: string) {
+  /**
+   * 本地账号登录，密码统一使用 bcrypt 验证。
+   *
+   * 联合限流（规格 3.1）：先 IP（跨账号累计、成功不清除），再账号（昂贵验证前
+   * 原子预占、跨 IP 共用）；数据库故障由限流服务抛 503，不静默放行。账号等价性
+   * 与登录查询同口径：已存在账号按稳定用户 ID 归并（utf8mb4_unicode_ci 大小写/
+   * 重音不敏感），不存在账号用规范化输入的不可逆键并做等成本占位校验。
+   */
+  async login(loginid: string, password: string, clientIp?: string) {
+    if (clientIp) {
+      const ipDecision = await this.rateLimit.reserveIpBucket(clientIp);
+      if (!ipDecision.allowed) throw LoginRateLimitService.rateLimitedError(ipDecision.retryAfterSeconds!);
+    }
     const user = await this.userRepo.createQueryBuilder('user')
       .leftJoinAndSelect('user.role', 'role')
       .addSelect('user.password')
       .where('user.username = :username', { username: loginid })
       .getOne();
-    if (!user?.password || !(await bcrypt.compare(password, user.password))) {
+    const bucketKey = user ? accountBucketKey(user.id) : pendingAccountBucketKey(loginid);
+    const decision = await this.rateLimit.reserveAccountBucket(bucketKey, new Date(), { ip: clientIp });
+    if (!decision.allowed) throw LoginRateLimitService.rateLimitedError(decision.retryAfterSeconds!);
+    const passwordOk = user?.password
+      ? await bcrypt.compare(password, user.password)
+      : (await bcrypt.compare(password, getDummyCredentialHash()), false);
+    if (!passwordOk) {
+      await this.rateLimit.recordAccountFailure(bucketKey);
       throw new UnauthorizedException('账号或密码错误');
     }
-    if (user.status !== 1) throw new ForbiddenException('账号已被禁用');
-    return this.generateToken(user);
+    // 凭据正确但账号停用：不是猜测失败，不计连续失败，也不清成功计数。
+    if (user!.status !== 1) throw new ForbiddenException('账号已被禁用');
+    await this.rateLimit.recordAccountSuccess(bucketKey, decision.observedWindow);
+    return this.generateToken(user!);
   }
 
   async getProfile(user: JwtPayload) {

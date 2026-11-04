@@ -14,6 +14,7 @@ import { Department } from '../department/department.entity';
 import { SysDictType } from '../system/entities/sys-dict-type.entity';
 import { SysDictItem } from '../system/entities/sys-dict-item.entity';
 import { LoginAttemptCounter } from './login-attempt-counter.entity';
+import { LoginRateLimitService } from './login-rate-limit.service';
 
 @Module({
   imports: [
@@ -22,7 +23,7 @@ import { LoginAttemptCounter } from './login-attempt-counter.entity';
     TypeOrmModule.forFeature([User, Role, Menu, Department, UserRole, SysDictType, SysDictItem, LoginAttemptCounter]),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, SeedService],
+  providers: [AuthService, JwtStrategy, SeedService, LoginRateLimitService],
   exports: [AuthService],
 })
 export class AuthModule {}

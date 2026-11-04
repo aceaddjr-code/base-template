@@ -9,12 +9,17 @@ describe('启动配置校验', () => {
     expect(validateEnvironment({ ...valid(), NODE_ENV: 'production' }).API_DOCS_ENABLED).toBe('false');
   });
   it.each([
-    ['PORT', '3010oops'], ['DB_PORT', '0'], ['TRUST_PROXY_HOPS', '-1'], ['COOKIE_SECURE', 'yes'],
+    ['PORT', '3010oops'], ['DB_PORT', '0'], ['TRUST_PROXY_HOPS', '-1'], ['TRUST_PROXY_HOPS', '33'], ['COOKIE_SECURE', 'yes'],
     ['JWT_EXPIRES_IN', '120'], ['CORS_ORIGIN', '*'], ['CORS_ORIGIN', 'http://host/path'],
     ['CORS_ORIGIN', 'http://host,'], ['BODY_LIMIT', '0mb'], ['ADMIN_DEFAULT_PASSWORD', 'ab'],
     ['BACKUP_TIMEOUT_MS', 'NaN'], ['KEEP_DAYS', '-1'], ['BACKUP_DIR', ''], ['API_DOCS_ENABLED', 'on'],
+    ['LOGIN_IP_WINDOW_SECONDS', '9'], ['LOGIN_IP_WINDOW_SECONDS', '3601'], ['LOGIN_IP_MAX', '0'],
+    ['LOGIN_ACCOUNT_WINDOW_SECONDS', '59'], ['LOGIN_ACCOUNT_MAX', '1001'],
   ])('%s 非法值在连库前被拒绝', (key, value) => {
     expect(() => validateEnvironment({ ...valid(), [key]: value })).toThrow(key);
+  });
+  it('登录限流阈值使用默认值并规范化为数字', () => {
+    expect(validateEnvironment(valid())).toMatchObject({ LOGIN_IP_WINDOW_SECONDS: 60, LOGIN_IP_MAX: 20, LOGIN_ACCOUNT_WINDOW_SECONDS: 900, LOGIN_ACCOUNT_MAX: 10 });
   });
   it('拒绝生产同步、示例密钥和缺失数据库身份，不泄露值', () => {
     const bad = { NODE_ENV: 'production', DB_SYNCHRONIZE: 'true', JWT_SECRET: 'private-secret-value', DB_PASSWORD: 'sensitive-db-password' };
