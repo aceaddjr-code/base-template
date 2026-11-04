@@ -205,14 +205,17 @@ export class AuthService {
 
   // ---- 私有方法 ----
 
-  /** 解释入口复用：按用户 ID 构造与登录签发一致的有效身份（角色/附加角色/数据范围）。 */
+  /** 解释入口复用：按用户 ID 构造与登录签发一致的有效身份（角色/附加角色/数据范围）。
+   *  无任何启用角色时按 generateToken 的 roleCode 缺省口径回退 'user'，与运行时权限码解析同源。 */
   async buildEffectiveIdentity(userId: number): Promise<{ roles: string[]; roleIds: number[]; dataScopes: UserScopeEntry[] }> {
     const user = await this.userRepo.findOne({
       where: { id: userId },
       select: { id: true, username: true, roleId: true, deptId: true },
     });
     if (!user) throw new UnauthorizedException('用户不存在');
-    return this.resolveUserPermission(user);
+    const identity = await this.resolveUserPermission(user);
+    if (!identity.roles.length) identity.roles = ['user'];
+    return identity;
   }
 
   private async resolveUserPermission(user: User): Promise<{

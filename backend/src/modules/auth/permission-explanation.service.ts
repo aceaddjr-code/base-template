@@ -57,8 +57,9 @@ export class PermissionExplanationService {
 
     const identity = await this.authService.buildEffectiveIdentity(targetId);
     const isAdmin = identity.roles.includes('admin');
-    // getUserAccessCodes 按目标当前版本解析（账号禁用时为空，与运行时一致）
-    const effectiveCodes = new Set(await this.authService.getUserAccessCodes({ id: targetId }));
+    // getUserAccessCodes 按目标当前版本解析（账号禁用时为空，与运行时一致）；
+    // 携带 roleCode 与 JWT payload 同口径，使无角色用户获得与真实会话一致的缺省回退。
+    const effectiveCodes = new Set(await this.authService.getUserAccessCodes({ id: targetId, roleCode: identity.roles[0] }));
     const sources = await this.loadPermissionSources(targetId, target.roleId);
 
     const entry = identity.dataScopes.find((item: UserScopeEntry) => item.scopeKey === scopeKey) ?? null;
