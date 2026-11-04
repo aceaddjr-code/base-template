@@ -9,11 +9,11 @@
     :custom-extra="true"
     @update:open="onRequestClose"
   >
-    <!-- 查看态动作区：编辑切换＋账号安全动作（本人目标不显示管理动作） -->
+    <!-- 查看态动作区：编辑切换＋账号安全动作（本人目标不给管理入口） -->
     <template #extra>
       <template v-if="!editing">
-        <a-button v-access="['users:reset-password']" :disabled="actionLoading || !detail || isSelf" @click="confirmResetPassword"><KeyOutlined /> 重置密码</a-button>
-        <a-button v-access="['users:revoke-sessions']" class="mr-2" :disabled="actionLoading || !detail || isSelf" @click="confirmRevokeSessions"><LogoutOutlined /> 退出全部登录</a-button>
+        <a-button v-if="!isSelf" v-access="['users:reset-password']" :disabled="actionLoading || !detail" @click="confirmResetPassword"><KeyOutlined /> 重置密码</a-button>
+        <a-button v-if="!isSelf" v-access="['users:revoke-sessions']" class="mr-2" :disabled="actionLoading || !detail" @click="confirmRevokeSessions"><LogoutOutlined /> 退出全部登录</a-button>
         <a-button :disabled="saving || !detail" @click="startEdit"><EditOutlined /> 编辑</a-button>
       </template>
       <template v-else>

@@ -77,4 +77,23 @@ suite('管理权限补丁：隔离 MySQL', () => {
     const [grants] = await connection.query('SELECT menu_id FROM role_menus WHERE role_id = 2');
     expect(grants).toEqual([{ menu_id: 21 }]);
   });
+
+  it('启用前回滚演练：按补丁尾部说明逆向移除节点/授权与结构，恢复补丁前形态', async () => {
+    await connection.query(patches.join('\n'));
+    // 逆向一：按本次新增权限码定向移除 role_menus / menus（不按路径批量删，不降 token_version）
+    await connection.query(`DELETE FROM role_menus WHERE menu_id IN (SELECT id FROM menus WHERE permission IN ('users:reset-password','users:revoke-sessions'));
+      DELETE FROM menus WHERE permission IN ('users:reset-password','users:revoke-sessions');
+      DROP TEMPORARY TABLE IF EXISTS account_security_permissions_20261104;`);
+    // 逆向二：删除计数表与 users 两列（未启用路径：配套代码未发布）
+    await connection.query('DROP TABLE IF EXISTS login_attempt_counters');
+    await connection.query('ALTER TABLE users DROP COLUMN must_change_password, DROP COLUMN temporary_password_expires_at');
+    const [buttons] = await connection.query("SELECT COUNT(*) AS n FROM menus WHERE permission IN ('users:reset-password','users:revoke-sessions')");
+    expect(Number((buttons as any[])[0].n)).toBe(0);
+    const [grants] = await connection.query("SELECT COUNT(*) AS n FROM role_menus rm JOIN menus m ON m.id = rm.menu_id WHERE m.permission LIKE 'users:%'");
+    expect(Number((grants as any[])[0].n)).toBe(0);
+    const [columns] = await connection.query("SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME IN ('must_change_password','temporary_password_expires_at')");
+    expect(Number((columns as any[])[0].n)).toBe(0);
+    const [tables] = await connection.query("SELECT COUNT(*) AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'login_attempt_counters'");
+    expect(Number((tables as any[])[0].n)).toBe(0);
+  });
 });
