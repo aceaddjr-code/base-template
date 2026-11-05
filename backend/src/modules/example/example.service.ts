@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, HttpException, Injectable, NotFoundException, Optional, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, HttpException, Injectable, NotFoundException, Optional, UnauthorizedException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, Repository } from 'typeorm';
 import { CrudBaseService, ListQuery, conflictWithReason } from '../../common/services/crud-base.service';
@@ -17,6 +17,7 @@ import { extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Attachment } from '../attachment/attachment.entity';
 import { AttachmentService, ATTACHMENT_IMAGE_MIMES, ATTACHMENT_PREVIEW_IMAGE_EXTS } from '../attachment/attachment.service';
+import { NotificationOutboxService, NOTIFICATION_OUTBOX } from '../system/notification-outbox.service';
 import type { JwtPayload } from '../auth/jwt.strategy';
 
 const CATEGORY_DICT = 'item_category';
@@ -40,6 +41,7 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
     private readonly dictService?: DictService,
     @Optional() @InjectRepository(Attachment) attachmentRepo?: Repository<Attachment>,
     @Optional() private readonly attachmentService?: AttachmentService,
+    @Optional() @Inject(NOTIFICATION_OUTBOX) private readonly outbox?: NotificationOutboxService,
   ) {
     super(repo, attachmentRepo ? { attachments: { repo: attachmentRepo, sourceKey: 'entityId', sourceType: 'example-items', typeKey: 'entityType' } } : {}, {
       entityName: '示例事项',
@@ -336,6 +338,14 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
         eventId: event.id, fieldKey: 'ownerId', fieldLabel: '单据负责人', valueType: 'text',
         beforeValue: old.ownerId ?? null, afterValue: item.ownerId ?? null, beforeLabel: nameOf(old.ownerId), afterLabel: nameOf(ownerId),
       });
+      // 第五批：真实变更且新负责人≠操作者 → 待投递意图与单据/履历同事务（业务键含事件 ID，再次指派不丢）
+      if (ownerId !== getUserId(user) && this.outbox) {
+        await this.outbox.enqueueWithinTx(manager, {
+          eventId: String(event.id), recipientId: ownerId, type: 'owner-changed',
+          bizType: 'example-items', bizId: item.id,
+          title: '你收到一项负责人变更通知', content: '你有单据被指派为新的负责人，请在示例事项中查看。',
+        });
+      }
       return item;
     });
   }

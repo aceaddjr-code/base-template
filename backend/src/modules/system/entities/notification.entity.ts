@@ -3,6 +3,7 @@ import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 
 @Entity('notifications')
 @Index('idx_notif_user_read', ['userId', 'readAt'])
 @Index('idx_notif_type_biz', ['type', 'bizId'])
+@Index('uniq_notif_source', ['sourceKey'], { unique: true })
 export class Notification {
   @PrimaryGeneratedColumn()
   id: number;
@@ -32,6 +33,10 @@ export class Notification {
   /** 已读时间（null = 未读） */
   @Column({ name: 'read_at', type: 'datetime', nullable: true })
   readAt: Date | null;
+
+  /** 来源唯一键 type:event_id:recipient_id（第五批幂等）；旧数据 NULL。 */
+  @Column({ name: 'source_key', type: 'varchar', length: 120, nullable: true, comment: '来源唯一键，旧数据 NULL' })
+  sourceKey: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
