@@ -47,17 +47,17 @@ export class SettingService {
   }
 
   /** 单键更新（第六批起复用批量同一校验/事务/修订号语义，不可绕过组合约束）。 */
-  async updateValue(key: string, rawValue: string, user: any, baseRevision?: number): Promise<SettingView> {
+  async updateValue(key: string, rawValue: string, user: any, baseRevision: number): Promise<SettingView> {
     const result = await this.updateBatch([{ key, value: rawValue }], user, baseRevision);
     return result.list.find(item => item.key === key)!;
   }
 
   /**
-   * 原子批量更新（第六批）：白名单＋重复键拒绝；boolean 规范化；组合校验基于
+   * 原子批量更新：白名单＋重复键拒绝；boolean 规范化；组合校验基于
    * 事务内当前有效值合并本次提交后判定；baseRevision 条件更新冲突→409；
    * 参数写入＋revision 递增＋审计同一事务，失败全部回滚。
    */
-  async updateBatch(items: SettingsUpdateItem[], user: any, baseRevision?: number): Promise<{ list: SettingView[]; revision: number }> {
+  async updateBatch(items: SettingsUpdateItem[], user: any, baseRevision: number): Promise<{ list: SettingView[]; revision: number }> {
     if (!Array.isArray(items) || !items.length) throw new BadRequestException('参数项不能为空');
     if (items.length > SETTING_REGISTRY.length) throw new BadRequestException('参数项数量超出注册表范围');
     const seen = new Set<string>();
@@ -76,8 +76,8 @@ export class SettingService {
       const byKey = new Map(rows.map(row => [row.key, row]));
       const revision = this.currentRevision(rows);
 
-      // 乐观并发：请求携带 baseRevision 时校验（未携带则不做条件更新——兼容旧调用方）
-      if (baseRevision !== undefined && baseRevision !== revision) {
+      // 乐观并发：baseRevision 必须携带（DTO 已强制），与当前全局修订号比对
+      if (baseRevision !== revision) {
         throw new ConflictException({ message: '配置已被其他管理员修改，请载入最新值后重试', reason: 'settings_stale', currentRevision: revision });
       }
 

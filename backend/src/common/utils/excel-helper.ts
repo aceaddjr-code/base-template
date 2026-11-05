@@ -56,6 +56,27 @@ export async function dataToExcel(
  *                  超限直接抛错提示分批导入——避免上百万行整表解析卡死/内存溢出
  * @returns 解析后的数据数组
  */
+/**
+ * Excel 日期序列号 → `YYYY-MM-DD[ HH:mm:ss]` 字符串。
+ * 小数部分直接按秒数算时分秒（不经过 Date 构造——Windows 对 1899 年日期套用历史时区 +8:05:43，
+ * 本地换算会偏移 5 分 43 秒，整数序列号会掉到前一天 23:54）。
+ * excelToData 与 excelToDataWithMeta 共用。
+ */
+function excelDateToStr(raw: any): string {
+  const num = typeof raw === 'number' ? raw : Number(String(raw).trim());
+  if (!Number.isFinite(num) || num < 1 || num > 100000) return String(raw ?? '').trim();
+  const whole = Math.floor(num);
+  const d = new Date(Date.UTC(1899, 11, 30) + whole * 86400000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const date = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+  const frac = num - whole;
+  if (frac > 0) {
+    const totalSec = Math.round(frac * 86400);
+    return `${date} ${pad(Math.floor(totalSec / 3600))}:${pad(Math.floor((totalSec % 3600) / 60))}:${pad(totalSec % 60)}`;
+  }
+  return date;
+}
+
 export async function excelToData(
   buffer: Buffer,
   colMap: Record<string, string[]>,
@@ -96,23 +117,6 @@ export async function excelToData(
 
   if (Object.keys(idxMap).length === 0) {
     throw new Error('Excel 列名不匹配，请检查表头是否包含正确的列名');
-  }
-
-  // 小数部分直接按秒数算时分秒（不经过 Date 构造——Windows 对 1899 年日期套用历史时区 +8:05:43，
-  // 本地换算会偏移 5 分 43 秒，整数序列号会掉到前一天 23:54）
-  function excelDateToStr(raw: any): string {
-    const num = typeof raw === 'number' ? raw : Number(String(raw).trim());
-    if (!Number.isFinite(num) || num < 1 || num > 100000) return String(raw ?? '').trim();
-    const whole = Math.floor(num);
-    const d = new Date(Date.UTC(1899, 11, 30) + whole * 86400000);
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const date = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
-    const frac = num - whole;
-    if (frac > 0) {
-      const totalSec = Math.round(frac * 86400);
-      return `${date} ${pad(Math.floor(totalSec / 3600))}:${pad(Math.floor((totalSec % 3600) / 60))}:${pad(totalSec % 60)}`;
-    }
-    return date;
   }
 
   // 解析数据行
@@ -167,7 +171,7 @@ export function sendExcel(res: any, buffer: Buffer, filename: string) {
   res.send(buffer);
 }
 
-// ===== 第四批：带原始坐标的解析（导入专用；导出等旧调用方继续用 excelToData） =====
+// ===== 带原始坐标的解析（导入专用；导出等旧调用方继续用 excelToData） =====
 
 export interface ParsedCellMeta { row: number; column: number; header: string }
 export interface ParsedRowMeta {
@@ -238,21 +242,6 @@ export async function excelToDataWithMeta(
     throw new Error('Excel 列名不匹配，请检查表头是否包含正确的列名');
   }
 
-  function excelDateToStr(raw: any): string {
-    const num = typeof raw === 'number' ? raw : Number(String(raw).trim());
-    if (!Number.isFinite(num) || num < 1 || num > 100000) return String(raw ?? '').trim();
-    const whole = Math.floor(num);
-    const d = new Date(Date.UTC(1899, 11, 30) + whole * 86400000);
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const date = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
-    const frac = num - whole;
-    if (frac > 0) {
-      const totalSec = Math.round(frac * 86400);
-      return `${date} ${pad(Math.floor(totalSec / 3600))}:${pad(Math.floor((totalSec % 3600) / 60))}:${pad(totalSec % 60)}`;
-    }
-    return date;
-  }
-
   const result: ParsedRowMeta[] = [];
   for (let i = headerRowIdx + 1; i < rows.length; i++) {
     const row = rows[i];
@@ -283,65 +272,4 @@ export async function excelToDataWithMeta(
     result.push({ rowNumber: i + 1, cells, data: record });
   }
   return { sheetName, headerRowNumber: headerRowIdx + 1, rows: result, otherDataSheets: [], parseVersion: 1 };
-}
-
-// ===== 第四批 03：错误文件与核对报告（安全 xlsx：纯数据＋标红，不传播宏/公式/外链） =====
-
-export interface ErrorFileRow {
-  /** 标准导入列的值（按 ColumnDef.key） */
-  values: Record<string, any>;
-  /** 需要标红的列 key → 原因文字 */
-  errors: Record<string, string>;
-  /** 附加列（报告用，如原始行号/状态）；错误文件不放业务列 */
-  meta?: Record<string, any>;
-}
-
-/**
- * 生成「失败/未处理行修正文件」：标准导入列＋标红错误单元格＋文末错误说明列；
- * 由服务端已解析内容重建（aoa_to_sheet），公式样内容按文本输出。
- */
-export async function errorFileToExcel(
-  rows: ErrorFileRow[],
-  columns: ColumnDef[],
-  options: { errorColumnHeader: string; metaColumns?: Array<{ header: string; key: string }> },
-): Promise<Buffer> {
-  const metaColumns = options.metaColumns ?? [];
-  const headerRow = [...columns.map(c => c.header), ...metaColumns.map(c => c.header), options.errorColumnHeader];
-  const dataRows = rows.map(row => [
-    ...columns.map(c => row.values[c.key] ?? ''),
-    ...metaColumns.map(c => row.meta?.[c.key] ?? ''),
-    Object.values(row.errors).join('；') || '',
-  ]);
-  const ws = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows], { cellDates: true });
-  // 标红错误单元格（xlsx-js-style：填充浅红＋深红文字）
-  rows.forEach((row, rowIndex) => {
-    for (const [key, reason] of Object.entries(row.errors)) {
-      if (!reason) continue;
-      const colIdx = columns.findIndex(c => c.key === key);
-      if (colIdx < 0) continue;
-      const address = XLSX.utils.encode_cell({ r: rowIndex + 1, c: colIdx });
-      const cell = ws[address];
-      if (cell) {
-        cell.s = { fill: { fgColor: { rgb: 'FFC7CE' } }, font: { color: { rgb: '9C0006' } } };
-      }
-    }
-  });
-  ws['!cols'] = [...columns.map(c => ({ wch: c.width || 15 })), ...metaColumns.map(() => ({ wch: 12 })), { wch: 50 }];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, '修正数据');
-  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx', cellStyles: true }) as Buffer;
-}
-
-/** 生成「完整结果核对报告」：原始行号/状态/原因/成功单据编号，仅供核对（页面明示不可作模板）。 */
-export async function reportToExcel(
-  rows: Array<{ rowNumber: number; status: string; error?: string | null; createdDocNo?: string | null; title?: string | null }>,
-): Promise<Buffer> {
-  const header = ['原始行号', '标题', '状态', '原因', '成功单据编号'];
-  const statusText = (s: string) => s === 'success' ? '成功' : s === 'invalid' ? '校验失败' : s === 'infrastructure_error' ? '写入失败（可重试）' : '未处理';
-  const dataRows = rows.map(row => [row.rowNumber, row.title ?? '', statusText(row.status), row.error ?? '', row.createdDocNo ?? '']);
-  const ws = XLSX.utils.aoa_to_sheet([header, ...dataRows]);
-  ws['!cols'] = [{ wch: 10 }, { wch: 24 }, { wch: 14 }, { wch: 50 }, { wch: 20 }];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, '核对报告');
-  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
 }

@@ -29,7 +29,7 @@ export class SettingController {
     return this.settingService.listPublic();
   }
 
-  /** 原子批量更新（第六批）：路由先于 :key；重复键/未知键/非法值/组合校验拒绝；baseRevision 冲突 409 */
+  /** 原子批量更新：路由先于 :key；重复键/未知键/非法值/组合校验拒绝；baseRevision 冲突 409 */
   @RequirePermission('system-settings:update')
   @Put('batch')
   updateBatch(@Body() dto: UpdateSettingsBatchDto, @Req() req: Request) {

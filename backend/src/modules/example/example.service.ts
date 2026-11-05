@@ -266,13 +266,9 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
     return { itemId: item.id, docNo: (item as any).docNo };
   }
 
-  /** 导入标准列（第四批 03 修正文件用）：与导入映射同源，不另列清单。 */
-  get importColumns() {
-    return (this.options.excelImportMap ? Object.keys(this.options.excelImportMap) : []).map(key => {
-      const column = this.options.excelColumns?.find((c) => c.key === key);
-      return { header: column?.header ?? key, key, width: column?.width ?? 18 };
-    });
-  }
+  /** 导入映射与导出列（第四批修正文件/报告用）：控制器经 example-import-files 组装。 */
+  get importMap() { return this.options.excelImportMap; }
+  get exportColumns() { return this.options.excelColumns; }
 
   /** 导入解析入口（第四批）：带原始坐标的受限解析；解析失败统一 400（畸形/多表/超限/表头无效）。 */
   async parseImportWithMeta(buffer: Buffer) {
@@ -361,23 +357,6 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
       await this.appendEvent(manager, item, 'delete', user, context);
     });
     return { success: true };
-  }
-
-  override async importFromExcel(buffer: Buffer, userId?: number, user?: ScopeUser) {
-    const rows = await this.prepareImportRows(await excelToData(buffer, this.options.excelImportMap!));
-    const batchId = randomUUID(), errors: Array<{ row: number; message: string }> = [];
-    let imported = 0;
-    for (let i = 0; i < rows.length; i++) {
-      try {
-        await this.create(rows[i], userId, user, { source: 'import', batchId, rowNumber: i + 2 });
-        imported++;
-      } catch (error) {
-        const message = error instanceof HttpException && error.getStatus() < 500 ? error.message : '导入失败，请稍后重试';
-        if (!(error instanceof HttpException) || error.getStatus() >= 500) this.logger.error(`导入批次 ${batchId} 第 ${i + 2} 行失败`, error instanceof Error ? error.stack : undefined);
-        errors.push({ row: i + 2, message });
-      }
-    }
-    return { imported, total: rows.length, errors, batchId };
   }
 
   /** 类别为字典驱动字段:清空允许;新增/改选必须是启用中的选项,停用/不存在拒绝并落到字段 */

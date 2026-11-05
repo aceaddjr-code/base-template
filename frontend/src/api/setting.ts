@@ -28,7 +28,7 @@ export function updateSetting(key: string, value: string, options?: FormRequestO
   return request.put(`/system/settings/${encodeURIComponent(key)}`, { value, ...(baseRevision !== undefined ? { baseRevision } : {}) }, options)
 }
 
-/** 原子批量更新（第六批）：白名单/去重/组合校验/修订号条件更新（409→保留草稿） */
+/** 原子批量更新：白名单/去重/组合校验/修订号条件更新（409→保留草稿） */
 export function updateSettingsBatch(items: Array<{ key: string; value: string }>, baseRevision: number, options?: FormRequestOptions): Promise<{ list: SettingItem[]; revision: number }> {
   return request.put('/system/settings/batch', { items, baseRevision }, options)
 }

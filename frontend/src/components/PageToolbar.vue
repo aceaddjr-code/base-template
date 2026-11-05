@@ -180,9 +180,9 @@ const props = withDefaults(
     importPrecheck?: (file: File) => Promise<{ total: number; valid: number; errors: { row: number; message: string }[]; importId?: string; expiresAt?: string; duplicate?: boolean }>
     /** 确认导入（F30/第四批）：部分成功语义；第四批传 importId（服务端保存的行），旧调用方可忽略第二参 */
     importConfirm?: (file: File, importId?: string) => Promise<{ imported: number; total: number; errors: { row: number; message: string }[]; unprocessed?: number }>
-    /** 核对报告下载（第四批）：(importId) => URL；提供后结果区展示「下载核对报告」 */
+    /** 核对报告下载：(importId) => URL；提供后结果区展示「下载核对报告」 */
     importReportUrl?: (importId: string) => string
-    /** 修正文件下载（第四批）：(importId) => URL；提供后有未成功行时展示 */
+    /** 修正文件下载：(importId) => URL；提供后有未成功行时展示 */
     importErrorFileUrl?: (importId: string) => string
     /** 导入模板下载地址（F30）：提供后弹窗内出现"下载模板" */
     importTemplateUrl?: string

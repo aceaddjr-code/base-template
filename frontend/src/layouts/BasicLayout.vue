@@ -123,7 +123,7 @@
         </div>
       </a-layout-header>
       <a-layout-content class="main-content">
-        <!-- 维护通知横幅（第六批）：纯文本、提示不阻断操作；关闭时无占位 -->
+        <!-- 维护通知横幅：纯文本、提示不阻断操作；关闭时无占位 -->
         <div v-if="maintenanceNotice" class="maintenance-banner" role="status">
           <info-circle-outlined class="maintenance-icon" />
           <span class="maintenance-text">{{ maintenanceNotice }}</span>
@@ -178,7 +178,7 @@ const onVisibilityRefresh = () => {
   if (document.visibilityState === 'visible' && appStore.userInfo) appStore.refreshPublicSettings()
 }
 const displayName = computed(() => appStore.userInfo?.displayName || appStore.userInfo?.username || '用户')
-/** 维护通知横幅（第六批）：enabled==='true' 且内容非空时显示纯文本；显式比较，禁止 Boolean('false') */
+/** 维护通知横幅：enabled==='true' 且内容非空时显示纯文本；显式比较，禁止 Boolean('false') */
 const maintenanceNotice = computed(() => {
   const settings = appStore.publicSettings ?? {}
   if (settings['maintenance.notice.enabled'] !== 'true') return ''
@@ -287,9 +287,9 @@ onMounted(() => {
   mediaQuery.addEventListener('change', syncViewport)
   window.addEventListener(NOTIFICATIONS_CHANGED, onNotificationsChanged)
   refreshUnread()
-  // 第五批：SSE 提示后拉取（未读不本地 +1）；session-expired 不自动重连（HTTP 401 已整页跳转）
+  // SSE 提示后拉取（未读不本地 +1）；session-expired 不自动重连（HTTP 401 已整页跳转）
   notificationStream = connectNotificationStream({ onChanged: onNotificationsChanged })
-  // 维护通知（第六批）：标签页重新可见立即刷新；可见页 60 秒拉取公开设置（失败保留最近值——store 语义）
+  // 维护通知：标签页重新可见立即刷新；可见页 60 秒拉取公开设置（失败保留最近值——store 语义）
   document.addEventListener('visibilitychange', onVisibilityRefresh)
   settingsTimer = setInterval(() => {
     if (document.visibilityState === 'visible') appStore.refreshPublicSettings()
@@ -311,7 +311,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .app-shell { min-height: 100dvh; background: var(--color-bg-page); }
 
-/* ===== 维护通知横幅（第六批）：纯文本提示，不阻断操作 ===== */
+/* ===== 维护通知横幅：纯文本提示，不阻断操作 ===== */
 .maintenance-banner {
   display: flex;
   align-items: flex-start;
@@ -319,11 +319,11 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   padding: var(--space-2) var(--space-4);
   margin-bottom: var(--space-3);
-  border: 1px solid var(--color-warning, #d48806);
+  border: 1px solid var(--color-warning, var(--color-border-strong));
   border-left-width: 3px;
-  border-radius: var(--radius-sm, 4px);
-  background: var(--color-warning-bg, #fffbe6);
-  color: var(--color-warning-text, #614700);
+  border-radius: var(--radius-sm, 2px);
+  background: var(--color-warning-bg, var(--color-layer-01));
+  color: var(--color-warning-text, var(--color-text-secondary));
   font-size: var(--text-aux);
   line-height: var(--lh-base);
 }

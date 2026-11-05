@@ -2,7 +2,7 @@ import { API_BASE } from './request'
 import { NOTIFICATIONS_CHANGED } from './notifications'
 
 /**
- * 通知 SSE 客户端（第五批 03）：
+ * 通知 SSE 客户端：
  * - EventSource 同源携带 Cookie（不发 URL Token）；
  * - 收到 notifications-changed 只派发刷新事件——未读数不本地 +1，一律拉接口；
  * - session-expired 停止连接且不自动重连（HTTP 401 已有整页跳转）；

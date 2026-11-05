@@ -134,8 +134,14 @@ const columns = withEmptyDash([
   { title: '大小', dataIndex: 'size', key: 'size', width: 110 },
   { title: '操作', key: 'action', width: 90 },
 ])
-const stateText = (state?: string) => state === 'complete' ? 'complete' : state === 'creating' ? 'creating' : state === 'failed' ? 'failed' : state === 'corrupt' ? 'corrupt' : '-'
-const stateBadge = (state?: string) => state === 'complete' ? 'success' : state === 'creating' ? 'processing' : 'error'
+const STATE_MAP: Record<string, { text: string; badge: string }> = {
+  complete: { text: 'complete', badge: 'success' },
+  creating: { text: 'creating', badge: 'processing' },
+  failed: { text: 'failed', badge: 'error' },
+  corrupt: { text: 'corrupt', badge: 'error' },
+}
+const stateText = (state?: string) => STATE_MAP[state ?? '']?.text ?? '-'
+const stateBadge = (state?: string) => (STATE_MAP[state ?? '']?.badge ?? 'error') as 'success' | 'processing' | 'error'
 const { resizeStart } = useResizableColumns('starter-cols-backups-main-width', ref(columns))
 
 async function fetchData() {

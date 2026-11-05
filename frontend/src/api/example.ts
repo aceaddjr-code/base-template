@@ -45,7 +45,7 @@ export interface ImportRowError { row: number; message: string }
 export interface ImportPreviewResult { total: number; valid: number; errors: ImportRowError[] }
 export interface ImportResult { imported: number; total: number; errors: ImportRowError[] }
 
-/** 第四批：导入会话（预检→confirm→结果查询/报告/修正文件） */
+/** 导入会话（预检→confirm→结果查询/报告/修正文件） */
 export interface ImportSessionPrecheck {
   importId: string
   expiresAt: string

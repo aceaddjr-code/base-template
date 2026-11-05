@@ -1,9 +1,9 @@
 import type { ScopeFlags, ScopeType } from '../../common/utils/data-scope';
 
 /**
- * 权限效果解释（第二批）共享契约：动作映射与 reasonCodes 以
- * [.scratch/permission-explanation-phase2/action-map.md](../../../.scratch/permission-explanation-phase2/action-map.md)
- * 为唯一事实来源；本文件只承载类型与常量，不注册路由。
+ * 权限效果解释共享契约：动作映射、reasonCodes 与分层裁决顺序。
+ * 动作→权限码映射直接声明于此（list/detail→view、update→update、delete→delete、export→export，
+ * 源自 CrudBaseController 的 CRUD_PERM_ACTION_MAP 与 @CrudPermPrefix 路由声明）。
  */
 
 /** 诊断动作全集（记录级仅 example-items；其余表单一律 unsupported）。 */

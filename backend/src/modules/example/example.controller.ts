@@ -2,10 +2,11 @@ import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe
 import { CrudBaseController } from '../../common/controllers/crud-base.controller';
 import { CrudPermPrefix } from '../../common/decorators/crud-perm-prefix.decorator';
 import { ExampleService } from './example.service';
-import { ExampleImportService } from './example-import.service';
+import { ExampleImportService, inferFieldKey } from './example-import.service';
 import { BatchRemoveExampleDto, ChangeExampleOwnerDto, CreateExampleDto, UpdateExampleDto } from './example.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { excelFileFilter, sendExcel, errorFileToExcel, reportToExcel } from '../../common/utils/excel-helper';
+import { excelFileFilter, sendExcel } from '../../common/utils/excel-helper';
+import { errorFileToExcel, importReportToExcel, importColumnsOf } from './example-import-files';
 import type { Request, Response } from 'express';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { getUserId } from '../../common/utils/service-helpers';
@@ -138,13 +139,7 @@ export class ExampleController extends CrudBaseController {
   @Get('import/:importId/report')
   async importReport(@Param('importId') importId: string, @Req() req: Request, @Res() res: Response) {
     const { rows } = await this.importService.rowsForFile(importId, (req.user as any).sub, false);
-    const buffer = await reportToExcel(rows.map(row => ({
-      rowNumber: row.rowNumber,
-      status: row.status,
-      error: row.errorMessage,
-      createdDocNo: row.createdDocNo,
-      title: row.data?.title ?? null,
-    })));
+    const buffer = await importReportToExcel(rows);
     sendExcel(res, buffer, `导入核对报告-${importId.slice(0, 8)}.xlsx`);
   }
 
@@ -155,16 +150,14 @@ export class ExampleController extends CrudBaseController {
   async importErrorFile(@Param('importId') importId: string, @Req() req: Request, @Res() res: Response) {
     const { rows } = await this.importService.rowsForFile(importId, (req.user as any).sub, true);
     if (!rows.length) throw new BadRequestException('没有失败或未处理的行，无需下载修正文件');
-    const headers = (this.service.importColumns ?? []).map(column => ({ header: column.header, key: column.key, width: column.width }));
+    const headers = importColumnsOf(this.service.importMap, this.service.exportColumns);
     const buffer = await errorFileToExcel(
       rows.map(row => ({
         values: row.data ?? {},
-        errors: row.cellRefs
-          ? Object.fromEntries(Object.keys(row.cellRefs).map(key => {
-              const related = row.errorMessage && /标题|状态|类别/.test(row.errorMessage) && key === 'title' ? row.errorMessage : null;
-              return [key, related ?? (row.status === 'invalid' ? row.errorMessage : '')];
-            }).filter(([, v]) => !!v))
-          : (row.status === 'invalid' && row.errorMessage ? { title: row.errorMessage } : {}),
+        // 标红定位：校验失败时按错误消息推断的字段标红对应列（第五批审查修复：不用启发式猜列名）
+        errors: row.status === 'invalid' && row.errorMessage
+          ? { [inferFieldKey(row.errorMessage) ?? 'title']: row.errorMessage }
+          : {},
         meta: { rowNumber: row.rowNumber },
       })),
       headers,

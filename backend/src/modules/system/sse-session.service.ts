@@ -5,7 +5,7 @@ import { User } from '../user/user.entity';
 import type { JwtPayload } from '../auth/jwt.strategy';
 
 /**
- * SSE 会话复核（第五批 03）：与 HTTP 鉴权同一数据源——账号状态、tokenVersion、
+ * SSE 会话复核：与 HTTP 鉴权同一数据源——账号状态、tokenVersion、
  * 第一批待改密门禁。SSE 不是撤销会话的安全保障，HTTP 鉴权仍独立执行；
  * 这里只保证已失效会话的连接被尽快关闭（推送前/心跳前复核）。
  */

@@ -1,6 +1,6 @@
 // 完整备份集合/隔离恢复共用库（第三批）。纯 Node，无应用依赖；
 // mysql2 如需使用由调用方从 backend/node_modules 引入（scripts/ 既有先例）。
-// 契约来源：.scratch/backup-recovery-phase3/set-format.md（01 交付）。
+// 契约：manifest v1（formatVersion/逐文件 sha256/envNames 仅名称）；共享锁＋心跳＋陈旧接管；目录互不嵌套；有界清理保留最近 1 份。
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { copyFile, lstat, mkdir, open, readdir, readFile, rename, rm, stat, unlink, utimes, writeFile } from 'node:fs/promises';

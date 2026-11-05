@@ -188,14 +188,15 @@ export class PermissionExplanationService {
 
     const deniedAll = (codes: ExplainReason[], text: string): RecordActionEvaluation[] =>
       EXPLAIN_ACTIONS.map((action) => ({ action, result: 'denied' as const, reasonCodes: codes, readableReason: text }));
-    if (!row || row.deletedAt) {
-      return { evaluations: deniedAll([EXPLAIN_REASONS.RECORD_NOT_FOUND], '记录不存在、已删除或不在该用户的数据范围内（与实际访问口径一致，不区分三者）'), record };
-    }
+    // 分层顺序（规格）：账号可用性 → … → 共同范围；禁用/待改密目标的记录级诊断也应优先报告账号原因
     if (Number(target.status) !== 1) {
       return { evaluations: deniedAll([EXPLAIN_REASONS.ACCOUNT_DISABLED], '目标账号已禁用，无法登录，一切业务接口不可用'), record };
     }
     if (Number(target.mustChangePassword) === 1) {
       return { evaluations: deniedAll([EXPLAIN_REASONS.ACCOUNT_MUST_CHANGE_PASSWORD], '目标账号处于待改密状态，受限会话只能访问个人信息、本人改密与登出'), record };
+    }
+    if (!row || row.deletedAt) {
+      return { evaluations: deniedAll([EXPLAIN_REASONS.RECORD_NOT_FOUND], '记录不存在、已删除或不在该用户的数据范围内（与实际访问口径一致，不区分三者）'), record };
     }
     if (isAdmin) {
       return {

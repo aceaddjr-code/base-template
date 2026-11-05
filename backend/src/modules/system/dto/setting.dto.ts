@@ -5,10 +5,9 @@ export class UpdateSettingDto {
   @MaxLength(500)
   value: string;
 
-  /** 乐观并发基准（第六批）：携带时与当前全局修订号比对，不匹配 409；缺省兼容旧调用方 */
-  @IsOptional()
+  /** 乐观并发基准（第六批）：与当前全局修订号比对，不匹配 409。必须携带。 */
   @IsInt()
-  baseRevision?: number;
+  baseRevision: number;
 }
 
 export class SettingsBatchItemDto {
@@ -27,7 +26,6 @@ export class UpdateSettingsBatchDto {
   @ValidateNested({ each: true })
   items: SettingsBatchItemDto[];
 
-  @IsOptional()
   @IsInt()
-  baseRevision?: number;
+  baseRevision: number;
 }

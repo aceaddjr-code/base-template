@@ -56,7 +56,7 @@ export class NotificationController {
   }
 
   /**
-   * SSE 事件流（第五批 03）：同源 Cookie 鉴权（不走 URL Token）；仅推送 notifications-changed
+   * SSE 事件流：同源 Cookie 鉴权（不走 URL Token）；仅推送 notifications-changed
    * 提示（版本=该用户通知 max id:未读数），客户端拉接口取权威结果、不本地 +1。
    * 连接建立与每次推送/心跳前复核账号状态、tokenVersion 与第一批待改密门禁；失效即关闭。
    * 不做事件重放：断线由持久列表兜底；代理环境响应携带 X-Accel-Buffering:no。

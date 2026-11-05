@@ -75,9 +75,11 @@ export class NotificationOutboxService implements OnModuleInit, OnModuleDestroy 
           if (outcome === 'delivered') delivered += 1;
           else if (outcome === 'skipped') skipped += 1;
         } catch (error) {
-          // 基础设施异常：按重试表或 failed
+          // 基础设施异常：按重试表（5/30/120/600/1800 秒）调度下一次或 failed。
+          // attempts 在领取时已 +1：第 1 次失败 → 等 5s，… 第 5 次失败 → 等 1800s，
+          // 第 6 次失败（5 次重试用尽）才进入 failed。
           const attempts = row.attempts;
-          if (attempts >= OUTBOX_RETRY_SECONDS.length) {
+          if (attempts > OUTBOX_RETRY_SECONDS.length) {
             await this.outboxRepo.update(row.id, { status: 'failed', lastError: sanitize(error), leaseOwner: null, leaseExpiresAt: null });
             failed += 1;
           } else {

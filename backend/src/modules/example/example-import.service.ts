@@ -9,7 +9,6 @@ import { excelToDataWithMeta } from '../../common/utils/excel-helper';
 /** 会话有效期与防重元数据保留期（import-contract §3）。 */
 export const IMPORT_SESSION_TTL_HOURS = 24;
 export const IMPORT_META_RETENTION_DAYS = 7;
-const SESSION_MAX_ROWS = 1000;
 /** processing 无行更新的回落窗口：崩溃后允许重试，防死锁占位。 */
 const PROCESSING_STALE_MS = 10 * 60 * 1000;
 
@@ -42,8 +41,19 @@ export interface SessionStatusView {
   rows?: Array<{ rowNumber: number; status: string; error?: string | null; createdDocNo?: string | null }>;
 }
 
+/** 校验错误消息 → 导入字段 key（示例模块字段映射；标题/状态/类别/说明/备注）。 */
+export function inferFieldKey(message: string): string | undefined {
+  if (/标题/.test(message)) return 'title';
+  if (/状态/.test(message)) return 'status';
+  if (/类别/.test(message)) return 'category';
+  if (/说明/.test(message)) return 'description';
+  if (/备注/.test(message)) return 'remark';
+  return undefined;
+}
+
+
 /**
- * 示例事项导入会话（第四批）：预检建会话、确认逐行幂等写入、结果查询。
+ * 示例事项导入会话：预检建会话、确认逐行幂等写入、结果查询。
  * 业务规则留在 example 模块（第二个导入模块出现前不抽通用框架）；
  * 行创建/履历/成功状态同一事务由 ExampleService.createImportRowWithinTx 完成。
  */
@@ -90,8 +100,7 @@ export class ExampleImportService implements OnModuleInit, OnModuleDestroy {
         await this.rowRepo.update({ sessionId: session.id }, { data: {}, cellRefs: null, errorCode: 'EXPIRED', errorMessage: '会话已过期' } as any);
       }
       const cutoff = new Date(now.getTime() - IMPORT_META_RETENTION_DAYS * 86400000);
-      const stale = await this.sessionRepo.find({ where: { status: 'expired' } });
-      const removable = stale.filter(s => s.updatedAt < cutoff).map(s => s.id);
+      const removable = expired.filter(s => s.updatedAt < cutoff).map(s => s.id);
       if (removable.length) {
         await this.rowRepo.delete({ sessionId: In(removable) });
         await this.sessionRepo.delete(removable);
@@ -130,7 +139,10 @@ export class ExampleImportService implements OnModuleInit, OnModuleDestroy {
         valid += 1;
         rowViews.push({ rowNumber: parsed.rows[i].rowNumber, status: 'valid' });
       } catch (error) {
-        rowViews.push({ rowNumber: parsed.rows[i].rowNumber, status: 'invalid', message: (error as Error).message });
+        // 从校验错误消息提取字段名（如"标题不能为空"→fieldKey='title'），供错误文件标红定位
+        const message = (error as Error).message;
+        const fieldKey = inferFieldKey(message);
+        rowViews.push({ rowNumber: parsed.rows[i].rowNumber, status: 'invalid', fieldKey, message });
       }
     }
     const importId = randomUUID();
