@@ -80,7 +80,7 @@ describe('权限效果解释：分层矩阵', () => {
 
   it('admin 系统例外：全 allowed＋ADMIN_EXCEPTION', async () => {
     const { service } = setup({ roles: ['admin'], record: { id: 50, ownerId: 77, deletedAt: null } });
-    const response = await service.explain(1, 'example-items', 50, caller);
+    const response = await service.explain(1, 'example-items', { id: 50 }, caller);
     for (const item of response.recordEvaluation!) {
       expect(item.result).toBe('allowed');
       expect(item.reasonCodes).toContain(EXPLAIN_REASONS.ADMIN_EXCEPTION);
@@ -98,7 +98,7 @@ describe('权限效果解释：分层矩阵', () => {
 
   it('软删除记录：全部 RECORD_NOT_FOUND，不泄露区分', async () => {
     const { service } = setup({ record: { id: 50, ownerId: 1, deletedAt: new Date('2026-11-01T00:00:00Z') } });
-    const response = await service.explain(1, 'example-items', 50, caller);
+    const response = await service.explain(1, 'example-items', { id: 50 }, caller);
     expect(response.record?.deleted).toBe(true);
     for (const item of response.recordEvaluation!) expect(item.reasonCodes).toEqual([EXPLAIN_REASONS.RECORD_NOT_FOUND]);
   });
@@ -127,7 +127,7 @@ describe('权限效果解释：分层矩阵', () => {
 
   it('附件表单记录级一律 unsupported；摘要可用且 fallback 语义正确', async () => {
     const { service } = setup({});
-    const response = await service.explain(1, 'attachments', 50, caller);
+    const response = await service.explain(1, 'attachments', { id: 50 }, caller);
     expect(response.configSource.scopeFormLabel).toBe('附件管理');
     for (const item of response.recordEvaluation!) {
       expect(item.result).toBe('unsupported');
@@ -143,7 +143,7 @@ describe('权限效果解释：分层矩阵', () => {
 
   it('权限来源含停用角色并标记启用状态；审计只记目标/表单/是否查询记录', async () => {
     const { service, logService } = setup({});
-    const response = await service.explain(1, 'example-items', 50, caller);
+    const response = await service.explain(1, 'example-items', { id: 50 }, caller);
     const view = response.operationPermissions.find((item) => item.action === 'detail')!;
     expect(view.sources).toEqual([expect.objectContaining({ roleCode: 'user', roleEnabled: true })]);
     const updatePerm = response.operationPermissions.find((item) => item.action === 'update')!;
@@ -152,6 +152,14 @@ describe('权限效果解释：分层矩阵', () => {
     const entry = logService.write.mock.calls[0][0];
     expect(entry).toMatchObject({ entityType: 'users', entityId: 1 });
     expect(JSON.parse(entry.detail)).toEqual({ event: 'permission_explain', scopeKey: 'example-items', recordQueried: true });
+  });
+
+  it('单据编号与数字 ID 等价定位同一条记录', async () => {
+    const { service } = setup({});
+    // 桩按 where.docNo 命中同一条记录
+    const byNo = await service.explain(1, 'example-items', { docNo: 'EX-20261104-001' }, caller);
+    expect(byNo.record?.docNo).toBe('EX-20261104-001');
+    for (const item of byNo.recordEvaluation!) expect(item.result).toBe('allowed');
   });
 
   it('非法表单与不存在目标明确拒绝', async () => {

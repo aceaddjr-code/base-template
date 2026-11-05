@@ -63,7 +63,7 @@ it('打开加载表单清单并默认选中第一项；查询成功后仅展示�
   await flushPromises()
   await wrapper.get('.query').trigger('click')
   await flushPromises()
-  expect(explainUserPermissions).toHaveBeenCalledWith(5, { scopeKey: 'example-items', recordId: undefined })
+  expect(explainUserPermissions).toHaveBeenCalledWith(5, { scopeKey: 'example-items' })
   const body = wrapper.get('[data-testid="explain-result"]').text()
   expect(body).toContain('仅本人单据')
   expect(body).toContain('普通用户')
@@ -111,9 +111,35 @@ it('在途请求遇目标切换后到达被丢弃；新查询接管，修改记�
   const body = wrapper.get('[data-testid="explain-result"]').text()
   expect(body).toContain('v3')
   expect(explainUserPermissions).toHaveBeenCalledTimes(2)
-  // 修改记录 ID 输入后旧结果清除
+  // 修改记录引用输入后旧结果清除
   await wrapper.get('.record-input').setValue('88')
   expect(wrapper.find('[data-testid="explain-result"]').exists()).toBe(false)
+  wrapper.unmount()
+})
+
+it('单据编号输入以 recordNo 传参；非法输入本地拦截并提示格式', async () => {
+  vi.mocked(explainUserPermissions).mockResolvedValue(explanation())
+  const wrapper = setup({ open: true, target: target(5) })
+  await flushPromises()
+  // 非法输入：不发请求，提示格式
+  await wrapper.get('.record-input').setValue('随便写的')
+  await wrapper.get('.query').trigger('click')
+  await flushPromises()
+  expect(explainUserPermissions).not.toHaveBeenCalled()
+  expect(wrapper.get('[role="alert"]').text()).toContain('单据编号')
+  // 单据编号：以 recordNo 传参并渲染结果
+  await wrapper.get('.record-input').setValue('ex-20261104-001')
+  await wrapper.get('.query').trigger('click')
+  await flushPromises()
+  expect(explainUserPermissions).toHaveBeenCalledWith(5, { scopeKey: 'example-items', recordNo: 'EX-20261104-001' })
+  expect(wrapper.find('[data-testid="explain-result"]').exists()).toBe(true)
+  // 纯数字：以 recordId 传参
+  vi.mocked(explainUserPermissions).mockClear()
+  vi.mocked(explainUserPermissions).mockResolvedValue(explanation())
+  await wrapper.get('.record-input').setValue('66')
+  await wrapper.get('.query').trigger('click')
+  await flushPromises()
+  expect(explainUserPermissions).toHaveBeenCalledWith(5, { scopeKey: 'example-items', recordId: 66 })
   wrapper.unmount()
 })
 

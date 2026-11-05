@@ -31,11 +31,11 @@
         @change="clearResult"
       />
       <a-input
-        v-model:value="recordIdText"
-        placeholder="记录 ID（可选，仅示例事项支持）"
-        style="width: 220px"
+        v-model:value="recordRefText"
+        placeholder="单据编号（EX-20261104-001）或记录 ID"
+        style="width: 260px"
         :disabled="querying"
-        aria-label="记录 ID"
+        aria-label="单据编号或记录 ID"
         @change="clearResult"
       />
       <a-button type="primary" :loading="querying" :disabled="!scopeKey || formsLoading" @click="query">查看效果</a-button>
@@ -141,7 +141,7 @@ const forms = ref<ScopeFormMeta[]>([])
 const formsLoading = ref(false)
 const formOptions = computed(() => forms.value.map((item) => ({ label: item.label, value: item.scopeKey })))
 const scopeKey = ref<string | undefined>(undefined)
-const recordIdText = ref('')
+const recordRefText = ref('')
 const querying = ref(false)
 const failed = ref(false)
 const failMessage = ref('')
@@ -149,7 +149,7 @@ const result = ref<PermissionExplanation | null>(null)
 let sequence = 0
 
 watch(() => props.open, (open) => {
-  if (!open) { clearResult(); recordIdText.value = ''; return }
+  if (!open) { clearResult(); recordRefText.value = ''; return }
   sequence += 1
   scopeKey.value = forms.value[0]?.scopeKey
   void loadForms()
@@ -175,14 +175,26 @@ function clearResult() {
   failMessage.value = ''
 }
 
+/** 解析记录引用：纯数字→记录 ID；EX-日期-序号→单据编号；空→不诊断具体记录。 */
+function parseRecordRef(): { id?: number; docNo?: string } | null | 'invalid' {
+  const text = recordRefText.value.trim();
+  if (!text) return null;
+  if (/^\d+$/.test(text)) {
+    const id = Number(text);
+    return Number.isSafeInteger(id) && id > 0 ? { id } : 'invalid';
+  }
+  if (/^EX-\d{8}-\d{1,6}$/i.test(text)) return { docNo: text.toUpperCase() };
+  return 'invalid';
+}
+
 async function query() {
   if (!props.target || !scopeKey.value) return
   const targetId = props.target.id
   const key = scopeKey.value
-  const recordId = recordIdText.value.trim() ? Number(recordIdText.value.trim()) : undefined
-  if (recordId !== undefined && (!Number.isSafeInteger(recordId) || recordId <= 0)) {
+  const recordRef = parseRecordRef()
+  if (recordRef === 'invalid') {
     failed.value = true
-    failMessage.value = '记录 ID 必须是正整数'
+    failMessage.value = '请输入单据编号（EX-日期-序号，如 EX-20261104-001）或数字记录 ID'
     result.value = null
     return
   }
@@ -191,7 +203,11 @@ async function query() {
   querying.value = true
   failed.value = false
   try {
-    const response = await explainUserPermissions(targetId, { scopeKey: key, recordId })
+    const response = await explainUserPermissions(targetId, {
+      scopeKey: key,
+      ...(recordRef?.id != null ? { recordId: recordRef.id } : {}),
+      ...(recordRef?.docNo != null ? { recordNo: recordRef.docNo } : {}),
+    })
     if (ticket !== sequence || !props.open || props.target?.id !== targetId) return
     result.value = response
   } catch (error: any) {

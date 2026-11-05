@@ -120,6 +120,7 @@ export class UserController {
   /**
    * 权限效果解释（第二批）：按目标当前配置推演重新登录后的效果。
    * 只读诊断：不签发目标 Token、不改 tokenVersion；审计只记目标/表单/是否查询记录。
+   * 记录引用：recordId（数字 ID）或 recordNo（单据编号，如 EX-20261104-001），二选一。
    */
   @SkipRequestAudit()
   @RequirePermission('users:permission-explain')
@@ -129,15 +130,27 @@ export class UserController {
     @Param('id') id: string,
     @Query('scopeKey') scopeKey: string,
     @Query('recordId') recordId: string | undefined,
+    @Query('recordNo') recordNo: string | undefined,
     @Req() req: Request,
   ) {
     if (!scopeKey || !SCOPE_FORM_REGISTRY.some((item) => item.scopeKey === scopeKey)) {
       throw new BadRequestException('未知业务表单，请从已注册表单中选择');
     }
-    let record: number | null = null;
-    if (recordId !== undefined && recordId !== '') {
-      record = safeParseInt(recordId) ?? NaN;
-      if (!Number.isSafeInteger(record) || record <= 0) throw new BadRequestException('记录 ID 必须是正整数');
+    const hasId = recordId !== undefined && recordId !== '';
+    const hasNo = recordNo !== undefined && recordNo !== '';
+    if (hasId && hasNo) throw new BadRequestException('记录 ID 与单据编号只能提供其一');
+    let record: { id?: number; docNo?: string } | null = null;
+    if (hasId) {
+      const parsed = safeParseInt(recordId) ?? NaN;
+      if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new BadRequestException('记录 ID 必须是正整数');
+      record = { id: parsed };
+    }
+    if (hasNo) {
+      const docNo = recordNo!.trim();
+      if (!/^EX-\d{8}-\d{1,6}$/i.test(docNo)) {
+        throw new BadRequestException('单据编号格式应为 前缀-日期-序号，例如 EX-20261104-001');
+      }
+      record = { docNo: docNo.toUpperCase() };
     }
     return this.permissionExplain.explain(parseInt(id, 10), scopeKey, record, { sub: caller.sub, username: caller.username }, { ip: req.ip });
   }

@@ -105,7 +105,7 @@ suite('权限效果解释：隔离 MySQL 部门子树', () => {
   });
 
   const evaluationsOf = async (recordId: number) => {
-    const response = await service.explain(TARGET_ID, 'example-items', recordId, { sub: 1, username: 'admin' });
+    const response = await service.explain(TARGET_ID, 'example-items', { id: recordId }, { sub: 1, username: 'admin' });
     return Object.fromEntries((response.recordEvaluation ?? []).map((item) => [item.action, item]));
   };
 

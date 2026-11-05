@@ -146,6 +146,6 @@ export interface PermissionExplanation {
   record?: { id: number; docNo: string | null; title: string; ownerId: number | null; ownerLabel: string | null; deleted: boolean } | null
 }
 
-export function explainUserPermissions(id: number, params: { scopeKey: string; recordId?: number }): Promise<PermissionExplanation> {
+export function explainUserPermissions(id: number, params: { scopeKey: string; recordId?: number; recordNo?: string }): Promise<PermissionExplanation> {
   return request.get(`/users/${id}/permission-explanation`, { params })
 }

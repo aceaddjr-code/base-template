@@ -42,7 +42,7 @@ export class PermissionExplanationService {
   async explain(
     targetId: number,
     scopeKey: string,
-    recordId: number | null,
+    recordRef: { id?: number; docNo?: string } | null,
     caller: { sub: number; username: string },
     meta?: { ip?: string | null },
   ): Promise<PermissionExplanationResponse> {
@@ -79,11 +79,11 @@ export class PermissionExplanationService {
 
     let recordEvaluation: RecordActionEvaluation[] | null = null;
     let record: PermissionExplanationResponse['record'] = null;
-    if (recordId != null) {
+    if (recordRef != null) {
       if (scopeKey !== RECORD_EXPLAINABLE_SCOPE_KEY) {
         recordEvaluation = EXPLAIN_ACTIONS.map((action) => unsupported(action));
       } else {
-        const evaluation = await this.evaluateRecord(recordId, targetId, identity, isAdmin, effectiveCodes, entry, target);
+        const evaluation = await this.evaluateRecord(recordRef, targetId, identity, isAdmin, effectiveCodes, entry, target);
         recordEvaluation = evaluation.evaluations;
         record = evaluation.record;
       }
@@ -103,7 +103,7 @@ export class PermissionExplanationService {
       operationPermissions,
       dataScope,
       recordEvaluation,
-      ...(recordId != null ? { record } : {}),
+      ...(recordRef != null ? { record } : {}),
     };
     // 管理审计：只记目标、表单与是否查询记录，不含业务正文
     void this.logService.write({
@@ -112,7 +112,7 @@ export class PermissionExplanationService {
       action: 'update',
       entityType: 'users',
       entityId: targetId,
-      detail: JSON.stringify({ event: 'permission_explain', scopeKey, recordQueried: recordId != null }),
+      detail: JSON.stringify({ event: 'permission_explain', scopeKey, recordQueried: recordRef != null }),
       ip: meta?.ip ?? null,
     }).catch(() => undefined);
     return response;
@@ -167,7 +167,7 @@ export class PermissionExplanationService {
   }
 
   private async evaluateRecord(
-    recordId: number,
+    recordRef: { id?: number; docNo?: string },
     targetId: number,
     identity: { roles: string[]; dataScopes: UserScopeEntry[] },
     isAdmin: boolean,
@@ -175,8 +175,9 @@ export class PermissionExplanationService {
     entry: UserScopeEntry | null,
     target: { status: number; mustChangePassword: number },
   ): Promise<{ evaluations: RecordActionEvaluation[]; record: PermissionExplanationResponse['record'] }> {
+    // 单据编号全库唯一（含软删行共用编号空间），与数字 ID 等价定位同一条记录
     const row = await this.exampleRepo.findOne({
-      where: { id: recordId },
+      where: recordRef.docNo ? { docNo: recordRef.docNo } : { id: recordRef.id! },
       withDeleted: true,
       select: { id: true, docNo: true, title: true, ownerId: true, deletedAt: true },
     });
@@ -214,7 +215,7 @@ export class PermissionExplanationService {
     const scopeUser: ScopeUser = { id: targetId, roles: identity.roles, dataScopes: identity.dataScopes };
     const qb = this.exampleRepo.createQueryBuilder('t')
       .select('t.id', 'id')
-      .where('t.id = :recordId AND t.deleted_at IS NULL', { recordId });
+      .where('t.id = :recordId AND t.deleted_at IS NULL', { recordId: row.id });
     buildDataScope(qb, 't', scopeUser, RECORD_EXPLAINABLE_SCOPE_KEY);
     const inScope = !!(await qb.getRawOne());
 
