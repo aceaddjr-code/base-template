@@ -2,11 +2,20 @@ import { Injectable, Logger, NotFoundException, BadRequestException, ConflictExc
 import { ConfigService } from '@nestjs/config';
 import { execFile } from 'child_process';
 import { createReadStream } from 'fs';
-import { readdir, stat } from 'fs/promises';
+import { readFile, readdir, stat } from 'fs/promises';
 import { basename, extname, resolve } from 'path';
 
 /** 备份文件名白名单（防路径穿越/防注入——备份文件含全库数据） */
 const BACKUP_FILE_RE = /^[A-Za-z0-9_-]+-\d{8}-\d{6}\.sql\.gz$/;
+/** 第三批完整集合：目录内 manifest.json 为事实来源；共享锁名与 scripts/lib/backup-lib.mjs 一致 */
+const MANIFEST_NAME = 'manifest.json';
+const LOCK_NAME = '.backup-lock';
+const LOCK_STALE_MS = 60_000;
+
+/** database-only=旧 SQL 转储；full-set=完整集合（数据库＋附件＋manifest，磁盘 manifest 为状态事实） */
+export type BackupEntry =
+  | { type: 'database-only'; filename: string; size: number; date: string }
+  | { type: 'full-set'; filename: string; backupId: string; state: 'creating' | 'complete' | 'failed' | 'corrupt'; date: string; size?: number; error?: string | null };
 
 @Injectable()
 export class BackupService {
@@ -28,8 +37,8 @@ export class BackupService {
     return resolve(process.cwd(), this.config.get<string>('BACKUP_SCRIPT') ?? '../scripts/backup.mjs');
   }
 
-  /** 备份文件列表（按时间降序；只列白名单命中的备份产物） */
-  async listBackups(): Promise<Array<{ filename: string; size: number; date: string }>> {
+  /** 备份条目列表（完整集合以磁盘 manifest 为准；旧 sql.gz 按白名单；按时间降序） */
+  async listBackups(): Promise<BackupEntry[]> {
     const dir = this.backupDir();
     let files: string[];
     try {
@@ -39,31 +48,53 @@ export class BackupService {
       this.logger.error('无法读取备份目录，请检查目录权限');
       throw new BadRequestException('无法读取备份目录，请联系管理员检查权限');
     }
-    const rows: Array<{ filename: string; size: number; mtime: number; date: string }> = [];
+    const rows: Array<{ entry: BackupEntry; sortAt: number }> = [];
     for (const f of files) {
-      if (!BACKUP_FILE_RE.test(f)) continue;
+      const path = resolve(dir, f);
       try {
-        const st = await stat(resolve(dir, f));
-        if (!st.isFile()) continue;
+        const st = await stat(path);
+        if (st.isDirectory()) {
+          // 完整集合目录：manifest 即状态；staging（.staging- 前缀）呈现 creating
+          const isStaging = f.startsWith('.staging-');
+          const manifestPath = resolve(dir, f, MANIFEST_NAME);
+          const manifestStat = isStaging ? null : await stat(manifestPath).catch(() => null);
+          if (!isStaging && !manifestStat) continue;
+          let manifest: any = null;
+          if (manifestStat) {
+            try { manifest = JSON.parse(await readFile(manifestPath, 'utf8')); } catch { /* 损坏集合按 corrupt 呈现 */ }
+          }
+          const entry: BackupEntry = {
+            type: 'full-set',
+            backupId: manifest?.backupId ?? (isStaging ? f.slice('.staging-'.length) : f),
+            filename: manifest?.backupId ?? (isStaging ? f.slice('.staging-'.length) : f),
+            state: manifest?.state ?? (isStaging ? 'creating' : 'corrupt'),
+            date: manifest?.finishedAt ?? manifest?.createdAt ?? st.mtime.toISOString(),
+            size: manifest?.database?.bytes ?? 0,
+            error: manifest?.error ?? null,
+          };
+          rows.push({ entry, sortAt: new Date(entry.date).getTime() || st.mtimeMs });
+          continue;
+        }
+        if (!st.isFile() || !BACKUP_FILE_RE.test(f) || f.startsWith('.')) continue;
         rows.push({
-          filename: f,
-          size: st.size,
-          mtime: st.mtimeMs,
-          date: formatDateTime(st.mtime),
+          entry: { type: 'database-only', filename: f, size: st.size, date: formatDateTime(st.mtime) },
+          sortAt: st.mtimeMs,
         });
       } catch { /* 文件被并发清理，跳过 */ }
     }
-    return rows.sort((a, b) => b.mtime - a.mtime).map(({ filename, size, date }) => ({ filename, size, date }));
+    return rows.sort((a, b) => b.sortAt - a.sortAt).map(row => row.entry);
   }
 
   /** 子进程异步执行；保持原返回契约，不阻塞 Node 事件循环。 */
   async runBackup(): Promise<{ filename: string; size: number; date: string }> {
     if (this.running) throw new ConflictException('备份正在执行，请等待当前备份完成');
+    await this.assertSharedLockFree();
     this.running = true;
     this.state = { status: 'running', startedAt: new Date().toISOString() };
     const script = this.backupScript();
     try {
-      const previous = new Set((await this.listBackups()).map(item => item.filename));
+      // 仅以旧类型（sql.gz）作“新文件”判定；完整集合由 backup-set 工具负责
+      const previous = new Set((await this.listBackups()).filter(item => item.type === 'database-only').map(item => item.filename));
       const executable = this.config.get<string>('BACKUP_EXECUTABLE') || (extname(script) === '.sh' ? 'bash' : process.execPath);
       await new Promise<void>((done, fail) => {
         execFile(executable, [script], {
@@ -71,7 +102,8 @@ export class BackupService {
           windowsHide: true, env: { ...process.env, BACKUP_DIR: this.backupDir() },
         }, error => error ? fail(error) : done());
       });
-      const result = (await this.listBackups()).find(item => !previous.has(item.filename));
+      const result = (await this.listBackups()).find((item): item is Extract<BackupEntry, { type: 'database-only' }> =>
+        item.type === 'database-only' && !previous.has(item.filename));
       if (!result) throw new Error('NO_NEW_BACKUP');
       this.state = { ...this.state, status: 'succeeded', finishedAt: new Date().toISOString(), result };
       return result;
@@ -84,6 +116,20 @@ export class BackupService {
       throw new BadRequestException(msg);
     } finally {
       this.running = false;
+    }
+  }
+
+  /** 共享锁尊重（set-format §4）：完整备份/恢复持有锁期间，页面 SQL 备份拒绝并发写同一目录。 */
+  private async assertSharedLockFree(): Promise<void> {
+    const lockPath = resolve(this.backupDir(), LOCK_NAME);
+    try {
+      const info = await stat(lockPath);
+      if (Date.now() - info.mtimeMs <= LOCK_STALE_MS) {
+        throw new ConflictException('完整备份或恢复正在执行（共享锁持有中），请等待完成后再发起 SQL 备份');
+      }
+    } catch (error) {
+      if (error instanceof ConflictException) throw error;
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
   }
 

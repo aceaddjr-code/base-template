@@ -24,6 +24,34 @@ describe('备份异步执行和状态（真实子进程，非真实数据库备�
     expect(service.status()).toMatchObject({ status: 'succeeded', result });
     expect((await service.getBackupFile(result.filename)).size).toBe(7);
   });
+  it('列表区分完整集合与仅数据库类型（磁盘 manifest 为状态事实来源）', async () => {
+    await writeFile(join(directory, 'test-20261020-120000.sql.gz'), 'legacy');
+    const setId = 'test-full-20261105-010203-ab12cd34';
+    await mkdir(join(directory, setId));
+    await writeFile(join(directory, setId, 'manifest.json'), JSON.stringify({
+      formatVersion: 1, backupId: setId, state: 'complete',
+      createdAt: '2026-11-05T01:02:03.000Z', finishedAt: '2026-11-05T01:02:04.000Z',
+      database: { bytes: 42 },
+    }));
+    await mkdir(join(directory, '.staging-test-full-20261105-020304-ef56ab78'));
+    const service = await fixture('process.exit(0)');
+    const list = await service.listBackups();
+    expect(list).toHaveLength(3);
+    // 同夹具 mtime 均为当前，complete 的 finishedAt 为过去 → 两条 full-set 与一条 database-only 均在场即可
+    expect(list.find(item => item.state === 'creating')).toMatchObject({ type: 'full-set', backupId: 'test-full-20261105-020304-ef56ab78' });
+    expect(list.find(item => item.state === 'complete')).toMatchObject({ type: 'full-set', backupId: setId });
+    expect(list.find(item => item.type === 'database-only')).toMatchObject({ filename: 'test-20261020-120000.sql.gz' });
+  });
+
+  it('共享锁持有期间拒绝发起 SQL 备份（尊重完整备份/恢复窗口）', async () => {
+    const service = await fixture(`setTimeout(() => { require('fs').writeFileSync(require('path').join(process.env.BACKUP_DIR, 'test-20261105-030000.sql.gz'), 'x'); }, 10);`);
+    await writeFile(join(directory, '.backup-lock'), JSON.stringify({ host: 'h', pid: 1 }));
+    // mtime 为“现在”，锁新鲜
+    await expect(service.runBackup()).rejects.toThrow('共享锁');
+    const list = await service.listBackups();
+    expect(list.filter(item => item.type === 'database-only')).toHaveLength(0);
+  });
+
   it('脚本没有产出新文件时不能拿历史文件冒充成功', async () => {
     await writeFile(join(directory, 'test-20261020-120000.sql.gz'), 'old');
     const service = await fixture('process.exit(0)');
