@@ -141,6 +141,7 @@ import {
 } from '@ant-design/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { getNotifications, getUnreadCount, markAllRead, markRead, NOTIFICATIONS_CHANGED, type NotificationItem } from '@/api/notifications'
+import { connectNotificationStream, type NotificationStreamHandle } from '@/api/notification-stream'
 import ProfileDrawer from '@/components/ProfileDrawer.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import MenuSearch from '@/components/MenuSearch.vue'
@@ -163,6 +164,7 @@ const notifications = ref<NotificationItem[]>([])
 const notificationsLoading = ref(false)
 const notificationsFailed = ref(false)
 let notificationsVersion = 0
+let notificationStream: NotificationStreamHandle | null = null
 const displayName = computed(() => appStore.userInfo?.displayName || appStore.userInfo?.username || '用户')
 
 
@@ -267,11 +269,15 @@ onMounted(() => {
   mediaQuery.addEventListener('change', syncViewport)
   window.addEventListener(NOTIFICATIONS_CHANGED, onNotificationsChanged)
   refreshUnread()
+  // 第五批：SSE 提示后拉取（未读不本地 +1）；session-expired 不自动重连（HTTP 401 已整页跳转）
+  notificationStream = connectNotificationStream({ onChanged: onNotificationsChanged })
 })
 onBeforeUnmount(() => {
   unreadVersion++
   notificationsVersion++
   window.removeEventListener(NOTIFICATIONS_CHANGED, onNotificationsChanged)
+  notificationStream?.close()
+  notificationStream = null
   mediaQuery?.removeEventListener('change', syncViewport)
   document.body.style.overflow = ''
 })

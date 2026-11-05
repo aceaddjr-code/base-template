@@ -10,6 +10,7 @@ import { Announcement } from './entities/announcement.entity';
 import { User } from '../user/user.entity';
 import { NotificationService } from './notification.service';
 import { NotificationOutboxService } from './notification-outbox.service';
+import { SseSessionService } from './sse-session.service';
 import { NotificationController } from './notification.controller';
 import { BackupService } from './backup.service';
 import { BackupController } from './backup.controller';
@@ -32,7 +33,7 @@ import { AnnouncementController } from './announcement.controller';
     NotificationController, BackupController, SettingController, AnnouncementController,
   ],
   providers: [
-    SystemLogService, DictService, NotificationService, NotificationOutboxService, BackupService, SettingService, AnnouncementService,
+    SystemLogService, DictService, NotificationService, NotificationOutboxService, SseSessionService, BackupService, SettingService, AnnouncementService,
   ],
   exports: [SystemLogService, DictService, NotificationService, NotificationOutboxService, SettingService],
 })
