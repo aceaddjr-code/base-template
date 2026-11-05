@@ -102,6 +102,8 @@
           </p>
           <p v-if="preview.errors.length" class="pt-preview-note">确认导入将跳过错误行，仅导入其余 {{ preview.valid }} 行。</p>
           <p v-else class="pt-preview-note">全部行均可导入。</p>
+          <p v-if="preview.duplicate" class="pt-preview-note">该文件已有未确认的预检结果，已直接载入；确认后如需再导一次，请关闭后重选文件并选择「作为新批次导入」。</p>
+          <p v-if="preview.expiresAt" class="pt-preview-note">本次预检结果有效期至 {{ new Date(preview.expiresAt).toLocaleString() }}，过期后需重新预检。</p>
           <ul v-if="preview.errors.length" class="pt-err-list">
             <li v-for="err in preview.errors.slice(0, 10)" :key="err.row">第 {{ err.row }} 行：{{ err.message }}</li>
             <li v-if="preview.errors.length > 10" class="pt-err-more">
@@ -114,7 +116,7 @@
       <template v-else-if="result">
         <div class="pt-preview" role="status">
           <p class="pt-preview-stats">
-            导入完成：<strong>{{ result.imported }}</strong> / {{ result.total }} 条成功<template v-if="result.errors.length">，失败 <strong>{{ result.errors.length }}</strong> 条</template>
+            导入完成：<strong>{{ result.imported }}</strong> / {{ result.total }} 条成功<template v-if="result.errors.length">，失败 <strong>{{ result.errors.length }}</strong> 条</template><template v-if="result.unprocessed">，未处理 <strong>{{ result.unprocessed }}</strong> 条</template>
           </p>
           <ul v-if="result.errors.length" class="pt-err-list">
             <li v-for="err in result.errors.slice(0, 10)" :key="err.row">第 {{ err.row }} 行：{{ err.message }}</li>
@@ -122,6 +124,11 @@
               <button type="button" class="pt-err-download" @click="downloadErrorFile">…共 {{ result.errors.length }} 条失败，下载完整错误文件</button>
             </li>
           </ul>
+          <p v-if="result.unprocessed" class="pt-preview-note">未处理行多为权限或写入中断；可稍后重新确认或下载修正文件后重新预检。</p>
+          <div v-if="result.importId && (props.importReportUrl || props.importErrorFileUrl)" class="pt-session-links">
+            <a-button v-if="props.importReportUrl" type="link" size="small" @click="openSessionUrl(props.importReportUrl!)">下载核对报告</a-button>
+            <a-button v-if="props.importErrorFileUrl && (result.errors.length || result.unprocessed)" type="link" size="small" @click="openSessionUrl(props.importErrorFileUrl!)">下载失败/未处理行修正文件</a-button>
+          </div>
         </div>
       </template>
     </a-modal>
@@ -169,10 +176,14 @@ const props = withDefaults(
     importAccept?: string
     /** 导入弹窗打开时回调（页面加载前置选择数据，如令号列表） */
     onImportOpen?: () => void
-    /** 预检（F30）：解析并校验全部行,不写数据;返回统计与逐行错误 */
-    importPrecheck?: (file: File) => Promise<{ total: number; valid: number; errors: { row: number; message: string }[] }>
-    /** 确认导入（F30）：部分成功语义,返回完整结果 */
-    importConfirm?: (file: File) => Promise<{ imported: number; total: number; errors: { row: number; message: string }[] }>
+    /** 预检（F30/第四批）：解析并校验全部行；第四批起返回 importId（会话化预检）与到期时间 */
+    importPrecheck?: (file: File) => Promise<{ total: number; valid: number; errors: { row: number; message: string }[]; importId?: string; expiresAt?: string; duplicate?: boolean }>
+    /** 确认导入（F30/第四批）：部分成功语义；第四批传 importId（服务端保存的行），旧调用方可忽略第二参 */
+    importConfirm?: (file: File, importId?: string) => Promise<{ imported: number; total: number; errors: { row: number; message: string }[]; unprocessed?: number }>
+    /** 核对报告下载（第四批）：(importId) => URL；提供后结果区展示「下载核对报告」 */
+    importReportUrl?: (importId: string) => string
+    /** 修正文件下载（第四批）：(importId) => URL；提供后有未成功行时展示 */
+    importErrorFileUrl?: (importId: string) => string
     /** 导入模板下载地址（F30）：提供后弹窗内出现"下载模板" */
     importTemplateUrl?: string
     // ===== 导出 =====
@@ -289,8 +300,8 @@ const importVisible = ref(false)
 const importLoading = ref(false)
 const fileName = ref('')
 const pickedFile = ref<File | null>(null)
-const preview = ref<{ total: number; valid: number; errors: { row: number; message: string }[] } | null>(null)
-const result = ref<{ imported: number; total: number; errors: { row: number; message: string }[] } | null>(null)
+const preview = ref<{ total: number; valid: number; errors: { row: number; message: string }[]; importId?: string; expiresAt?: string; duplicate?: boolean } | null>(null)
+const result = ref<{ imported: number; total: number; errors: { row: number; message: string }[]; unprocessed?: number; importId?: string } | null>(null)
 const hasPrecheck = computed(() => !!props.importPrecheck)
 
 function downloadErrorFile(): void {
@@ -324,8 +335,8 @@ async function doImport() {
     }
     if (hasPrecheck.value && result.value) return
     if (props.importPrecheck && props.importConfirm && preview.value) {
-      const outcome = await props.importConfirm(pickedFile.value)
-      if (run === importRun.value) { result.value = outcome; emit('imported') }
+      const outcome = await props.importConfirm(pickedFile.value, preview.value.importId)
+      if (run === importRun.value) { result.value = { ...outcome, importId: preview.value.importId }; emit('imported') }
       return
     }
     await props.importHandler?.(pickedFile.value)
@@ -351,6 +362,11 @@ function onImportCancel(): void {
 
 function downloadTemplate(): void {
   if (props.importTemplateUrl) window.open(props.importTemplateUrl, '_blank')
+}
+
+function openSessionUrl(urlOf: (importId: string) => string): void {
+  const importId = result.value?.importId
+  if (importId) window.open(urlOf(importId), '_blank')
 }
 
 </script>

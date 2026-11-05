@@ -45,13 +45,72 @@ export interface ImportRowError { row: number; message: string }
 export interface ImportPreviewResult { total: number; valid: number; errors: ImportRowError[] }
 export interface ImportResult { imported: number; total: number; errors: ImportRowError[] }
 
+/** 第四批：导入会话（预检→confirm→结果查询/报告/修正文件） */
+export interface ImportSessionPrecheck {
+  importId: string
+  expiresAt: string
+  sheetName: string
+  headerRowNumber: number
+  total: number
+  valid: number
+  rows: Array<{ rowNumber: number; status: 'valid' | 'invalid'; message?: string }>
+  duplicateOf?: { importId: string; createdAt: string }
+}
+export interface ImportSessionStatus {
+  importId: string
+  status: 'pending' | 'processing' | 'done' | 'failed' | 'expired'
+  expiresAt: string
+  fileName: string
+  summary?: { total: number; success: number; invalid: number; unprocessed: number }
+  rows?: Array<{ rowNumber: number; status: string; error?: string | null; createdDocNo?: string | null }>
+}
+
+export async function confirmImportSession(importId: string): Promise<ImportSessionStatus> {
+  return request.post('/examples/items/import/confirm', { importId }, { timeout: 0 })
+}
+export async function getImportSession(importId: string): Promise<ImportSessionStatus> {
+  return request.get(`/examples/items/import/${importId}`)
+}
+export function importReportUrl(importId: string): string {
+  return `${API_BASE}/examples/items/import/${importId}/report`
+}
+export function importErrorFileUrl(importId: string): string {
+  return `${API_BASE}/examples/items/import/${importId}/error-file`
+}
+
 export async function importExamples(file: File): Promise<ImportResult> {
   const form = new FormData()
   form.append('file', file)
   return request.post('/examples/items/import', form)
 }
 /** 预检（F30）：与导入同套规则逐行校验,不写数据;确认导入时服务端会重新验证 */
-export async function precheckExamples(file: File): Promise<ImportPreviewResult> {
+/** 工具栏兼容形态：会话预检映射为预览统计（携带 importId/expiresAt 透传） */
+export async function precheckExamplesForToolbar(file: File): Promise<{ total: number; valid: number; errors: { row: number; message: string }[]; importId: string; expiresAt: string; duplicate?: boolean }> {
+  const session = await precheckExamples(file)
+  return {
+    total: session.total,
+    valid: session.valid,
+    errors: session.rows.filter(row => row.status === 'invalid').map(row => ({ row: row.rowNumber, message: row.message ?? '校验失败' })),
+    importId: session.importId,
+    expiresAt: session.expiresAt,
+    duplicate: !!session.duplicateOf,
+  }
+}
+
+/** 工具栏兼容形态：按 importId 确认，映射 summary 为部分成功结果 */
+export async function confirmExamplesForToolbar(_file: File, importId?: string): Promise<{ imported: number; total: number; errors: { row: number; message: string }[]; unprocessed: number }> {
+  if (!importId) throw new Error('导入会话缺失，请重新预检')
+  const outcome = await confirmImportSession(importId)
+  const summary = outcome.summary ?? { total: 0, success: 0, invalid: 0, unprocessed: 0 }
+  return {
+    imported: summary.success,
+    total: summary.total,
+    errors: (outcome.rows ?? []).filter(row => row.status === 'invalid' || row.status === 'infrastructure_error').map(row => ({ row: row.rowNumber, message: row.error ?? '写入失败' })),
+    unprocessed: summary.unprocessed,
+  }
+}
+
+export async function precheckExamples(file: File): Promise<ImportSessionPrecheck> {
   const form = new FormData()
   form.append('file', file)
   return request.post('/examples/items/import/precheck', form)

@@ -17,8 +17,10 @@
         :create-access="['example-items:create']"
         :import-access="['example-items:import']"
         :export-access="['example-items:export']"
-        :import-precheck="precheckExamples"
-        :import-confirm="importExamples"
+        :import-precheck="precheckExamplesForToolbar"
+        :import-confirm="confirmExamplesForToolbar"
+        :import-report-url="importReportUrl"
+        :import-error-file-url="importErrorFileUrl"
         :import-template-url="exampleImportTemplateUrl"
         :export-url="exportUrl"
         @create="openCreate"
@@ -133,7 +135,7 @@ import { useListPage } from '@/composables/useListPage'
 import { useTableScrollY } from '@/composables/useTableScrollY'
 import { useResizableColumns } from '@/composables/useResizableColumns'
 import { downloadCsv } from '@/utils/csv-download'
-import { batchDeleteExamples, createExample, deleteExample, exampleImportTemplateUrl, getExampleExportUrl, importExamples, listExamples, precheckExamples, type ExampleBatchResult, type ExampleItem, type ExampleListQuery } from '@/api/example'
+import { batchDeleteExamples, confirmExamplesForToolbar, createExample, deleteExample, exampleImportTemplateUrl, getExampleExportUrl, importErrorFileUrl, importReportUrl, listExamples, precheckExamplesForToolbar, type ExampleBatchResult, type ExampleItem, type ExampleListQuery } from '@/api/example'
 import type { DocumentTab as HistoryTab } from '@/api/example'
 
 // 表头固定 + body 内部滚动：高度由容器实测，工具栏换行时自动重算。

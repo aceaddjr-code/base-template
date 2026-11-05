@@ -264,6 +264,14 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
     return { itemId: item.id, docNo: (item as any).docNo };
   }
 
+  /** 导入标准列（第四批 03 修正文件用）：与导入映射同源，不另列清单。 */
+  get importColumns() {
+    return (this.options.excelImportMap ? Object.keys(this.options.excelImportMap) : []).map(key => {
+      const column = this.options.excelColumns?.find((c) => c.key === key);
+      return { header: column?.header ?? key, key, width: column?.width ?? 18 };
+    });
+  }
+
   /** 导入解析入口（第四批）：带原始坐标的受限解析；解析失败统一 400（畸形/多表/超限/表头无效）。 */
   async parseImportWithMeta(buffer: Buffer) {
     try {

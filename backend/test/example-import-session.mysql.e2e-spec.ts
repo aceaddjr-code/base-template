@@ -180,6 +180,29 @@ suite('导入会话：隔离 MySQL＋真实 HTTP', () => {
     void tempUser;
   });
 
+  it('报告与修正文件下载：报告含全行状态；修正文件仅未成功行且他人不可取', async () => {
+    const buffer = buildWorkbook({ rows: [{ title: '报告甲' }, { title: '' }, { title: '报告乙' }] });
+    const precheckResult = await precheck(buffer).expect(201);
+    const importId = precheckResult.body.data.importId;
+    await confirm(importId).expect(201);
+    // 核对报告：全部行（成功 2 + 失败 1）
+    const report = await request(server()).get(`/api/v1/examples/items/import/${importId}/report`)
+      .set('Cookie', session).responseType('blob').expect(200);
+    expect(report.headers['content-type']).toContain('spreadsheet');
+    expect(Buffer.from(report.body as any).length).toBeGreaterThan(1000);
+    // 修正文件：仅失败行（下载成功即 200；无失败行时 400）
+    const errorFile = await request(server()).get(`/api/v1/examples/items/import/${importId}/error-file`)
+      .set('Cookie', session).responseType('blob').expect(200);
+    expect(Buffer.from(errorFile.body as any).length).toBeGreaterThan(1000);
+    // 全部成功会话：修正文件 400
+    const allValid = buildWorkbook({ rows: [{ title: '全成功甲' }] });
+    const validPrecheck = await precheck(allValid).expect(201);
+    await confirm(validPrecheck.body.data.importId).expect(201);
+    const noFailures = await request(server()).get(`/api/v1/examples/items/import/${validPrecheck.body.data.importId}/error-file`).set('Cookie', session);
+    expect(noFailures.status).toBe(400);
+    expect(noFailures.body.message).toContain('没有失败');
+  });
+
   it('同文件重复预检返回已有会话；newBatch 生成新会话；过期会话拒绝确认', async () => {
     const buffer = buildWorkbook({ rows: [{ title: '去重甲' }] });
     const first = await precheck(buffer).expect(201);

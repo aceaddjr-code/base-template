@@ -5,7 +5,7 @@ import { ExampleService } from './example.service';
 import { ExampleImportService } from './example-import.service';
 import { BatchRemoveExampleDto, ChangeExampleOwnerDto, CreateExampleDto, UpdateExampleDto } from './example.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { excelFileFilter, sendExcel } from '../../common/utils/excel-helper';
+import { excelFileFilter, sendExcel, errorFileToExcel, reportToExcel } from '../../common/utils/excel-helper';
 import type { Request, Response } from 'express';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { getUserId } from '../../common/utils/service-helpers';
@@ -130,6 +130,47 @@ export class ExampleController extends CrudBaseController {
   @RequirePermission('example-items:import')
   async importStatus(@Param('importId') importId: string, @Req() req: Request) {
     return this.importService.status(importId, (req.user as any).sub);
+  }
+
+  /** 完整核对报告（第四批 03）：全行状态/原始行号/原因/成功编号；仅供核对，不可作导入模板。 */
+  @SkipRequestAudit()
+  @RequirePermission('example-items:import')
+  @Get('import/:importId/report')
+  async importReport(@Param('importId') importId: string, @Req() req: Request, @Res() res: Response) {
+    const { rows } = await this.importService.rowsForFile(importId, (req.user as any).sub, false);
+    const buffer = await reportToExcel(rows.map(row => ({
+      rowNumber: row.rowNumber,
+      status: row.status,
+      error: row.errorMessage,
+      createdDocNo: row.createdDocNo,
+      title: row.data?.title ?? null,
+    })));
+    sendExcel(res, buffer, `导入核对报告-${importId.slice(0, 8)}.xlsx`);
+  }
+
+  /** 修正文件（第四批 03）：仅未成功行，标准导入列＋标红错误单元格＋原因列；重新预检形成新会话。 */
+  @SkipRequestAudit()
+  @RequirePermission('example-items:import')
+  @Get('import/:importId/error-file')
+  async importErrorFile(@Param('importId') importId: string, @Req() req: Request, @Res() res: Response) {
+    const { rows } = await this.importService.rowsForFile(importId, (req.user as any).sub, true);
+    if (!rows.length) throw new BadRequestException('没有失败或未处理的行，无需下载修正文件');
+    const headers = (this.service.importColumns ?? []).map(column => ({ header: column.header, key: column.key, width: column.width }));
+    const buffer = await errorFileToExcel(
+      rows.map(row => ({
+        values: row.data ?? {},
+        errors: row.cellRefs
+          ? Object.fromEntries(Object.keys(row.cellRefs).map(key => {
+              const related = row.errorMessage && /标题|状态|类别/.test(row.errorMessage) && key === 'title' ? row.errorMessage : null;
+              return [key, related ?? (row.status === 'invalid' ? row.errorMessage : '')];
+            }).filter(([, v]) => !!v))
+          : (row.status === 'invalid' && row.errorMessage ? { title: row.errorMessage } : {}),
+        meta: { rowNumber: row.rowNumber },
+      })),
+      headers,
+      { errorColumnHeader: '错误原因', metaColumns: [{ header: '原始行号', key: 'rowNumber' }] },
+    );
+    sendExcel(res, buffer, `导入修正文件-${importId.slice(0, 8)}.xlsx`);
   }
 
   /** 导入模板（F30）：仅表头,与导入列一致 */
