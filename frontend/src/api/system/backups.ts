@@ -1,11 +1,14 @@
 import request from '../request'
 import { API_BASE } from '../request'
 
-/** 备份文件 */
-export interface BackupFile {
-  filename: string
-  size: number
-  date: string
+/** 备份条目（第三批起区分两类：完整集合以磁盘 manifest 为状态事实来源） */
+export type BackupFile =
+  | { type: 'database-only'; filename: string; size: number; date: string }
+  | { type: 'full-set'; filename: string; backupId: string; state: 'creating' | 'complete' | 'failed' | 'corrupt'; date: string; size?: number; error?: string | null }
+
+/** 兼容缺省：旧后端/历史行未携带 type 时按仅数据库处理 */
+export function isFullSet(entry: BackupFile): boolean {
+  return entry.type === 'full-set'
 }
 
 /** 备份文件列表（admin-only） */

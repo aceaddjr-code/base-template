@@ -7,14 +7,14 @@
 // 契约：.scratch/backup-recovery-phase3/set-format.md。旧 scripts/backup.mjs（仅数据库）保留不动。
 import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
-import { mkdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { mkdir, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
 import mysql from '../backend/node_modules/mysql2/promise.js';
 import {
-  BackupToolError, CLEAN_KEEP_LAST, FAILED_PREFIX, LOCK_NAME, MANIFEST_NAME, FORMAT_VERSION, STAGING_PREFIX,
+  BackupToolError, CLEAN_KEEP_LAST, FAILED_PREFIX, FULL_SET_DIR_RE, LOCK_NAME, MANIFEST_NAME, FORMAT_VERSION, STAGING_PREFIX,
   acquireBackupLock, assertNotNested, atomicRenameDir, buildBackupId, cleanExpired, copyTreeVerified,
   gunzipSmoke, listBackupEntries, writeJson,
 } from './lib/backup-lib.mjs';
@@ -27,6 +27,10 @@ catch (error) { if (error.code !== 'ENOENT') throw new Error('无法读取 backe
 const args = process.argv.slice(2);
 const command = args[0];
 const flags = new Set(args.filter(a => a.startsWith('--')));
+const option = (name) => {
+  const index = args.indexOf(`--${name}`);
+  return index >= 0 ? args[index + 1] : undefined;
+};
 const env = process.env;
 
 function requireEnvDatabase(database) {
@@ -54,6 +58,51 @@ async function main() {
     }
     const result = await cleanExpired(backupDir, keepDays, { dryRun: !flags.has('--yes') });
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    return;
+  }
+  if (command === 'copy-offsite') {
+    // 本地演练用的“临时异地”副本：复制 complete 集合到独立目录并逐项复验；
+    // 真实异地目标/加密/告警由 drafts/05 收集资料后另立任务。
+    const backupId = option('backup');
+    const target = option('target');
+    if (!backupId || !target) throw new BackupToolError('用法：copy-offsite --backup <backupId> --target <目录>');
+    if (!FULL_SET_DIR_RE.test(backupId)) throw new BackupToolError('备份集合 ID 格式非法');
+    const backupDir = resolve(env.BACKUP_DIR || resolve(root, 'backups'));
+    const setDir = resolve(backupDir, backupId);
+    const manifest = JSON.parse(await readFile(join(setDir, MANIFEST_NAME), 'utf8'));
+    if (manifest.state !== 'complete') throw new BackupToolError('仅 complete 集合可复制异地副本');
+    const privateRoot = resolve(backendDir, env.ATTACHMENT_PRIVATE_DIR || 'uploads-private');
+    const publicRoot = resolve(backendDir, env.UPLOAD_DIR || 'uploads');
+    const destination = resolve(target);
+    assertNotNested(destination, backupDir, '异地目录', '备份目录');
+    assertNotNested(destination, privateRoot, '异地目录', '附件私有根');
+    assertNotNested(destination, publicRoot, '异地目录', '公开上传根');
+    const existing = await readdir(destination).catch(() => null);
+    if (existing && existing.length) throw new BackupToolError('异地目录非空，拒绝覆盖既有内容');
+    const destSet = join(destination, backupId);
+    await mkdir(destSet, { recursive: true });
+    const { copyFile: copy, stat: statFile } = await import('node:fs/promises');
+    const { sha256File } = await import('./lib/backup-lib.mjs');
+    let copied = 0;
+    for (const file of manifest.files) {
+      const from = join(setDir, file.path);
+      const to = join(destSet, file.path);
+      await mkdir(dirname(to), { recursive: true });
+      // 单文件失败重试一次（网络盘/移动介质抖动）；仍失败则中止并保留已复制目录供人工处置
+      let lastError = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          await copy(from, to);
+          if (await sha256File(to) !== file.sha256) throw new Error(`校验和不符：${file.path}`);
+          lastError = null;
+          break;
+        } catch (error) { lastError = error; await rm(to, { force: true }).catch(() => {}); }
+      }
+      if (lastError) throw new BackupToolError(`异地复制失败（重试一次后仍失败）：${sanitize(lastError)}`);
+      copied += 1;
+    }
+    await writeJson(join(destSet, MANIFEST_NAME), manifest);
+    process.stdout.write(JSON.stringify({ backupId, destination, copied }) + '\n');
     return;
   }
   if (command !== 'backup') {
@@ -151,8 +200,14 @@ async function readMigrations(database) {
     user: env.DB_USERNAME || 'root', password: env.DB_PASSWORD || '', database,
   });
   try {
-    const [rows] = await connection.query('SELECT name FROM schema_migrations ORDER BY name');
-    return rows.map(row => String(row.name));
+    // 开发库由 synchronize 建表时可能没有账本表：按空清单记录并在恢复端提示差异
+    try {
+      const [rows] = await connection.query('SELECT name FROM schema_migrations ORDER BY name');
+      return rows.map(row => String(row.name));
+    } catch (error) {
+      if (error?.code === 'ER_NO_SUCH_TABLE') return [];
+      throw error;
+    }
   } finally { await connection.end(); }
 }
 

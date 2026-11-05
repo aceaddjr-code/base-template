@@ -14,11 +14,11 @@
           <SafetyOutlined class="text-2xl text-primary mt-1" />
           <div class="text-sm guide-text leading-relaxed">
             <div class="font-bold guide-title mb-1">数据库备份</div>
-            <div>· 点击立即备份后可查看执行状态，执行期间仍可浏览系统；同一服务进程一次执行一个手动备份。</div>
+            <div>· 点击立即备份仅生成「仅数据库」转储（sql.gz）；「完整集合」（数据库＋附件＋清单）须由运维在停写窗口用本机工具发起，页面不提供一键完整备份。</div>
             <div>· 默认保留 30 天，可由管理员配置；定时执行与异地保存需在部署环境另行配置。</div>
             <div class="mt-2 font-bold guide-title">恢复指引</div>
-            <div>· 下载备份后交管理员在隔离数据库验证恢复，再按维护计划操作正式环境；当前页面不提供恢复执行。</div>
-            <div>· 数据库备份不包含上传附件，请另行备份附件目录。存在备份文件不代表已经完成恢复验证。</div>
+            <div>· 完整集合用隔离恢复工具恢复到新库/新目录验证（工具输出含隔离启动提示）；「仅数据库」下载后同样先隔离验证。当前页面不提供恢复执行。</div>
+            <div>· 存在备份文件不代表已经完成恢复验证；完整集合状态以清单为准（creating/complete/failed）。</div>
           </div>
         </div>
         <a-alert v-if="backupState.status !== 'idle'" class="mt-3" show-icon
@@ -36,7 +36,7 @@
         :data-source="pagedRecords"
         :loading="loading"
         :pagination="false"
-        :scroll="{ x: 720, y: tableScrollY }"
+        :scroll="{ x: 900, y: tableScrollY }"
         row-key="filename"
         size="middle"
       >
@@ -45,9 +45,21 @@
           <span class="resize-handle" @click.stop @mousedown.prevent.stop="(e: any) => resizeStart(String(column.key), e)" />
         </template>
         <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'size'">{{ formatNumber(record.size) }} B</template>
+          <template v-if="column.key === 'type'">
+            <a-tag v-if="record.type === 'full-set'" color="geekblue">完整集合</a-tag>
+            <a-tag v-else>仅数据库</a-tag>
+          </template>
+          <template v-if="column.key === 'state'">
+            <template v-if="record.type === 'full-set'">
+              <a-tooltip v-if="record.error" :title="record.error"><a-badge :status="stateBadge(record.state)" :text="stateText(record.state)" /></a-tooltip>
+              <a-badge v-else :status="stateBadge(record.state)" :text="stateText(record.state)" />
+            </template>
+            <span v-else>-</span>
+          </template>
+          <template v-if="column.key === 'size'">{{ record.type === 'full-set' ? '—' : `${formatNumber(record.size)} B` }}</template>
           <template v-if="column.key === 'action'">
-            <a-button type="link" size="small" :aria-label="`下载 ${record.filename}`" @click="handleDownload(record.filename)">下载</a-button>
+            <a-button v-if="record.type !== 'full-set'" type="link" size="small" :aria-label="`下载 ${record.filename}`" @click="handleDownload(record.filename)">下载</a-button>
+            <span v-else class="text-text-tertiary">工具管理</span>
           </template>
         </template>
         <template #emptyText>
@@ -116,10 +128,14 @@ const pagedRecords = computed(() => {
 
 const columns = withEmptyDash([
   { title: '备份时间', dataIndex: 'date', key: 'date', width: 180 },
-  { title: '文件名', dataIndex: 'filename', key: 'filename', ellipsis: true },
-  { title: '大小', dataIndex: 'size', key: 'size', width: 120 },
-  { title: '操作', key: 'action', width: 70 },
+  { title: '类型', key: 'type', width: 110 },
+  { title: '名称', dataIndex: 'filename', key: 'filename', ellipsis: true },
+  { title: '集合状态', key: 'state', width: 130 },
+  { title: '大小', dataIndex: 'size', key: 'size', width: 110 },
+  { title: '操作', key: 'action', width: 90 },
 ])
+const stateText = (state?: string) => state === 'complete' ? 'complete' : state === 'creating' ? 'creating' : state === 'failed' ? 'failed' : state === 'corrupt' ? 'corrupt' : '-'
+const stateBadge = (state?: string) => state === 'complete' ? 'success' : state === 'creating' ? 'processing' : 'error'
 const { resizeStart } = useResizableColumns('starter-cols-backups-main-width', ref(columns))
 
 async function fetchData() {
