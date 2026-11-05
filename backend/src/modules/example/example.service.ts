@@ -23,7 +23,7 @@ const CATEGORY_DICT = 'item_category';
 /** 单据编号前缀：EX-yyyymmdd-001，创建时生成、全库唯一、不可修改。 */
 const DOC_NO_PREFIX = 'EX';
 import type { ScopeUser } from '../../common/utils/data-scope';
-import { dataToExcel, excelToData } from '../../common/utils/excel-helper';
+import { dataToExcel, excelToData, excelToDataWithMeta } from '../../common/utils/excel-helper';
 
 const STATUS_LABELS = { pending: '待处理', doing: '进行中', done: '已完成' };
 interface EventContext { interactionId?: string; requestId?: string; source?: 'web' | 'import'; batchId?: string; rowNumber?: number }
@@ -236,16 +236,42 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
     if (actorId == null) throw new UnauthorizedException('未登录');
     // 单据编号并发撞号时整个事务重跑（事件随事务回滚，不会重复记录）。
     return withDocNoRetry(() =>
-      this.repo.manager.transaction(async manager => {
-        const next = await generateDocNo(DOC_NO_PREFIX, manager.getRepository(ExampleItem), 'docNo');
-        const reserved = await generateDocNo(DOC_NO_PREFIX, manager.getRepository(ExampleReservedNumber), 'docNo');
-        const docNo = Number(next.split('-').at(-1)) >= Number(reserved.split('-').at(-1)) ? next : reserved;
-        const item = await manager.getRepository(ExampleItem).save({ ...validated, category: validated.category || null, description: validated.description || null, remark: validated.remark || null, version: 1, docNo, ownerId: actorId, createdBy: actorId });
-        await this.appendEvent(manager, item, 'create', user, context);
-        return item;
-      }),
+      this.repo.manager.transaction(async manager => this.createWithinTx(manager, validated, actorId, user, context)),
     { onRetry: attempt => this.logger.warn(`单据编号冲突，重新生成重试（第 ${attempt} 次）`) },
     );
+  }
+
+  /** 事务体（第四批抽取）：普通 create 与导入确认共用；docNo 生成＋保存＋履历同事务。 */
+  private async createWithinTx(manager: EntityManager, validated: ReturnType<typeof validateExample>, actorId: number, user: ScopeUser | undefined, context: EventContext) {
+    const next = await generateDocNo(DOC_NO_PREFIX, manager.getRepository(ExampleItem), 'docNo');
+    const reserved = await generateDocNo(DOC_NO_PREFIX, manager.getRepository(ExampleReservedNumber), 'docNo');
+    const docNo = Number(next.split('-').at(-1)) >= Number(reserved.split('-').at(-1)) ? next : reserved;
+    const item = await manager.getRepository(ExampleItem).save({ ...validated, category: validated.category || null, description: validated.description || null, remark: validated.remark || null, version: 1, docNo, ownerId: actorId, createdBy: actorId });
+    await this.appendEvent(manager, item, 'create', user, context);
+    return item;
+  }
+
+  /**
+   * 导入会话行写入（第四批）：在调用方给定的同一事务内重新校验（字典可能停用/数据可能变化）
+   * →创建单据→回填行成功状态由 ExampleImportService 完成。返回 {itemId, docNo}。
+   */
+  async importRowWithinTx(manager: EntityManager, row: { rowNumber: number; data: Record<string, any> }, user: ScopeUser, importId: string) {
+    const actorId = getUserId(user);
+    if (actorId == null) throw new UnauthorizedException('未登录');
+    const validated = validateExample(row.data);
+    await this.assertCategorySelectable(validated.category ?? null);
+    const item = await this.createWithinTx(manager, validated, actorId, user, { source: 'import', batchId: importId, rowNumber: row.rowNumber });
+    return { itemId: item.id, docNo: (item as any).docNo };
+  }
+
+  /** 导入解析入口（第四批）：带原始坐标的受限解析；解析失败统一 400（畸形/多表/超限/表头无效）。 */
+  async parseImportWithMeta(buffer: Buffer) {
+    try {
+      return await excelToDataWithMeta(buffer, this.options.excelImportMap!);
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      throw new BadRequestException((error as Error).message || '文件无法解析');
+    }
   }
 
   override async update(id: number, dto: unknown, userId?: number, user?: ScopeUser, context: EventContext = {}) {
@@ -399,6 +425,11 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
     return dataToExcel([], headers);
   }
 
+  /** 导入会话服务回调入口（第四批）：与内部钩子同一实现。 */
+  prepareImportRowsForSession(rows: Record<string, any>[]): Promise<Record<string, any>[]> {
+    return this.prepareImportRows(rows);
+  }
+
   /** 导入接受导出的展示值：状态与类别的字典标签整批翻译回内部值（F30/F40）；已是内部值原样通过 */
   protected override async prepareImportRows(rows: Record<string, any>[]): Promise<Record<string, any>[]> {
     const labelBook = await this.dictService?.getLabelBook(CATEGORY_DICT);
@@ -418,5 +449,10 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
   protected override async validateImportRow(row: Record<string, any>): Promise<void> {
     validateExample(row);
     await this.assertCategorySelectable(row.category ?? null);
+  }
+
+  /** 导入会话服务回调入口（第四批）：与内部钩子同一实现，不另写一套校验。 */
+  validateImportRowPublic(row: Record<string, any>): Promise<void> {
+    return this.validateImportRow(row);
   }
 }

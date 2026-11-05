@@ -166,3 +166,121 @@ export function sendExcel(res: any, buffer: Buffer, filename: string) {
   res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
   res.send(buffer);
 }
+
+// ===== 第四批：带原始坐标的解析（导入专用；导出等旧调用方继续用 excelToData） =====
+
+export interface ParsedCellMeta { row: number; column: number; header: string }
+export interface ParsedRowMeta {
+  rowNumber: number;
+  cells: Record<string, ParsedCellMeta>;
+  data: Record<string, any>;
+}
+export interface ParseResultWithMeta {
+  sheetName: string;
+  headerRowNumber: number;
+  rows: ParsedRowMeta[];
+  otherDataSheets: string[];
+  parseVersion: 1;
+}
+
+/**
+ * 解析导入文件并保留原始行列坐标：
+ * - 前 3 行内探测表头（命中 colMap 任一表头名），兼容单据名标题行；
+ * - 空行跳过但不影响后续原始行号；日期翻译逻辑与 excelToData 一致；
+ * - 除首个数据工作表外存在任何非空单元格的工作表 → 拒绝（指名，防静默遗漏）；
+ * - 数据行数上限 maxRows（默认 1000）：探测到超限整表拒绝。
+ */
+export async function excelToDataWithMeta(
+  buffer: Buffer,
+  colMap: Record<string, string[]>,
+  maxRows = 1000,
+  dateHeaderPattern: RegExp = /日期|时间/,
+): Promise<ParseResultWithMeta> {
+  const workbook = XLSX.read(buffer, { type: 'buffer' });
+  if (!workbook.SheetNames.length) throw new Error('文件中没有工作表');
+  const sheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+
+  // 其他含数据工作表：任何一个非空单元格即视为含数据
+  const otherDataSheets: string[] = [];
+  for (const name of workbook.SheetNames.slice(1)) {
+    const other = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 }) as any[][];
+    if (other.some(r => Array.isArray(r) && r.some(c => c !== undefined && c !== null && c !== ''))) {
+      otherDataSheets.push(name);
+    }
+  }
+  if (otherDataSheets.length) {
+    throw new Error(`文件包含多个数据工作表（${otherDataSheets.join('、')}），仅支持导入首个工作表，请拆分后重试`);
+  }
+
+  // 表头探测：前 3 行内找命中 colMap 至少 1 列的行
+  let headerRowIdx = -1;
+  let header: string[] = [];
+  for (let i = 0; i < Math.min(3, rows.length); i++) {
+    const candidate = rows[i] as string[];
+    const hits = Object.values(colMap).some(names => names.some(name => candidate?.some(h => h?.toString().trim() === name)));
+    if (hits) { headerRowIdx = i; header = candidate; break; }
+  }
+  if (headerRowIdx < 0) {
+    throw new Error('前 3 行内未找到有效表头，请使用标准导入模板');
+  }
+
+  // 列匹配（重复表头取首个命中）
+  const idxMap: Record<string, { idx: number; header: string }> = {};
+  for (const [key, names] of Object.entries(colMap)) {
+    for (const name of names) {
+      const idx = header.findIndex(h => h?.toString().trim() === name);
+      if (idx >= 0) { idxMap[key] = { idx, header: name }; break; }
+    }
+  }
+  if (Object.keys(idxMap).length === 0) {
+    throw new Error('Excel 列名不匹配，请检查表头是否包含正确的列名');
+  }
+
+  function excelDateToStr(raw: any): string {
+    const num = typeof raw === 'number' ? raw : Number(String(raw).trim());
+    if (!Number.isFinite(num) || num < 1 || num > 100000) return String(raw ?? '').trim();
+    const whole = Math.floor(num);
+    const d = new Date(Date.UTC(1899, 11, 30) + whole * 86400000);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const date = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+    const frac = num - whole;
+    if (frac > 0) {
+      const totalSec = Math.round(frac * 86400);
+      return `${date} ${pad(Math.floor(totalSec / 3600))}:${pad(Math.floor((totalSec % 3600) / 60))}:${pad(totalSec % 60)}`;
+    }
+    return date;
+  }
+
+  const result: ParsedRowMeta[] = [];
+  for (let i = headerRowIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.every((c: any) => c === undefined || c === null || c === '')) continue;
+    if (result.length >= maxRows) {
+      throw new Error(`数据行数超过上限 ${maxRows} 行，请分批导入`);
+    }
+    const record: Record<string, any> = {};
+    const cells: Record<string, ParsedCellMeta> = {};
+    for (const [key, { idx, header: headerName }] of Object.entries(idxMap)) {
+      const raw = row[idx];
+      if (raw !== undefined && raw !== null && raw !== '') {
+        cells[key] = { row: i + 1, column: idx + 1, header: headerName };
+      }
+      let val = raw?.toString()?.trim();
+      if (dateHeaderPattern.test(headerName)) {
+        if (typeof raw === 'number' || /^\d+(\.\d+)?$/.test(String(raw ?? '').trim())) {
+          val = excelDateToStr(raw);
+        } else if (raw instanceof Date && !isNaN(raw.getTime())) {
+          const d = raw;
+          const m = String(d.getMonth() + 1).padStart(2, '0');
+          const day = String(d.getDate()).padStart(2, '0');
+          val = `${d.getFullYear()}-${m}-${day}`;
+        }
+      }
+      if (val !== undefined && val !== '') record[key] = val;
+    }
+    result.push({ rowNumber: i + 1, cells, data: record });
+  }
+  return { sheetName, headerRowNumber: headerRowIdx + 1, rows: result, otherDataSheets: [], parseVersion: 1 };
+}

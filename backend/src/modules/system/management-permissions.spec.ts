@@ -19,6 +19,7 @@ import { AttachmentService } from '../attachment/attachment.service';
 import { AttachmentUploadInterceptor } from '../attachment/attachment-upload.interceptor';
 import { ExampleController } from '../example/example.controller';
 import { ExampleService } from '../example/example.service';
+import { ExampleImportService } from '../example/example-import.service';
 import { UserController } from '../user/user.controller';
 import { UserService } from '../user/user.service';
 import { UserDataScopeService } from '../user/user-data-scope.service';
@@ -58,7 +59,8 @@ describe('管理权限 HTTP 边界（真实控制器、角色守卫与权限守�
       providers: [
         { provide: AnnouncementService, useValue: announcement }, { provide: DictService, useValue: dict },
         { provide: SystemLogService, useValue: logs }, { provide: AttachmentService, useValue: attachment },
-        { provide: ExampleService, useValue: example }, { provide: ConfigService, useValue: new ConfigService() },
+        { provide: ExampleService, useValue: example },
+        { provide: ExampleImportService, useValue: { precheck: jest.fn(), confirm: jest.fn(), status: jest.fn() } }, { provide: ConfigService, useValue: new ConfigService() },
         { provide: AuthService, useValue: { getUserAccessCodes: async () => codes } },
         { provide: UserService, useValue: user },
         { provide: UserDataScopeService, useValue: { listScopeForms: jest.fn(), getPanelRows: jest.fn() } },

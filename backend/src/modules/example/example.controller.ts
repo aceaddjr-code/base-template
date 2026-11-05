@@ -2,6 +2,7 @@ import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe
 import { CrudBaseController } from '../../common/controllers/crud-base.controller';
 import { CrudPermPrefix } from '../../common/decorators/crud-perm-prefix.decorator';
 import { ExampleService } from './example.service';
+import { ExampleImportService } from './example-import.service';
 import { BatchRemoveExampleDto, ChangeExampleOwnerDto, CreateExampleDto, UpdateExampleDto } from './example.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { excelFileFilter, sendExcel } from '../../common/utils/excel-helper';
@@ -18,7 +19,10 @@ import { AttachmentUploadInterceptor } from '../attachment/attachment-upload.int
 @CrudPermPrefix('example-items')
 @Controller('examples/items')
 export class ExampleController extends CrudBaseController {
-  constructor(protected readonly service: ExampleService) {
+  constructor(
+    protected readonly service: ExampleService,
+    private readonly importService: ExampleImportService,
+  ) {
     super(service);
   }
 
@@ -87,13 +91,45 @@ export class ExampleController extends CrudBaseController {
     return this.service.history(id, 'changes', query, req.user as any);
   }
 
-  /** 预检（F30）：逐行走导入同套规则,不写任何数据;确认导入时服务端会重新验证 */
+  /** 旧确认导入（无会话/无幂等）已收敛：拒绝并指向新路径（第四批契约 §3）。 */
+  @Post('import')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 }, fileFilter: excelFileFilter }))
+  override async importExcel(@UploadedFile() file: Express.Multer.File): Promise<never> {
+    if (!file) throw new BadRequestException('请上传 Excel 文件');
+    throw new BadRequestException('导入已升级为会话模式：请先调用 import/precheck，再用 importId 调用 import/confirm');
+  }
+
+  /**
+   * 预检（第四批会话化）：解析→逐行校验（不写业务记录）→创建/复用导入会话。
+   * 同文件已有 pending 会话直接返回（duplicateOf 提示）；?newBatch=1 显式新批次（将重复创建已成功记录）。
+   */
   @Post('import/precheck')
   @RequirePermission('example-items:import')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 }, fileFilter: excelFileFilter }))
   async importPrecheck(@UploadedFile() file: Express.Multer.File, @Req() req: Request) {
     if (!file) throw new BadRequestException('请上传 Excel 文件');
-    return this.service.importPreview(file.buffer, getUserId(req.user) ?? undefined, req.user as any);
+    const user = req.user as any;
+    return this.importService.precheck(file.buffer, file.originalname, user.sub, {
+      parse: buffer => this.service.parseImportWithMeta(buffer),
+      validateRow: row => this.service.validateImportRowPublic(row),
+      prepareRows: rows => this.service.prepareImportRowsForSession(rows),
+    }, req.query.newBatch === '1');
+  }
+
+  /** 确认导入（第四批）：只按服务端保存的预检行写入；幂等——重复确认/响应丢失重试不重复建单。 */
+  @Post('import/confirm')
+  @RequirePermission('example-items:import')
+  async importConfirm(@Body() dto: { importId: string }, @Req() req: Request) {
+    if (!dto?.importId || typeof dto.importId !== 'string') throw new BadRequestException('缺少 importId');
+    const user = req.user as any;
+    return this.importService.confirm(dto.importId, user.sub, (manager, row) => this.service.importRowWithinTx(manager, row, user, dto.importId));
+  }
+
+  /** 会话状态/结果查询（第四批）：仅本人；刷新可恢复。 */
+  @Get('import/:importId')
+  @RequirePermission('example-items:import')
+  async importStatus(@Param('importId') importId: string, @Req() req: Request) {
+    return this.importService.status(importId, (req.user as any).sub);
   }
 
   /** 导入模板（F30）：仅表头,与导入列一致 */
