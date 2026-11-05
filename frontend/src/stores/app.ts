@@ -159,5 +159,5 @@ export const useAppStore = defineStore('app', () => {
     return syncProfile(() => updateMyProfile(data))
   }
 
-  return { sidebarCollapsed, userInfo, menus, mustChangePassword, siteName, helpContact, toggleSidebar, clearAuth, ensureSession, signIn, signOut, refreshProfile, updateProfile, refreshPublicSettings }
+  return { sidebarCollapsed, userInfo, menus, mustChangePassword, publicSettings, siteName, helpContact, toggleSidebar, clearAuth, ensureSession, signIn, signOut, refreshProfile, updateProfile, refreshPublicSettings }
 })

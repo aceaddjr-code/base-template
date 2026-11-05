@@ -22,9 +22,10 @@ export const MANAGEMENT_ACTION_SPEC: Record<string, { prefix: string; actions: A
   logs: { prefix: 'system-logs', actions: [['view', '查看']] },
   attachments: { prefix: 'attachments', actions: [['view', '查看'], ['upload', '上传'], ['download', '下载'], ['delete', '删除'], ['cleanup', '回收已删除附件文件']] },
   users: { prefix: 'users', actions: [['reset-password', '重置密码'], ['revoke-sessions', '退出全部登录'], ['permission-explain', '权限效果']] },
+  settings: { prefix: 'system-settings', actions: [['update', '修改系统参数']] },
 };
 
-/** 全部管理操作权限码（19 项）；测试用它交叉核对种子与补丁不漏项 */
+/** 全部管理操作权限码（20 项）；测试用它交叉核对种子与补丁不漏项 */
 export const MANAGEMENT_PERMISSION_CODES: string[] = Object.values(MANAGEMENT_ACTION_SPEC)
   .flatMap(({ prefix, actions }) => actions.map(([action]) => `${prefix}:${action}`));
 

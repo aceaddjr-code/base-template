@@ -4,7 +4,7 @@ import request, { type FormRequestOptions } from './request'
 export interface SettingItem {
   key: string
   name: string
-  type: 'string' | 'text'
+  type: 'string' | 'text' | 'boolean'
   public: boolean
   description: string
   maxLength: number
@@ -14,8 +14,8 @@ export interface SettingItem {
   updatedAt: string | null
 }
 
-/** 管理列表（仅 admin） */
-export function getSettings(): Promise<SettingItem[]> {
+/** 管理列表（仅 admin）；第六批起返回 { list, revision }（乐观并发基准） */
+export function getSettings(): Promise<{ list: SettingItem[]; revision: number }> {
   return request.get('/system/settings')
 }
 
@@ -24,6 +24,11 @@ export function getPublicSettings(): Promise<Record<string, string>> {
   return request.get('/system/settings/public')
 }
 
-export function updateSetting(key: string, value: string, options?: FormRequestOptions): Promise<SettingItem> {
-  return request.put(`/system/settings/${encodeURIComponent(key)}`, { value }, options)
+export function updateSetting(key: string, value: string, options?: FormRequestOptions, baseRevision?: number): Promise<SettingItem> {
+  return request.put(`/system/settings/${encodeURIComponent(key)}`, { value, ...(baseRevision !== undefined ? { baseRevision } : {}) }, options)
+}
+
+/** 原子批量更新（第六批）：白名单/去重/组合校验/修订号条件更新（409→保留草稿） */
+export function updateSettingsBatch(items: Array<{ key: string; value: string }>, baseRevision: number, options?: FormRequestOptions): Promise<{ list: SettingItem[]; revision: number }> {
+  return request.put('/system/settings/batch', { items, baseRevision }, options)
 }

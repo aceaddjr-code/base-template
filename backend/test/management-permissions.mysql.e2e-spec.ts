@@ -9,7 +9,7 @@ suite('管理权限补丁：隔离 MySQL', () => {
   let created = false;
   const database = process.env.TEST_PERMISSION_DATABASE!;
   // 权限节点补丁按文件名顺序执行；清单以 MANAGEMENT_PERMISSION_CODES 为准交叉核对。
-  const patches = ['20261031-management-permissions.sql', '20261104-account-security.sql', '20261104-permission-explain.sql']
+  const patches = ['20261031-management-permissions.sql', '20261104-account-security.sql', '20261104-permission-explain.sql', '20261105-settings-revision.sql']
     .map((file) => readFileSync(resolve('..', 'docs/sql', file), 'utf8'));
   beforeAll(async () => {
     const host = process.env.DB_HOST || 'localhost';
@@ -26,11 +26,12 @@ suite('管理权限补丁：隔离 MySQL', () => {
       CREATE TABLE roles (id int PRIMARY KEY, code varchar(50), status tinyint DEFAULT 1, deleted_at datetime NULL);
       CREATE TABLE role_menus (role_id int, menu_id int, PRIMARY KEY(role_id, menu_id));
       CREATE TABLE users (id int PRIMARY KEY, role_id int, token_version int DEFAULT 1, deleted_at datetime NULL);
+      CREATE TABLE sys_settings (id int AUTO_INCREMENT PRIMARY KEY, setting_key varchar(100), value varchar(500), revision int NOT NULL DEFAULT 0);
       CREATE TABLE user_roles (user_id int, role_id int, deleted_at datetime NULL);
     `);
   });
   beforeEach(async () => {
-    await connection.query(`DELETE FROM role_menus; DELETE FROM user_roles; DELETE FROM users; DELETE FROM roles; DELETE FROM menus;
+    await connection.query(`DELETE FROM sys_settings; DELETE FROM role_menus; DELETE FROM user_roles; DELETE FROM users; DELETE FROM roles; DELETE FROM menus;
       INSERT INTO menus (id, name, path) VALUES (1, '系统管理', '/system');
       INSERT INTO roles (id, code) VALUES (1, 'admin'), (2, 'user');
       INSERT INTO users (id, role_id) VALUES (1, 1), (2, 2), (3, 2);
@@ -48,7 +49,7 @@ suite('管理权限补丁：隔离 MySQL', () => {
     expect(buttons).toHaveLength(MANAGEMENT_PERMISSION_CODES.length);
     expect((buttons as any[]).map(row => row.permission).sort()).toEqual([...MANAGEMENT_PERMISSION_CODES].sort());
     for (const row of buttons as any[]) {
-      const page = row.permission.startsWith('dicts:') ? 'dict' : row.permission.startsWith('system-logs:') ? 'logs' : row.permission.split(':')[0];
+      const page = row.permission.startsWith('dicts:') ? 'dict' : row.permission.startsWith('system-logs:') ? 'logs' : row.permission.startsWith('system-settings:') ? 'settings' : row.permission.split(':')[0];
       expect(row.path).toBe(`/system/${page}`);
     }
     const [grants] = await connection.query('SELECT role_id FROM role_menus');
@@ -56,7 +57,7 @@ suite('管理权限补丁：隔离 MySQL', () => {
     expect((grants as any[]).every(row => row.role_id === 1)).toBe(true);
     // 三份补丁各执行两次：admin 用户每次执行各递增一次版本（1 + 2×3）；普通用户不变。
     const [users] = await connection.query('SELECT id, token_version FROM users ORDER BY id');
-    expect(users).toEqual([{ id: 1, token_version: 7 }, { id: 2, token_version: 1 }, { id: 3, token_version: 7 }]);
+    expect(users).toEqual([{ id: 1, token_version: 9 }, { id: 2, token_version: 1 }, { id: 3, token_version: 9 }]);
   });
 
   it('保留已有停用、软删除权限与普通角色自定义授权，不覆盖或复活', async () => {
@@ -81,13 +82,25 @@ suite('管理权限补丁：隔离 MySQL', () => {
   it('启用前回滚演练：按补丁尾部说明逆向移除节点/授权与结构，恢复补丁前形态', async () => {
     await connection.query(patches.join('\n'));
     // 逆向一：按本次新增权限码定向移除 role_menus / menus（不按路径批量删，不降 token_version）
-    await connection.query(`DELETE FROM role_menus WHERE menu_id IN (SELECT id FROM menus WHERE permission IN ('users:reset-password','users:revoke-sessions','users:permission-explain'));
-      DELETE FROM menus WHERE permission IN ('users:reset-password','users:revoke-sessions','users:permission-explain');
+    await connection.query(`DELETE FROM role_menus WHERE menu_id IN (SELECT id FROM menus WHERE permission IN ('users:reset-password','users:revoke-sessions','users:permission-explain','system-settings:update'));
+      DELETE FROM menus WHERE permission IN ('users:reset-password','users:revoke-sessions','users:permission-explain','system-settings:update');
       DROP TEMPORARY TABLE IF EXISTS account_security_permissions_20261104;
-      DROP TEMPORARY TABLE IF EXISTS permission_explain_20261104;`);
+      DROP TEMPORARY TABLE IF EXISTS permission_explain_20261104;
+      DROP TEMPORARY TABLE IF EXISTS settings_update_permission_20261105;
+      SET @rev_col2 = IF(EXISTS(SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='sys_settings' AND COLUMN_NAME='revision'), 'ALTER TABLE sys_settings DROP COLUMN revision', 'SELECT ''skip''');
+      PREPARE s2 FROM @rev_col2;
+      EXECUTE s2;
+      DEALLOCATE PREPARE s2;
+      SET @user_cols = IF(EXISTS(SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='users' AND COLUMN_NAME='must_change_password'), 'ALTER TABLE users DROP COLUMN must_change_password, DROP COLUMN temporary_password_expires_at', 'SELECT ''skip''');
+      PREPARE s3 FROM @user_cols;
+      EXECUTE s3;
+      DEALLOCATE PREPARE s3;`);
     // 逆向二：删除计数表与 users 两列（未启用路径：配套代码未发布）
     await connection.query('DROP TABLE IF EXISTS login_attempt_counters');
-    await connection.query('ALTER TABLE users DROP COLUMN must_change_password, DROP COLUMN temporary_password_expires_at');
+    const [revCols] = await connection.query("SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='sys_settings' AND COLUMN_NAME='revision'");
+    if (Number((revCols as any[])[0].n)) await connection.query('ALTER TABLE sys_settings DROP COLUMN revision');
+    const [userCols] = await connection.query("SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='users' AND COLUMN_NAME='must_change_password'");
+    if (Number((userCols as any[])[0].n)) await connection.query('ALTER TABLE users DROP COLUMN must_change_password, DROP COLUMN temporary_password_expires_at');
     const [buttons] = await connection.query("SELECT COUNT(*) AS n FROM menus WHERE permission IN ('users:reset-password','users:revoke-sessions')");
     expect(Number((buttons as any[])[0].n)).toBe(0);
     const [grants] = await connection.query("SELECT COUNT(*) AS n FROM role_menus rm JOIN menus m ON m.id = rm.menu_id WHERE m.permission LIKE 'users:%'");

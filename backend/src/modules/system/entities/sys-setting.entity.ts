@@ -10,4 +10,8 @@ export class SysSetting extends BaseEntity {
 
   @Column({ type: 'varchar', length: 500, comment: '参数值（按注册表类型的字符串形式存储）' })
   value: string;
+
+  /** 全局参数修订号：任一参数更新递增（乐观并发，第六批）；行取值仅以 0 为起点。 */
+  @Column({ type: 'int', default: 0, comment: '全局参数修订号，任一更新递增' })
+  revision: number;
 }

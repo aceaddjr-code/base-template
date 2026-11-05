@@ -1,5 +1,9 @@
 # 数据库变更
 
+## 2026-11-05 系统参数修订号与更新权限（第六批）
+
+`20261105-settings-revision.sql` 为 `sys_settings` 加 `revision` 全局修订号列（任一参数更新递增，乐观并发），并为系统参数页补 `system-settings:update` 按钮节点（仅授 admin）。无存量数据迁移；维护通知 boolean 参数等由代码注册表定义，取值行首次修改懒创建。执行后 admin 需重新登录。回退：先关闭横幅，再定向移除节点；参数取值不清空。
+
 ## 2026-11-05 通知 outbox 与来源唯一键（第五批）
 
 `20261105-notification-outbox.sql` 新建 `notification_outbox`（业务键 `event_id+recipient_id+type` 唯一、领取索引含租约/重试时刻）并为 `notifications` 补 `source_key` 来源唯一键（旧数据 NULL，已读状态保留）。端点由第五批任务 02/03 实现后发布。开发库由 synchronize 自动建。

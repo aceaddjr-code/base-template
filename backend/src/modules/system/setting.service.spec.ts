@@ -1,82 +1,110 @@
-import { Test } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { SettingService } from './setting.service';
 import { SysSetting } from './entities/sys-setting.entity';
 import { SystemLogService } from './system-log.service';
 
-describe('SettingService', () => {
-  let service: SettingService;
-  let repo: { find: jest.Mock; findOne: jest.Mock; save: jest.Mock; update: jest.Mock };
-  let logWrite: jest.Mock;
+/** 内存仓储模拟 sys_settings（第六批：boolean 规范化/组合校验/修订号 409/事务审计）。 */
+function makeService(initial: Array<{ key: string; value: string; revision?: number }> = []) {
+  const rows = new Map<number, SysSetting>();
+  let nextId = 1;
+  for (const item of initial) rows.set(nextId, { id: nextId++, key: item.key, value: item.value, revision: item.revision ?? 0, createdAt: new Date(), updatedAt: new Date() } as SysSetting);
+  const audits: any[] = [];
+  const repo: any = {
+    find: async () => [...rows.values()],
+    findOne: async ({ where }: any) => [...rows.values()].find(r => r.key === where?.key) ?? null,
+    manager: {
+      find: async () => [...rows.values()],
+      findOne: async ({ where }: any) => [...rows.values()].find(r => r.key === where?.key) ?? null,
+      update: async (entity: any, id: number, patch: any) => {
+        const row = rows.get(id);
+        if (!row) return;
+        if (typeof patch.revision === 'function') row.revision = (row.revision ?? 0) + 1;
+        else Object.assign(row, patch, { updatedAt: new Date() });
+      },
+      save: async (entity: any, data: any) => {
+        const saved = { id: nextId++, revision: 0, createdAt: new Date(), updatedAt: new Date(), ...data };
+        rows.set(saved.id, saved as SysSetting);
+        return saved;
+      },
+      transaction: async (run: any) => run({
+        find: async () => repo.manager.find(),
+        findOne: repo.manager.findOne,
+        update: repo.manager.update,
+        save: repo.manager.save,
+      }),
+    },
+  };
+  const logService: any = { write: jest.fn(), writeInTransaction: jest.fn(async (_m: any, entry: any) => { audits.push(entry); }) };
+  const service = new SettingService(repo, logService);
+  return { service, rows, audits, logService };
+}
 
-  beforeEach(async () => {
-    repo = { find: jest.fn().mockResolvedValue([]), findOne: jest.fn().mockResolvedValue(null), save: jest.fn(), update: jest.fn() };
-    logWrite = jest.fn().mockResolvedValue(undefined);
-    const module = await Test.createTestingModule({
-      providers: [
-        SettingService,
-        { provide: getRepositoryToken(SysSetting), useValue: repo },
-        { provide: SystemLogService, useValue: { write: logWrite } },
-      ],
-    }).compile();
-    service = module.get(SettingService);
+const ADMIN = { sub: 1, username: 'admin' };
+
+describe('系统参数（第六批）：类型校验、组合约束与修订号', () => {
+  it('boolean 规范化：仅接受 true/false（大小写容忍），非法值拒绝；listPublic 默认关闭', async () => {
+    const { service } = makeService();
+    const initial = await service.listPublic();
+    expect(initial['maintenance.notice.enabled']).toBe('false'); // 默认关闭
+    expect(initial['maintenance.notice.message']).toBe('');
+    // 合法布尔
+    await service.updateBatch([{ key: 'maintenance.notice.enabled', value: 'True' }, { key: 'maintenance.notice.message', value: '计划维护' }], ADMIN);
+    const updated = await service.listPublic();
+    expect(updated['maintenance.notice.enabled']).toBe('true');
+    // 非法布尔
+    await expect(service.updateValue('maintenance.notice.enabled', 'yes', ADMIN)).rejects.toThrow(BadRequestException);
+    await expect(service.updateValue('maintenance.notice.enabled', '1', ADMIN)).rejects.toThrow(BadRequestException);
   });
 
-  it('listAll 按注册表输出，未修改的键返回默认值', async () => {
-    const list = await service.listAll();
-    expect(list.map((item) => item.key)).toEqual(['site.name', 'help.contact']);
-    const site = list[0]!;
-    expect(site.value).toBe('BaseSuite平台');
-    expect(site.modified).toBe(false);
+  it('组合校验：启用时内容必须非空（批量合并后判定；单键不能绕过）', async () => {
+    const { service } = makeService();
+    // 批量：启用＋空内容 → 拒绝
+    await expect(service.updateBatch([
+      { key: 'maintenance.notice.enabled', value: 'true' },
+      { key: 'maintenance.notice.message', value: '' },
+    ], ADMIN)).rejects.toThrow('内容不能为空');
+    // 单键绕过：先设内容，启用，再单键清空内容 → 拒绝
+    await service.updateBatch([
+      { key: 'maintenance.notice.enabled', value: 'true' },
+      { key: 'maintenance.notice.message', value: '维护中' },
+    ], ADMIN);
+    await expect(service.updateValue('maintenance.notice.message', '  ', ADMIN)).rejects.toThrow('内容不能为空');
+    // 关闭时清空内容允许
+    await service.updateBatch([
+      { key: 'maintenance.notice.enabled', value: 'false' },
+      { key: 'maintenance.notice.message', value: '' },
+    ], ADMIN);
   });
 
-  it('listAll 合并已存储取值并标记 modified', async () => {
-    repo.find.mockResolvedValue([{ id: 3, key: 'site.name', value: '供应链平台', updatedAt: new Date('2026-10-22T00:00:00Z') }]);
-    const list = await service.listAll();
-    const site = list.find((item) => item.key === 'site.name')!;
-    expect(site.value).toBe('供应链平台');
-    expect(site.modified).toBe(true);
-    const help = list.find((item) => item.key === 'help.contact')!;
-    expect(help.modified).toBe(false);
+  it('批量校验：重复键/未知键拒绝；超长文本拒绝', async () => {
+    const { service } = makeService();
+    await expect(service.updateBatch([
+      { key: 'site.name', value: 'A' },
+      { key: 'site.name', value: 'B' },
+    ], ADMIN)).rejects.toThrow('重复');
+    await expect(service.updateBatch([{ key: 'unknown.key', value: 'x' }], ADMIN)).rejects.toThrow(NotFoundException);
+    await expect(service.updateValue('maintenance.notice.message', 'x'.repeat(301), ADMIN)).rejects.toThrow('最多');
   });
 
-  it('listPublic 只返回公开键，未设置返回默认值', async () => {
-    repo.find.mockResolvedValue([{ id: 3, key: 'site.name', value: '供应链平台' }]);
-    const result = await service.listPublic();
-    expect(result).toEqual({ 'site.name': '供应链平台', 'help.contact': '' });
+  it('修订号乐观并发：baseRevision 不匹配 409（含当前修订号）；事务审计', async () => {
+    const { service, audits } = makeService([{ key: 'site.name', value: 'A', revision: 3 }]);
+    // 正确版本提交成功；审计与变更同事务
+    await service.updateBatch([{ key: 'help.contact', value: 'admin@x' }], ADMIN, 3);
+    expect(audits.length).toBe(1);
+    // 旧版本 → 409
+    const error: any = await service.updateBatch([{ key: 'site.name', value: 'B' }], ADMIN, 3).catch(e => e);
+    expect(error).toBeInstanceOf(ConflictException);
+    expect(error.getResponse()).toMatchObject({ reason: 'settings_stale' });
+    // 值未被覆盖
+    const current = await service.listAll();
+    expect(current.list.find(item => item.key === 'site.name')?.value).toBe('A');
   });
 
-  it('未登记的键拒绝修改', async () => {
-    await expect(service.updateValue('db.password', 'x', { id: 1 })).rejects.toMatchObject({ status: 404 });
-    expect(repo.save).not.toHaveBeenCalled();
-  });
-
-  it('取值超长时带 value 字段路径拒绝', async () => {
-    const error = await service.updateValue('site.name', '名'.repeat(51), { id: 1 }).catch((e) => e);
-    expect(error.status).toBe(400);
-    expect(error.response.fieldErrors).toEqual([{ path: 'value', code: 'maxlength', message: expect.any(String) }]);
-    expect(repo.save).not.toHaveBeenCalled();
-  });
-
-  it('必填参数清空时拒绝', async () => {
-    const error = await service.updateValue('site.name', '   ', { id: 1 }).catch((e) => e);
-    expect(error.response.fieldErrors[0].code).toBe('required');
-  });
-
-  it('首次修改创建取值行并写审计', async () => {
-    repo.save.mockResolvedValue({ id: 9, key: 'help.contact', value: 'support@example.com', updatedAt: new Date() });
-    const view = await service.updateValue('help.contact', '  support@example.com  ', { id: 7, username: 'admin' });
-    expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ key: 'help.contact', value: 'support@example.com' }));
-    expect(view.value).toBe('support@example.com');
-    expect(logWrite).toHaveBeenCalledWith(expect.objectContaining({ action: 'update', entityType: 'system_settings', entityDesc: 'help.contact' }));
-  });
-
-  it('再次修改更新原行，审计包含旧值', async () => {
-    repo.findOne.mockResolvedValue({ id: 3, key: 'site.name', value: '旧名称' });
-    const view = await service.updateValue('site.name', '新名称', { id: 7, username: 'admin' });
-    expect(repo.update).toHaveBeenCalledWith(3, expect.objectContaining({ value: '新名称' }));
-    expect(repo.save).not.toHaveBeenCalled();
-    expect(view.modified).toBe(true);
-    expect(logWrite).toHaveBeenCalledWith(expect.objectContaining({ detail: JSON.stringify({ old: { value: '旧名称' }, new: { value: '新名称' } }) }));
+  it('既有文本参数兼容：required/maxLength/trim 语义不变', async () => {
+    const { service } = makeService();
+    await expect(service.updateValue('site.name', '', ADMIN)).rejects.toThrow('不能为空');
+    await expect(service.updateValue('site.name', 'x'.repeat(51), ADMIN)).rejects.toThrow('最多');
+    const view = await service.updateValue('site.name', '  新平台  ', ADMIN);
+    expect(view.value).toBe('新平台');
   });
 });

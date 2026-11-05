@@ -8,8 +8,8 @@
 export interface SettingDefinition {
   key: string;
   name: string;
-  /** string=单行文本 text=多行文本；新类型出现真实需求再扩展 */
-  type: 'string' | 'text';
+  /** string=单行文本 text=多行文本 boolean=开关（'true'/'false' 规范编码）；新类型出现真实需求再扩展 */
+  type: 'string' | 'text' | 'boolean';
   defaultValue: string;
   /** true=通过 /public 接口下发给所有登录用户 */
   public: boolean;
@@ -29,6 +29,24 @@ export const SETTING_REGISTRY: SettingDefinition[] = [
     maxLength: 50,
     required: true,
     description: '登录后顶栏品牌与浏览器标题显示的名称；登录页与部署配置（VITE_APP_NAME）不受影响',
+  },
+  {
+    key: 'maintenance.notice.enabled',
+    name: '维护通知开关',
+    type: 'boolean',
+    defaultValue: 'false',
+    public: true,
+    maxLength: 5,
+    description: '登录后页面顶部维护通知横幅开关；仅提示，不阻断任何业务操作',
+  },
+  {
+    key: 'maintenance.notice.message',
+    name: '维护通知内容',
+    type: 'text',
+    defaultValue: '',
+    public: true,
+    maxLength: 300,
+    description: '维护通知横幅的纯文本内容（保留换行）；启用开关时不能为空',
   },
   {
     key: 'help.contact',

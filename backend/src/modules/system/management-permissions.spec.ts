@@ -109,7 +109,7 @@ describe('管理权限 HTTP 边界（真实控制器、角色守卫与权限守�
 
   /** 账号安全第一批＋第二批：users 页动作保留 UserController 类级 admin 边界，
    *  不能按普通「精确授权即可用」形态进 cases，用专用用例验证。 */
-  const dedicatedAdminOnlyCodes = new Set(['users:reset-password', 'users:revoke-sessions', 'users:permission-explain']);
+  const dedicatedAdminOnlyCodes = new Set(['users:reset-password', 'users:revoke-sessions', 'users:permission-explain', 'system-settings:update']);
   const pendingEndpointCodes = new Set<string>();
 
   it('用例覆盖种子声明的全部管理权限码，无遗漏也无拼写漂移', () => {

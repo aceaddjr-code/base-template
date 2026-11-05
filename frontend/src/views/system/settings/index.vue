@@ -23,10 +23,13 @@
           <a-tag>{{ record.key }}</a-tag>
         </template>
         <template v-if="column.key === 'value'">
-          <span class="setting-value" :title="record.value">{{ record.value || '-' }}</span>
+          <a-tag v-if="record.type === 'boolean'" :color="record.value === 'true' ? 'success' : undefined">
+            {{ record.value === 'true' ? '开启' : '关闭' }}
+          </a-tag>
+          <span v-else class="setting-value" :title="record.value">{{ record.value || '-' }}</span>
         </template>
         <template v-if="column.key === 'type'">
-          {{ record.type === 'text' ? '多行文本' : '文本' }}
+          {{ record.type === 'text' ? '多行文本' : record.type === 'boolean' ? '开关' : '文本' }}
         </template>
         <template v-if="column.key === 'public'">
           {{ record.public ? '登录用户可见' : '仅管理员' }}
@@ -66,8 +69,15 @@
           <p class="setting-desc">{{ editing?.description }}</p>
         </a-form-item>
         <a-form-item label="取值" required data-form-field="value" :validate-status="editErrors.value ? 'error' : undefined">
+          <a-switch
+            v-if="editing?.type === 'boolean'"
+            :checked="editForm.value === 'true'"
+            :disabled="editLoading"
+            aria-label="参数取值"
+            @change="(checked: any) => editForm.value = checked ? 'true' : 'false'"
+          />
           <a-textarea
-            v-if="editing?.type === 'text'"
+            v-else-if="editing?.type === 'text'"
             v-model:value="editForm.value"
             :disabled="editLoading"
             :maxlength="editing?.maxLength"
@@ -109,6 +119,8 @@ const { setTableRef, stickySource } = useListPage()
 const loading = ref(false)
 const failed = ref(false)
 const list = ref<SettingItem[]>([])
+/** 全局修订号（第六批乐观并发）：更新携带，409 时保留草稿提示载入最新 */
+const revision = ref(0)
 
 const columns = [
   { title: '参数名称', dataIndex: 'name', key: 'name', width: 120 },
@@ -126,7 +138,9 @@ async function fetchList() {
   loading.value = true
   failed.value = false
   try {
-    list.value = await getSettings()
+    const result = await getSettings()
+    list.value = result.list
+    revision.value = result.revision
   } catch {
     /* 拦截器已提示，保留旧列表；failed 驱动空态文案 */
     failed.value = true
@@ -143,10 +157,11 @@ const editModal = useFormModal<{ value: string }, string>({
   // 必填参数清空由服务端裁决，本地不做校验
   save: async (form, editId) => {
     if (editId == null) return
-    const saved = await updateSetting(editId, form.value, { errorFeedback: 'form' })
+    const saved = await updateSetting(editId, form.value, { errorFeedback: 'form' }, revision.value)
     const index = list.value.findIndex((item) => item.key === saved.key)
     if (index >= 0) list.value[index] = saved
-    // 公开参数立即反映到品牌名/帮助联系方式，不等重新登录
+    await fetchList() // 刷新修订号
+    // 公开参数立即反映到品牌名/帮助联系方式/维护横幅，不等重新登录
     if (saved.public) appStore.refreshPublicSettings()
     message.success('保存成功')
   },
