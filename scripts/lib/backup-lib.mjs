@@ -6,7 +6,7 @@ import { createReadStream } from 'node:fs';
 import { copyFile, lstat, mkdir, open, readdir, readFile, rename, rm, stat, unlink, utimes, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
-export const FULL_SET_DIR_RE = /^[A-Za-z0-9_-]+-full-\d{8}-\d{6}[0-9A-Za-z]{8}$/;
+export const FULL_SET_DIR_RE = /^[A-Za-z0-9_-]+-full-\d{8}-\d{6}-[0-9A-Za-z]{8}$/;
 export const STAGING_PREFIX = '.staging-';
 export const FAILED_PREFIX = '.failed-';
 export const LOCK_NAME = '.backup-lock';
