@@ -8,7 +8,7 @@ import { SCOPE_FORM_REGISTRY } from '../user/scope-form.registry';
 import { AuthService } from './auth.service';
 import { SystemLogService } from '../system/system-log.service';
 import {
-  buildDataScope, findScopeEntry, normalizeScopeFlags, type ScopeUser, type UserScopeEntry,
+  buildDataScope, evaluateOperationSwitch, findScopeEntry, normalizeScopeFlags, type ScopeUser, type UserScopeEntry,
 } from '../../common/utils/data-scope';
 import {
   ACTION_PERMISSION_CODES, EXPLAIN_ACTIONS, EXPLAIN_REASONS, RECORD_EXPLAINABLE_SCOPE_KEY,
@@ -220,13 +220,13 @@ export class PermissionExplanationService {
     buildDataScope(qb, 't', scopeUser, RECORD_EXPLAINABLE_SCOPE_KEY);
     const inScope = !!(await qb.getRawOne());
 
-    const flags = normalizeScopeFlags(entry);
-    const ownerId = row.ownerId ?? null;
-    const switchFor = (operation: 'view' | 'edit' | 'delete'): { ok: boolean; reason: ExplainReason } | 'no_owner' => {
-      if (ownerId == null) return 'no_owner';
-      return ownerId === targetId
-        ? { ok: flags[`${operation}Self`] === 1, reason: EXPLAIN_REASONS.SELF_SWITCH_OFF }
-        : { ok: flags[`${operation}Others`] === 1, reason: EXPLAIN_REASONS.OTHERS_SWITCH_OFF };
+    // 本人/他人开关裁决：复用 data-scope 的 evaluateOperationSwitch（与运行时守卫同一核心）
+    const switchVerdict = (operation: 'view' | 'edit' | 'delete') =>
+      evaluateOperationSwitch({ ownerId: row.ownerId ?? null }, scopeUser, RECORD_EXPLAINABLE_SCOPE_KEY, operation);
+    const mapVerdict = (verdict: ReturnType<typeof switchVerdict>): { ok: boolean; reason: ExplainReason } | 'no_owner' => {
+      if (verdict.allowed) return { ok: true, reason: EXPLAIN_REASONS.ADMIN_EXCEPTION };
+      if (verdict.reason === 'no_owner') return 'no_owner';
+      return { ok: false, reason: verdict.reason === 'self_switch_off' ? EXPLAIN_REASONS.SELF_SWITCH_OFF : EXPLAIN_REASONS.OTHERS_SWITCH_OFF };
     };
 
     const evaluations: RecordActionEvaluation[] = EXPLAIN_ACTIONS.map((action) => {
@@ -240,7 +240,7 @@ export class PermissionExplanationService {
       if (action === 'list') {
         return allowed(action, [], '记录落入列表共同范围，列表可见（列表可见不代表可查看详情）');
       }
-      const view = switchFor('view');
+      const view = mapVerdict(switchVerdict('view'));
       if (view === 'no_owner') {
         return denied(action, [EXPLAIN_REASONS.NO_OWNER_RECORD], '记录无归属人，仅系统管理员可操作');
       }
@@ -248,7 +248,7 @@ export class PermissionExplanationService {
         if (!view.ok) return denied(action, [view.reason], view.reason === EXPLAIN_REASONS.SELF_SWITCH_OFF ? '查看本人单据开关已关闭' : '查看他人单据开关已关闭');
         return allowed(action, [], action === 'export' ? '列表共同范围且查看详情开关开启（导出使用详情查看开关）' : '共同范围内且查看开关开启');
       }
-      const op = switchFor(action === 'update' ? 'edit' : 'delete');
+      const op = mapVerdict(switchVerdict(action === 'update' ? 'edit' : 'delete'));
       if (op === 'no_owner') {
         return denied(action, [EXPLAIN_REASONS.NO_OWNER_RECORD], '记录无归属人，仅系统管理员可操作');
       }

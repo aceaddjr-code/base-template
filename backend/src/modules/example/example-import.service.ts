@@ -12,6 +12,16 @@ export const IMPORT_META_RETENTION_DAYS = 7;
 /** processing 无行更新的回落窗口：崩溃后允许重试，防死锁占位。 */
 const PROCESSING_STALE_MS = 10 * 60 * 1000;
 
+/** 从 BadRequestException.fieldErrors 提取首个 path 作为字段定位（如 'title'）。 */
+function extractFieldKey(error: unknown): string | undefined {
+  const response = (error as { getResponse?: () => any })?.getResponse?.();
+  const fields = response?.fieldErrors;
+  if (Array.isArray(fields) && fields.length > 0 && typeof fields[0]?.path === 'string') {
+    return fields[0].path;
+  }
+  return undefined;
+}
+
 export interface PrecheckRowView {
   rowNumber: number;
   status: 'valid' | 'invalid';
@@ -39,16 +49,6 @@ export interface SessionStatusView {
   fileName: string;
   summary?: { total: number; success: number; invalid: number; unprocessed: number };
   rows?: Array<{ rowNumber: number; status: string; error?: string | null; createdDocNo?: string | null }>;
-}
-
-/** 校验错误消息 → 导入字段 key（示例模块字段映射；标题/状态/类别/说明/备注）。 */
-export function inferFieldKey(message: string): string | undefined {
-  if (/标题/.test(message)) return 'title';
-  if (/状态/.test(message)) return 'status';
-  if (/类别/.test(message)) return 'category';
-  if (/说明/.test(message)) return 'description';
-  if (/备注/.test(message)) return 'remark';
-  return undefined;
 }
 
 
@@ -139,9 +139,10 @@ export class ExampleImportService implements OnModuleInit, OnModuleDestroy {
         valid += 1;
         rowViews.push({ rowNumber: parsed.rows[i].rowNumber, status: 'valid' });
       } catch (error) {
-        // 从校验错误消息提取字段名（如"标题不能为空"→fieldKey='title'），供错误文件标红定位
+        // 直接从 BadRequestException.fieldErrors 提取 path（validateExample 与 assertCategorySelectable
+        // 都已产生结构化 fieldErrors），不再从中文消息正则猜字段名
         const message = (error as Error).message;
-        const fieldKey = inferFieldKey(message);
+        const fieldKey = extractFieldKey(error);
         rowViews.push({ rowNumber: parsed.rows[i].rowNumber, status: 'invalid', fieldKey, message });
       }
     }
@@ -162,6 +163,8 @@ export class ExampleImportService implements OnModuleInit, OnModuleDestroy {
       status: rowViews[index].status === 'valid' ? 'pending' : 'invalid',
       errorCode: rowViews[index].status === 'invalid' ? 'VALIDATION' : null,
       errorMessage: rowViews[index].message ?? null,
+      // 结构化字段定位持久化：错误文件标红时直接使用，不再从消息推断
+      fieldKey: rowViews[index].fieldKey ?? null,
     })));
     const savedRows = await this.rowRepo.find({ where: { sessionId: importId } });
     return this.toPrecheckView(session, savedRows);

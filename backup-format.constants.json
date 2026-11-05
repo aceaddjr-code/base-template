@@ -1,0 +1,11 @@
+{
+  "LOCK_NAME": ".backup-lock",
+  "LOCK_STALE_MS": 60000,
+  "STAGING_PREFIX": ".staging-",
+  "FAILED_PREFIX": ".failed-",
+  "MANIFEST_NAME": "manifest.json",
+  "FORMAT_VERSION": 1,
+  "HEARTBEAT_INTERVAL_MS": 5000,
+  "CLEAN_KEEP_LAST": 1,
+  "OLD_SQL_RE": "^[A-Za-z0-9_-]+-\\d{8}-\\d{6}\\.sql\\.gz$"
+}

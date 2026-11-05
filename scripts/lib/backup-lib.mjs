@@ -1,3 +1,6 @@
+// 共享常量定义于 backup-format.constants.json（仓库根）。
+// 本文件是这些常量的唯一运行时来源：scripts 直接使用，backend/backup.service.ts 从此处读取。
+// 修改任何常量时同步更新 JSON 文件和 backend 侧代码。
 // 完整备份集合/隔离恢复共用库（第三批）。纯 Node，无应用依赖；
 // mysql2 如需使用由调用方从 backend/node_modules 引入（scripts/ 既有先例）。
 // 契约：manifest v1（formatVersion/逐文件 sha256/envNames 仅名称）；共享锁＋心跳＋陈旧接管；目录互不嵌套；有界清理保留最近 1 份。

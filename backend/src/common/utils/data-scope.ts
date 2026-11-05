@@ -210,6 +210,36 @@ export function canOperateOthers(
   return entry[`${op}Others`] === 1;
 }
 
+/** 本人/他人操作开关裁决结果：不抛异常，由调用方决定是 throw（运行时守卫）还是 report（解释）。 */
+export type OperationSwitchVerdict =
+  | { allowed: true; reason: 'admin_exception' | 'self_switch_on' | 'others_switch_on' }
+  | { allowed: false; reason: 'self_switch_off' | 'others_switch_off' | 'no_owner' };
+
+/**
+ * 裁决某用户对某条记录的指定操作开关（查看/编辑/删除的本人/他人维度）。
+ * 这是运行时守卫（assertCanOperateOn）与权限解释服务共用的唯一裁决核心——
+ * 修改开关语义只改此处，两个消费者自动跟随。
+ */
+export function evaluateOperationSwitch(
+  entity: { ownerId?: number | null },
+  user: ScopeUser | null | undefined,
+  scopeKey: string,
+  op: ScopeOperation,
+): OperationSwitchVerdict {
+  if (isSystemAdmin(user)) return { allowed: true, reason: 'admin_exception' };
+  const uid = getUserId(user);
+  const flags = normalizeScopeFlags(findScopeEntry(user, scopeKey));
+  if (entity.ownerId == null) return { allowed: false, reason: 'no_owner' };
+  if (entity.ownerId === uid) {
+    return flags[`${op}Self`] === 1
+      ? { allowed: true, reason: 'self_switch_on' }
+      : { allowed: false, reason: 'self_switch_off' };
+  }
+  return flags[`${op}Others`] === 1
+    ? { allowed: true, reason: 'others_switch_on' }
+    : { allowed: false, reason: 'others_switch_off' };
+}
+
 export function assertCanOperateOn(
   entity: { ownerId?: number | null } | null | undefined,
   user: ScopeUser | null | undefined,
@@ -221,26 +251,28 @@ export function assertCanOperateOn(
   if (!user) throw new UnauthorizedException('未登录');
   const uid = getUserId(user);
   if (uid == null) throw new UnauthorizedException('未登录');
-  if (isSystemAdmin(user)) return;
-  if (entity.ownerId === uid) {
-    if (normalizeScopeFlags(findScopeEntry(user, scopeKey))[`${op}Self`] === 1) return;
-    throw new ForbiddenException(`没有${opText}本人单据的权限`);
-  }
-  if (entity.ownerId == null) {
-    if (!isSystemAdmin(user)) {
-      throw new ForbiddenException(`该单据无归属人，仅管理员可${opText}`);
+
+  // 本人/他人开关裁决：与权限解释服务共用同一核心
+  const verdict = evaluateOperationSwitch(entity, user, scopeKey, op);
+  if (verdict.allowed) {
+    // by_users 范围的归属人列表校验是运行时守卫专有（解释服务经 SQL 范围查询处理）
+    if (verdict.reason === 'others_switch_on') {
+      const entry = findScopeEntry(user, scopeKey);
+      if (!entry) throw new ForbiddenException(`没有${opText}该记录的权限`);
+      // 调用前必须经过同一范围的 SQL 查询；部门目标由 scopeWhereClause 校验。
+      if (entry.scopeType === 'all' || entry.scopeType === 'by_depts') return;
+      const ownerIds = buildAllowedOwnerIds(user, entry);
+      if (!ownerIds.has(entity.ownerId as number)) {
+        throw new ForbiddenException(`该记录不在当前数据范围内，无权${opText}`);
+      }
     }
     return;
   }
-  if (!canOperateOthers(user, scopeKey, op)) {
-    throw new ForbiddenException(`没有${opText}他人单据的权限`);
+  if (verdict.reason === 'no_owner') {
+    throw new ForbiddenException(`该单据无归属人，仅管理员可${opText}`);
   }
-  const entry = findScopeEntry(user, scopeKey);
-  if (!entry) throw new ForbiddenException(`没有${opText}该记录的权限`);
-  // 调用前必须经过同一范围的 SQL 查询；部门目标由 scopeWhereClause 校验。
-  if (entry.scopeType === 'all' || entry.scopeType === 'by_depts') return;
-  const ownerIds = buildAllowedOwnerIds(user, entry);
-  if (!ownerIds.has(entity.ownerId as number)) {
-    throw new ForbiddenException(`该记录不在当前数据范围内，无权${opText}`);
+  if (verdict.reason === 'self_switch_off') {
+    throw new ForbiddenException(`没有${opText}本人单据的权限`);
   }
+  throw new ForbiddenException(`没有${opText}他人单据的权限`);
 }

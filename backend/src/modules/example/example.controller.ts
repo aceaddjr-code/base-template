@@ -2,7 +2,7 @@ import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe
 import { CrudBaseController } from '../../common/controllers/crud-base.controller';
 import { CrudPermPrefix } from '../../common/decorators/crud-perm-prefix.decorator';
 import { ExampleService } from './example.service';
-import { ExampleImportService, inferFieldKey } from './example-import.service';
+import { ExampleImportService } from './example-import.service';
 import { BatchRemoveExampleDto, ChangeExampleOwnerDto, CreateExampleDto, UpdateExampleDto } from './example.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { excelFileFilter, sendExcel } from '../../common/utils/excel-helper';
@@ -156,7 +156,7 @@ export class ExampleController extends CrudBaseController {
         values: row.data ?? {},
         // 标红定位：校验失败时按错误消息推断的字段标红对应列（第五批审查修复：不用启发式猜列名）
         errors: row.status === 'invalid' && row.errorMessage
-          ? { [inferFieldKey(row.errorMessage) ?? 'title']: row.errorMessage }
+          ? { [row.fieldKey ?? 'title']: row.errorMessage }
           : {},
         meta: { rowNumber: row.rowNumber },
       })),

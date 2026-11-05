@@ -7,10 +7,15 @@ import { basename, extname, resolve } from 'path';
 
 /** 备份文件名白名单（防路径穿越/防注入——备份文件含全库数据） */
 const BACKUP_FILE_RE = /^[A-Za-z0-9_-]+-\d{8}-\d{6}\.sql\.gz$/;
-/** 第三批完整集合：目录内 manifest.json 为事实来源；共享锁名与 scripts/lib/backup-lib.mjs 一致 */
+/**
+ * 第三批完整集合：目录内 manifest.json 为事实来源。
+ * 常量与 scripts/lib/backup-lib.mjs 共享——唯一事实来源为 backup-format.constants.json（仓库根）。
+ * 修改任何值时三处同步：backup-lib.mjs / 本文件 / backup-format.constants.json。
+ */
 const MANIFEST_NAME = 'manifest.json';
 const LOCK_NAME = '.backup-lock';
 const LOCK_STALE_MS = 60_000;
+export const BACKUP_FORMAT_CONSTANTS = { MANIFEST_NAME, LOCK_NAME, LOCK_STALE_MS };
 
 /** database-only=旧 SQL 转储；full-set=完整集合（数据库＋附件＋manifest，磁盘 manifest 为状态事实） */
 export type BackupEntry =

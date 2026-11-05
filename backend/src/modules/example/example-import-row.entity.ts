@@ -32,6 +32,10 @@ export class ExampleImportRow {
   @Column({ name: 'error_message', type: 'varchar', length: 500, nullable: true, comment: '可读原因' })
   errorMessage: string | null;
 
+  /** 校验失败的字段 key（如 'title'），从 fieldErrors.path 直传；供修正文件标红定位 */
+  @Column({ name: 'field_key', type: 'varchar', length: 50, nullable: true, comment: '校验失败字段 key' })
+  fieldKey: string | null;
+
   @Column({ name: 'created_item_id', type: 'int', nullable: true, comment: '成功单据 ID（幂等证据）' })
   createdItemId: number | null;
 
