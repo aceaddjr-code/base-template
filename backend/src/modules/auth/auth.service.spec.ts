@@ -11,7 +11,7 @@ const chain = (rows: unknown[] = []) => ({
 
 describe('本地认证、菜单和权限缓存', () => {
   let service: AuthService;
-  let users: any, roles: any, menus: any, links: any, userDataScopes: any, jwt: any, rateLimit: any, logService: any, loginQuery: any, roleQuery: any;
+  let users: any, roles: any, menus: any, links: any, userDataScopes: any, jwt: any, rateLimit: any, logService: any, identity: any, loginQuery: any, roleQuery: any;
   const defaultScope = { scopeKey:'__global__', scopeType:'self', viewOthers:1, editOthers:0, deleteOthers:0, targets:[] };
   const account = { id:1, username:'alice', password:'hash', status:1, roleId:2, tokenVersion:1,
     displayName:'用户甲', deptId:3, role:{ id:2, name:'普通用户', code:'user' } };
@@ -34,7 +34,12 @@ describe('本地认证、菜单和权限缓存', () => {
       recordAccountSuccess: jest.fn().mockResolvedValue(undefined),
     };
     logService = { write: jest.fn(async () => undefined), writeInTransaction: jest.fn(async () => undefined) };
-    service = new AuthService(jwt,users,roles,menus,links,userDataScopes,rateLimit,logService);
+    identity = {
+      resolveUserPermission: jest.fn(async () => ({ roles: ['user'], roleIds: [2], dataScopes: [defaultScope] })),
+      buildEffectiveIdentity: jest.fn(async () => ({ roles: ['user'], roleIds: [2], dataScopes: [defaultScope] })),
+      getUserAccessCodes: jest.fn(async () => []),
+    };
+    service = new AuthService(jwt,users,roles,menus,links,userDataScopes,rateLimit,logService,identity);
     (bcrypt.compare as jest.Mock).mockResolvedValue(true);
   });
 
@@ -139,19 +144,22 @@ describe('本地认证、菜单和权限缓存', () => {
   });
 
   it('用户的表单范围和目标随登录签发', async () => {
-    userDataScopes.loadForSession.mockResolvedValueOnce([
-      { scopeKey:'example-items', scopeType:'by_users', viewOthers:1, editOthers:1, deleteOthers:0, targets:[7] },
-    ]);
+    // resolveUserPermission 委托 IdentityService；验证委托结果进入 JWT payload
+    identity.resolveUserPermission.mockResolvedValueOnce({
+      roles: ['user'], roleIds: [2],
+      dataScopes: [{ scopeKey:'example-items', scopeType:'by_users', viewOthers:1, editOthers:1, deleteOthers:0, targets:[7] }],
+    });
     await service.login('alice','password');
-    expect(userDataScopes.loadForSession).toHaveBeenCalledWith(account.id);
+    expect(identity.resolveUserPermission).toHaveBeenCalled();
     expect(jwt.sign.mock.calls[0][0].dataScopes[0]).toMatchObject({ scopeKey:'example-items',targets:[7],editOthers:1 });
   });
 
-  it('权限变化后的 tokenVersion 使用新的缓存键', async () => {
-    users.findOne.mockResolvedValueOnce({ id:1,status:1,tokenVersion:1 }).mockResolvedValueOnce({ id:1,status:1,tokenVersion:2 });
-    links.manager.query.mockResolvedValueOnce([]).mockResolvedValueOnce([{ permission:'example-items:view' }]);
+  it('权限变化后的 tokenVersion 使用新的缓存键（IdentityService 委托验证）', async () => {
+    // 权限码解析逻辑在 IdentityService；AuthService 验证委托透传
+    identity.getUserAccessCodes.mockResolvedValueOnce([]).mockResolvedValueOnce(['example-items:view']);
     await expect(service.getUserAccessCodes({ id:1 })).resolves.toEqual([]);
     await expect(service.getUserAccessCodes({ id:1 })).resolves.toEqual(['example-items:view']);
+    expect(identity.getUserAccessCodes).toHaveBeenCalledTimes(2);
   });
 
   it('禁用账号不能通过后台权限查询得到授权', async () => {
@@ -183,8 +191,8 @@ describe('本地认证、菜单和权限缓存', () => {
 
   it('停用主角色不能通过 roleCode 兜底恢复管理员资格', async () => {
     loginQuery.getOne.mockResolvedValue({...account,role:{id:1,code:'admin'}});
-    roleQuery.getRawMany.mockResolvedValue([]);
-    roles.findOne.mockResolvedValue(null);
+    // resolveUserPermission 委托 IdentityService：模拟主角色停用（无启用角色）
+    identity.resolveUserPermission.mockResolvedValueOnce({ roles: [], roleIds: [], dataScopes: [] });
     const result = await service.login('alice','password');
     expect(jwt.sign.mock.calls[0][0]).toMatchObject({roles:[],roleCode:'user'});
     expect(result.user.role).toBeNull();

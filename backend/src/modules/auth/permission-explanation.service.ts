@@ -5,7 +5,7 @@ import { User } from '../user/user.entity';
 import { Department } from '../department/department.entity';
 import { ExampleItem } from '../example/example-item.entity';
 import { SCOPE_FORM_REGISTRY } from '../user/scope-form.registry';
-import { AuthService } from './auth.service';
+import { IdentityService } from './identity.service';
 import { SystemLogService } from '../system/system-log.service';
 import {
   buildDataScope, evaluateOperationSwitch, findScopeEntry, normalizeScopeFlags, type ScopeUser, type UserScopeEntry,
@@ -35,7 +35,7 @@ export class PermissionExplanationService {
     private readonly deptRepo: Repository<Department>,
     @InjectRepository(ExampleItem)
     private readonly exampleRepo: Repository<ExampleItem>,
-    private readonly authService: AuthService,
+    private readonly identity: IdentityService,
     private readonly logService: SystemLogService,
   ) {}
 
@@ -55,11 +55,11 @@ export class PermissionExplanationService {
     });
     if (!target) throw new NotFoundException('用户不存在或已删除');
 
-    const identity = await this.authService.buildEffectiveIdentity(targetId);
+    const identity = await this.identity.buildEffectiveIdentity(targetId);
     const isAdmin = identity.roles.includes('admin');
     // getUserAccessCodes 按目标当前版本解析（账号禁用时为空，与运行时一致）；
     // 携带 roleCode 与 JWT payload 同口径，使无角色用户获得与真实会话一致的缺省回退。
-    const effectiveCodes = new Set(await this.authService.getUserAccessCodes({ id: targetId, roleCode: identity.roles[0] }));
+    const effectiveCodes = new Set(await this.identity.getUserAccessCodes({ id: targetId, roleCode: identity.roles[0] }));
     const sources = await this.loadPermissionSources(targetId, target.roleId);
 
     const entry = identity.dataScopes.find((item: UserScopeEntry) => item.scopeKey === scopeKey) ?? null;

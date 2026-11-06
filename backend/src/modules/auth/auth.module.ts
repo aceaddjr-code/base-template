@@ -16,6 +16,7 @@ import { SysDictItem } from '../system/entities/sys-dict-item.entity';
 import { LoginAttemptCounter } from './login-attempt-counter.entity';
 import { LoginRateLimitService } from './login-rate-limit.service';
 import { PermissionExplanationService } from './permission-explanation.service';
+import { IdentityService } from './identity.service';
 import { ExampleItem } from '../example/example-item.entity';
 import { forwardRef } from '@nestjs/common';
 
@@ -26,7 +27,7 @@ import { forwardRef } from '@nestjs/common';
     TypeOrmModule.forFeature([User, Role, Menu, Department, UserRole, SysDictType, SysDictItem, LoginAttemptCounter, ExampleItem]),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, SeedService, LoginRateLimitService, PermissionExplanationService],
-  exports: [AuthService, PermissionExplanationService],
+  providers: [AuthService, JwtStrategy, SeedService, LoginRateLimitService, IdentityService, PermissionExplanationService],
+  exports: [AuthService, IdentityService, PermissionExplanationService],
 })
 export class AuthModule {}

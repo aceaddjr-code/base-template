@@ -20,6 +20,7 @@ import { getUserId } from '../../common/utils/service-helpers';
 import type { JwtPayload } from './jwt.strategy';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { LoginRateLimitService } from './login-rate-limit.service';
+import { IdentityService } from './identity.service';
 import { ACCOUNT_SECURITY_REASONS, accountBucketKey, pendingAccountBucketKey } from './account-security.contracts';
 
 /** 未知账号的等成本校验目标：惰性生成固定占位哈希，避免响应时间泄露账号是否存在。 */
@@ -30,7 +31,6 @@ function getDummyCredentialHash(): string {
 
 @Injectable()
 export class AuthService {
-  private readonly accessCodesCache = new Map<string, string[]>();
 
   constructor(
     private jwtService: JwtService,
@@ -45,6 +45,7 @@ export class AuthService {
     private readonly userDataScopeService: UserDataScopeService,
     private readonly rateLimit: LoginRateLimitService,
     private readonly logService: SystemLogService,
+    private readonly identity: IdentityService,
   ) {}
 
   /**
@@ -203,126 +204,21 @@ export class AuthService {
       .filter((m) => m.children?.length > 0 || m.path); // 有路径或有子菜单
   }
 
-  // ---- 私有方法 ----
+  // ---- 身份/权限解析委托（唯一实现在 IdentityService） ----
 
-  /** 解释入口复用：按用户 ID 构造与登录签发一致的有效身份（角色/附加角色/数据范围）。
-   *  无任何启用角色时按 generateToken 的 roleCode 缺省口径回退 'user'，与运行时权限码解析同源。 */
+  /** 委托 IdentityService——登录签发与解释服务共用同一实现。 */
+  async resolveUserPermission(user: User): Promise<{ roles: string[]; roleIds: number[]; dataScopes: UserScopeEntry[] }> {
+    return this.identity.resolveUserPermission(user);
+  }
+
+  /** 委托 IdentityService——按用户 ID 构造与登录签发一致的有效身份。 */
   async buildEffectiveIdentity(userId: number): Promise<{ roles: string[]; roleIds: number[]; dataScopes: UserScopeEntry[] }> {
-    const user = await this.userRepo.findOne({
-      where: { id: userId },
-      select: { id: true, username: true, roleId: true, deptId: true },
-    });
-    if (!user) throw new UnauthorizedException('用户不存在');
-    const identity = await this.resolveUserPermission(user);
-    if (!identity.roles.length) identity.roles = ['user'];
-    return identity;
+    return this.identity.buildEffectiveIdentity(userId);
   }
 
-  private async resolveUserPermission(user: User): Promise<{
-    roles: string[];
-    roleIds: number[];
-    dataScopes: UserScopeEntry[];
-  }> {
-    const roleRows = await this.userRoleRepo
-      .createQueryBuilder('ur')
-      .innerJoin('roles', 'r', 'r.id = ur.role_id AND r.deleted_at IS NULL AND r.status = 1')
-      .select(['r.id AS roleId', 'r.code AS code'])
-      .where('ur.user_id = :userId AND ur.deleted_at IS NULL', { userId: user.id })
-      .getRawMany();
-
-    const codes = roleRows.map((r) => r.code as string);
-    // 主角色排最前
-    if (user.roleId != null) {
-      const main = await this.roleRepo.findOne({ where: { id: user.roleId, status: 1 } });
-      if (main) {
-        const rest = codes.filter((c) => c !== main.code);
-        codes.splice(0, codes.length, main.code, ...rest);
-      }
-    }
-    const dataScopes: UserScopeEntry[] = codes.includes('admin')
-      ? [
-          {
-            scopeKey: '__global__',
-            scopeType: 'all',
-            viewOthers: 1,
-            editOthers: 1,
-            deleteOthers: 1,
-            targets: [],
-          },
-        ]
-      : await this.userDataScopeService.loadForSession(user.id);
-
-    return { roles: codes, roleIds: roleRows.map((r) => r.roleId as number), dataScopes };
-  }
-
+  /** 委托 IdentityService——权限码解析＋tokenVersion 键控缓存。 */
   async getUserAccessCodes(user: any): Promise<string[]> {
-    const userId = getUserId(user);
-    if (userId == null) return [];
-    // 后台服务有时只传目标用户 ID（例如新增方案确认人资格校验）。这类调用没有 JWT 中的
-    // tokenVersion，若固定缓存为 `${userId}:`，角色授权后会永久命中旧结果。先读取账号当前
-    // 版本，使角色菜单变更触发的 tokenVersion 递增同样能让后台资格校验切换到新缓存。
-    let tokenVersion = (user as any)?.tokenVersion;
-    if (tokenVersion == null) {
-      const current = await this.userRepo.findOne({
-        where: { id: userId },
-        select: { id: true, status: true, tokenVersion: true },
-      });
-      if (!current || Number(current.status) !== 1) return [];
-      tokenVersion = current.tokenVersion;
-    }
-    const cacheKey = `${userId}:${tokenVersion}`;
-    const cached = this.accessCodesCache.get(cacheKey);
-    if (cached) return cached;
-    this.pruneAccessCodesCache();
-    const roleRows = await this.userRoleRepo
-      .createQueryBuilder('ur')
-      .innerJoin('roles', 'r', 'r.id = ur.role_id AND r.deleted_at IS NULL AND r.status = 1')
-      .select('r.id', 'roleId')
-      .addSelect('r.code', 'code')
-      .where('ur.user_id = :userId AND ur.deleted_at IS NULL', { userId })
-      .getRawMany();
-    let roleIds = roleRows.map((r) => Number(r.roleId));
-    const roleCodes = roleRows.map((r) => r.code as string);
-    if (!roleIds.length && (user as any)?.roleCode) {
-      const main = await this.roleRepo.findOne({
-        where: { code: (user as any).roleCode, status: 1 },
-      });
-      if (main) {
-        roleIds = [main.id];
-        roleCodes.push(main.code);
-      }
-    }
-    if (!roleIds.length) return [];
-    // admin 自动拥有全部按钮权限码（与数据范围 all 同惯例，避免首次配码前 admin 被 403）
-    if (roleCodes.includes('admin')) {
-      const allButtons = await this.menuRepo.find({ where: { type: 'button', status: 1 } });
-      const codes = [...new Set(allButtons.map((m) => m.permission).filter((p): p is string => !!p))];
-      this.accessCodesCache.set(cacheKey, codes);
-      this.pruneAccessCodesCache();
-      return codes;
-    }
-    const rows = (await this.userRoleRepo.manager.query(
-      `SELECT DISTINCT m.permission AS permission
-       FROM role_menus rm
-       INNER JOIN menus m ON m.id = rm.menu_id
-         AND m.deleted_at IS NULL AND m.status = 1 AND m.type = 'button'
-       WHERE rm.role_id IN (?) AND m.permission IS NOT NULL AND m.permission <> ''`,
-      [roleIds],
-    )) as { permission: string }[];
-    const codes = [...new Set(rows.map((r) => r.permission))];
-    this.accessCodesCache.set(cacheKey, codes);
-    this.pruneAccessCodesCache();
-    return codes;
-  }
-
-  private pruneAccessCodesCache(limit = 1000) {
-    if (this.accessCodesCache.size <= limit) return;
-    const it = this.accessCodesCache.keys();
-    while (this.accessCodesCache.size > limit) {
-      const { value, done } = it.next();
-      if (done) break;
-      this.accessCodesCache.delete(value);
-    }
+    return this.identity.getUserAccessCodes(user);
   }
 
   private async generateToken(user: User, restricted = false) {
