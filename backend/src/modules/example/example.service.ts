@@ -18,6 +18,8 @@ import { randomUUID } from 'node:crypto';
 import { Attachment } from '../attachment/attachment.entity';
 import { AttachmentService, ATTACHMENT_IMAGE_MIMES, ATTACHMENT_PREVIEW_IMAGE_EXTS } from '../attachment/attachment.service';
 import { NotificationOutboxService, NOTIFICATION_OUTBOX } from '../system/notification-outbox.service';
+import { ExampleItemMember } from './example-member.entity';
+import { exampleMemberScopeVisibility } from './example-member-visibility';
 import type { JwtPayload } from '../auth/jwt.strategy';
 
 const CATEGORY_DICT = 'item_category';
@@ -27,6 +29,12 @@ import type { ScopeUser } from '../../common/utils/data-scope';
 import { dataToExcel, excelToData, excelToDataWithMeta } from '../../common/utils/excel-helper';
 
 const STATUS_LABELS = { pending: '待处理', doing: '进行中', done: '已完成' };
+/** 无序比较：成员集合一致即视为未变更（与展示顺序无关） */
+function sameNumberSet(a: number[], b: number[]): boolean {
+  if (a.length !== b.length) return false;
+  const rest = [...b].sort((x, y) => x - y);
+  return [...a].sort((x, y) => x - y).every((value, index) => value === rest[index]);
+}
 interface EventContext { interactionId?: string; requestId?: string; source?: 'web' | 'import'; batchId?: string; rowNumber?: number }
 
 /** 本模块数据范围 scopeKey（唯一事实来源：scope-form.registry.ts 从这里引用，拼写漂移会导致编译错） */
@@ -61,6 +69,7 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
         { header: '类别', key: 'category', width: 18 },
         { header: '说明', key: 'description', width: 40 },
         { header: '单据负责人', key: 'ownerId', width: 14 },
+        { header: '团队成员', key: 'memberIds', width: 24 },
         { header: '创建人', key: 'createdBy', width: 14 },
         { header: '创建时间', key: 'createdAt', width: 22 },
         { header: '更新时间', key: 'updatedAt', width: 22 },
@@ -73,11 +82,105 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
         description: ['说明'],
         remark: ['备注'],
       },
+      // 团队成员可见性：成员身份与共同范围 OR 叠加（列表/单条/导出同口径）；
+      // 操作裁决按参与者放行，具体能做什么仍由成员角色权限码把守（端点 PermissionGuard）。
+      extraVisibility: exampleMemberScopeVisibility,
+      isParticipant: async (entity, user, manager) => {
+        const uid = getUserId(user);
+        if (uid == null) return false;
+        // manager 由调用方传入（findOneForWrite 传事务内 manager）：参与者判定与行锁同事务，避免读到已回滚的成员变更
+        return (await this.memberRepo(manager ?? this.repo.manager).count({ where: { itemId: (entity as ExampleItem).id, userId: uid } })) > 0;
+      },
     });
   }
 
-  /** 附件列表独立读取，普通详情不下发文件路径等内部元数据。 */
-  protected override async withChildren(entity: ExampleItem) { return { ...entity }; }
+  // ===== 团队成员（memberIds）：成员身份提供可见性，能做什么仍由成员角色权限码裁决 =====
+
+  private memberRepo(manager: EntityManager) {
+    return manager.getRepository(ExampleItemMember);
+  }
+
+  /** 单条记录的成员编号（详情、访问登记返回值用） */
+  private async loadMemberIds(manager: EntityManager, itemId: number): Promise<number[]> {
+    const members = await this.memberRepo(manager).find({ where: { itemId }, select: { userId: true }, order: { id: 'ASC' } });
+    return members.map(row => row.userId);
+  }
+
+  /** 当页/整批记录批量补充 memberIds（列表、导出投影共用一次 IN 查询） */
+  private async attachMemberIds(rows: ExampleItem[], manager: EntityManager = this.repo.manager): Promise<void> {
+    const ids = rows.map(row => row.id).filter(id => Number.isSafeInteger(id));
+    if (!ids.length) return;
+    const members = await this.memberRepo(manager).find({ where: { itemId: In(ids) }, select: { itemId: true, userId: true }, order: { id: 'ASC' } });
+    const byItem = new Map<number, number[]>();
+    for (const member of members) {
+      const list = byItem.get(member.itemId) ?? [];
+      list.push(member.userId);
+      byItem.set(member.itemId, list);
+    }
+    for (const row of rows) (row as any).memberIds = byItem.get(row.id) ?? [];
+  }
+
+  /** undefined=未提交（不变更）；[]/null 输入=清空；其余去重保序。null 不会作为返回值出现 */
+  private normalizeMemberIds(memberIds: number[] | null | undefined): number[] | undefined {
+    if (memberIds === undefined) return undefined;
+    if (memberIds == null) return [];
+    return [...new Set(memberIds)];
+  }
+
+  /** 团队成员必须是存在的未删除用户（候选来自 /users/simple 启用用户；停用用户保留成员记录，恢复启用后可见） */
+  private async assertMembersExist(manager: EntityManager, memberIds: number[]): Promise<void> {
+    if (!memberIds.length) return;
+    const rows = await manager.getRepository(User).find({ where: { id: In(memberIds) }, select: { id: true } });
+    if (rows.length !== memberIds.length) {
+      throw new BadRequestException({ message: '团队成员不存在或已删除，请重新选择', fieldErrors: [{ path: 'memberIds', code: 'member-unknown', message: '团队成员不存在或已删除，请重新选择' }] });
+    }
+  }
+
+  /** 全量替换成员行（软删旧行 + 插入新行，事务内）；createdBy 记录加动人 */
+  private async replaceMembersTx(manager: EntityManager, itemId: number, memberIds: number[], actorId: number): Promise<void> {
+    const repo = this.memberRepo(manager);
+    const oldRows = await repo.find({ where: { itemId } });
+    if (oldRows.length) await repo.softRemove(oldRows);
+    if (memberIds.length) await repo.save(memberIds.map(userId => ({ itemId, userId, createdBy: actorId, updatedBy: actorId })));
+  }
+
+  /** 修改日志姓名快照：与 changeOwner 同口径，采集当时姓名，不用当前姓名反推历史 */
+  private async memberLabels(manager: EntityManager, userIds: number[]): Promise<Map<number, string>> {
+    const map = new Map<number, string>();
+    if (!userIds.length) return map;
+    const rows = await manager.getRepository(User).find({ where: { id: In(userIds) }, select: { id: true, displayName: true, username: true } });
+    for (const row of rows) map.set(row.id, row.displayName || row.username);
+    return map;
+  }
+
+  /** 新加入成员（非操作者）的站内通知意图：与单据/履历同事务，回滚即无通知；移出不通知 */
+  private async notifyMembersAddedTx(manager: EntityManager, eventId: number, item: ExampleItem, addedIds: number[], operatorId: number): Promise<void> {
+    if (!this.outbox) return;
+    for (const recipientId of addedIds) {
+      if (recipientId === operatorId) continue;
+      await this.outbox.enqueueWithinTx(manager, {
+        eventId: String(eventId),
+        recipientId,
+        type: 'member-added',
+        bizType: 'example-items',
+        bizId: item.id,
+        title: '你被加入单据团队成员',
+        content: `你被加入示例事项 ${item.docNo ?? ''}「${item.title}」的团队成员，可在示例事项中查看该单据。`,
+      });
+    }
+  }
+
+  /** 附件列表独立读取，普通详情不下发文件路径等内部元数据；成员编号随详情下发（姓名由前端 users/simple 解析）。 */
+  protected override async withChildren(entity: ExampleItem) {
+    return { ...entity, memberIds: await this.loadMemberIds(this.repo.manager, entity.id) };
+  }
+
+  /** 列表行附带 memberIds（团队成员列勾选后展示）：分页每页一次 IN 查询，不影响范围 SQL。 */
+  override async list(query: ListQuery, user?: ScopeUser) {
+    const result = await super.list(query, user);
+    await this.attachMemberIds(result.list);
+    return result;
+  }
 
   async uploadAttachment(file: Express.Multer.File, user: JwtPayload) {
     return this.attachmentService!.saveFile(file, user, 'business');
@@ -160,7 +263,7 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
           throw this.intentConflict();
         }
         const event = prior ?? await this.appendEvent(manager, item, dto.action, user, { interactionId: dto.interactionId, requestId });
-        return { record: item, eventId: event.id };
+        return { record: { ...item, memberIds: await this.loadMemberIds(manager, id) }, eventId: event.id };
       });
     } catch (error) {
       // 跨单据并发复用同一标识由唯一索引裁决；同单据请求由行锁串行化。
@@ -173,7 +276,7 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
           if (!prior || prior.itemId !== id || prior.action !== dto.action || (dto.action === 'print' && prior.version !== dto.expectedVersion)) {
             throw this.intentConflict();
           }
-          return { record: item, eventId: prior.id };
+          return { record: { ...item, memberIds: await this.loadMemberIds(manager, id) }, eventId: prior.id };
         });
       }
       throw error;
@@ -234,23 +337,30 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
   override async create(dto: unknown, userId?: number, user?: ScopeUser, context: EventContext = {}) {
     const validated = validateExample(dto);
     await this.assertCategorySelectable(validated.category ?? null);
+    const memberIds = this.normalizeMemberIds(validated.memberIds);
     const actorId = getUserId(user);
     if (actorId == null) throw new UnauthorizedException('未登录');
     // 单据编号并发撞号时整个事务重跑（事件随事务回滚，不会重复记录）。
     return withDocNoRetry(() =>
-      this.repo.manager.transaction(async manager => this.createWithinTx(manager, validated, actorId, user, context)),
+      this.repo.manager.transaction(async manager => this.createWithinTx(manager, validated, memberIds, actorId, user, context)),
     { onRetry: attempt => this.logger.warn(`单据编号冲突，重新生成重试（第 ${attempt} 次）`) },
     );
   }
 
-  /** 事务体（第四批抽取）：普通 create 与导入确认共用；docNo 生成＋保存＋履历同事务。 */
-  private async createWithinTx(manager: EntityManager, validated: ReturnType<typeof validateExample>, actorId: number, user: ScopeUser | undefined, context: EventContext) {
+  /** 事务体（第四批抽取）：普通 create 与导入确认共用；docNo 生成＋保存＋履历＋成员同事务。 */
+  private async createWithinTx(manager: EntityManager, validated: ReturnType<typeof validateExample>, memberIds: number[] | null | undefined, actorId: number, user: ScopeUser | undefined, context: EventContext) {
     const next = await generateDocNo(DOC_NO_PREFIX, manager.getRepository(ExampleItem), 'docNo');
     const reserved = await generateDocNo(DOC_NO_PREFIX, manager.getRepository(ExampleReservedNumber), 'docNo');
     const docNo = Number(next.split('-').at(-1)) >= Number(reserved.split('-').at(-1)) ? next : reserved;
-    const item = await manager.getRepository(ExampleItem).save({ ...validated, category: validated.category || null, description: validated.description || null, remark: validated.remark || null, version: 1, docNo, ownerId: actorId, createdBy: actorId });
-    await this.appendEvent(manager, item, 'create', user, context);
-    return item;
+    // memberIds 不进主表写入：成员行见下方子表插入；成员存在性校验与写入同事务，避免与用户删除并发脱节
+    const { memberIds: _submitted, ...fields } = validated as typeof validated & { memberIds?: number[] | null };
+    if (memberIds?.length) await this.assertMembersExist(manager, memberIds);
+    const item = await manager.getRepository(ExampleItem).save({ ...fields, category: validated.category || null, description: validated.description || null, remark: validated.remark || null, version: 1, docNo, ownerId: actorId, createdBy: actorId });
+    const event = await this.appendEvent(manager, item, 'create', user, context);
+    const members = memberIds ?? [];
+    if (members.length) await this.replaceMembersTx(manager, item.id, members, actorId);
+    await this.notifyMembersAddedTx(manager, event.id, item, members, actorId);
+    return { ...item, memberIds: members };
   }
 
   /**
@@ -262,7 +372,8 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
     if (actorId == null) throw new UnauthorizedException('未登录');
     const validated = validateExample(row.data);
     await this.assertCategorySelectable(validated.category ?? null);
-    const item = await this.createWithinTx(manager, validated, actorId, user, { source: 'import', batchId: importId, rowNumber: row.rowNumber });
+    // 导入映射不含团队成员列（避免姓名重名歧义），memberIds 恒为 undefined
+    const item = await this.createWithinTx(manager, validated, undefined, actorId, user, { source: 'import', batchId: importId, rowNumber: row.rowNumber });
     return { itemId: item.id, docNo: (item as any).docNo };
   }
 
@@ -282,10 +393,15 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
 
   override async update(id: number, dto: unknown, userId?: number, user?: ScopeUser, context: EventContext = {}) {
     const validated = validateExample(dto, true);
+    const memberIds = this.normalizeMemberIds(validated.memberIds);
     return this.repo.manager.transaction(async manager => {
       const old = await this.findOneForWrite(manager, id, user, 'edit');
       if (validated.version !== old.version) throw this.versionConflict();
       if (validated.category !== undefined && (validated.category || null) !== old.category) await this.assertCategorySelectable(validated.category || null);
+      const oldMemberIds = await this.loadMemberIds(manager, id);
+      // 团队成员与内容字段同一版本事务：任一真实变化都推进版本并落修改日志
+      const membersChanged = memberIds !== undefined && !sameNumberSet(memberIds, oldMemberIds);
+      if (membersChanged) await this.assertMembersExist(manager, memberIds!);
       const tracked = { title: '标题', status: '状态', category: '类别', description: '说明', remark: '备注' };
       const next = { ...old };
       const changed: string[] = [];
@@ -294,9 +410,9 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
         next[key] = validated[key] === '' ? null : validated[key];
         if ((old[key] ?? null) !== next[key]) changed.push(key);
       }
-      if (!changed.length) {
+      if (!changed.length && !membersChanged) {
         await this.appendEvent(manager, old, 'no_change', user, context);
-        return old;
+        return { ...old, memberIds: oldMemberIds };
       }
       next.version = old.version + 1; next.updatedBy = getUserId(user)!;
       const item = await manager.getRepository(ExampleItem).save(next);
@@ -305,7 +421,18 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
       const labelBook = changed.includes('category') ? await this.dictService?.getLabelBook(CATEGORY_DICT, manager) : undefined;
       const label = (key: string, value: any) => value == null || value === '' ? null : key === 'status' ? STATUS_LABELS[value] ?? String(value) : key === 'category' ? labelBook?.display(value) ?? String(value) : null;
       await manager.getRepository(ExampleChange).save(changed.map(key => ({ eventId: event.id, fieldKey: key, fieldLabel: tracked[key], valueType: key === 'status' || key === 'category' ? 'enum' : 'text', beforeValue: old[key] ?? null, afterValue: item[key] ?? null, beforeLabel: label(key, old[key]), afterLabel: label(key, item[key]) })));
-      return item;
+      if (membersChanged) {
+        await this.replaceMembersTx(manager, id, memberIds!, getUserId(user)!);
+        const nameBook = await this.memberLabels(manager, [...new Set([...oldMemberIds, ...memberIds!])]);
+        const memberLabel = (ids: number[]) => ids.map(uid => nameBook.get(uid) ?? `用户#${uid}`).join('、') || null;
+        await manager.getRepository(ExampleChange).save({
+          eventId: event.id, fieldKey: 'memberIds', fieldLabel: '团队成员', valueType: 'text',
+          beforeValue: oldMemberIds, afterValue: memberIds, beforeLabel: memberLabel(oldMemberIds), afterLabel: memberLabel(memberIds!),
+        });
+        const oldSet = new Set(oldMemberIds);
+        await this.notifyMembersAddedTx(manager, event.id, item, memberIds!.filter(uid => !oldSet.has(uid)), getUserId(user)!);
+      }
+      return { ...item, memberIds: membersChanged ? memberIds! : oldMemberIds };
     });
   }
 
@@ -353,6 +480,7 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
       await manager.getRepository(ExampleRecycle).save({ itemId: id, attachmentIds: attachments.map(a => a.id), deletedBy: getUserId(user)!, actorName: (user as JwtPayload)?.username || String(getUserId(user)), state: 'deleted' });
       if (attachments.length) await manager.getRepository(Attachment).update(attachments.map(a => a.id), { recycleHeld: 1 });
       await manager.getRepository(ExampleItem).softDelete(id);
+      // 团队成员行不随单据软删：恢复单据时成员原样可见；彻底删除在回收站 purge 物理清理
       if (this.children.attachments) await this.softDeleteChildrenTx(manager, id, this.children.attachments);
       await this.appendEvent(manager, item, 'delete', user, context);
     });
@@ -391,9 +519,10 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
 
   protected override async getExportRows(user?: ScopeUser, query: ListQuery = {}) {
     const rows = await super.getExportRows(user, query);
+    await this.attachMemberIds(rows);
     const labelBook = await this.dictService?.getLabelBook(CATEGORY_DICT);
     // 负责人/创建人投影为姓名展示（键与列表列设置勾选项对齐）；整批一次查询，已删除人员留空。
-    const userIds = [...new Set(rows.flatMap(row => [row.ownerId, row.createdBy]).filter((id): id is number => id != null))];
+    const userIds = [...new Set(rows.flatMap(row => [row.ownerId, row.createdBy, ...((row as any).memberIds as number[] | undefined ?? [])]).filter((id): id is number => id != null))];
     const users = userIds.length
       ? await this.repo.manager.getRepository(User).find({ where: { id: In(userIds) }, select: { id: true, displayName: true, username: true } })
       : [];
@@ -407,6 +536,8 @@ export class ExampleService extends CrudBaseService<ExampleItem> {
       status: STATUS_LABELS[row.status] ?? row.status,
       category: row.category ? (labelBook?.display(row.category) ?? row.category) : '',
       ownerId: nameOf(row.ownerId),
+      // 团队成员投影为顿号分隔的姓名串（导出只读；导入映射不含该列）
+      memberIds: ((row as any).memberIds as number[] | undefined ?? []).map(nameOf).join('、'),
       createdBy: nameOf(row.createdBy),
       createdAt: row.createdAt ? new Date(row.createdAt) : null,
       updatedAt: row.updatedAt ? new Date(row.updatedAt) : null,

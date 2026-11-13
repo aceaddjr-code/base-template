@@ -74,7 +74,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { WarningOutlined } from '@ant-design/icons-vue'
@@ -101,28 +101,64 @@ watch(
   [() => form.value.username, () => form.value.password],
   () => {
     if (errorMsg.value) errorMsg.value = ''
+    stopRetryCountdown()
   },
 )
 
+// 429 限流倒计时：仅为提示，后端仍是唯一裁决者；到 0 自动消失
+let retryTimer: ReturnType<typeof setInterval> | null = null
+function stopRetryCountdown() {
+  if (retryTimer) { clearInterval(retryTimer); retryTimer = null }
+}
+function showRetryCountdown(seconds: number) {
+  stopRetryCountdown()
+  let remain = seconds
+  errorMsg.value = `尝试过于频繁，请约 ${remain} 秒后重试`
+  retryTimer = setInterval(() => {
+    remain -= 1
+    if (remain <= 0) { stopRetryCountdown(); if (errorMsg.value.startsWith('尝试过于频繁')) errorMsg.value = ''; return }
+    errorMsg.value = `尝试过于频繁，请约 ${remain} 秒后重试`
+  }, 1000)
+}
+
 async function handleLogin() {
   errorMsg.value = ''
+  stopRetryCountdown()
   loading.value = true
   try {
     await appStore.signIn({
       loginid: form.value.username,
       password: form.value.password,
     })
+    // 待改密受限会话：不进入业务页面，直接送改密页（不再提示“登录成功”）
+    if (appStore.mustChangePassword) {
+      form.value.password = ''
+      router.push('/change-password')
+      return
+    }
+    form.value.password = ''
     message.success('登录成功')
     const redirect = (route.query.redirect as string) || ''
     const target = redirect && redirect.startsWith('/') ? redirect : '/'
     router.push(target)
   } catch (error: any) {
-    // 密码错误 / 账号锁定 / 网络错误等一律给出可见反馈
-    errorMsg.value = error?.response?.data?.message || error?.message || '登录失败，请稍后重试'
+    // 密码错误 / 账号锁定 / 网络错误等一律给出可见反馈；429 附倒计时提示
+    const status = error?.response?.status
+    const reason = error?.response?.data?.reason
+    if (status === 429 && reason === 'LOGIN_RATE_LIMITED') {
+      const retryAfter = Number(error?.response?.headers?.['retry-after'])
+      showRetryCountdown(Number.isFinite(retryAfter) && retryAfter > 0 ? Math.ceil(retryAfter) : 60)
+    } else if (reason === 'TEMPORARY_PASSWORD_EXPIRED' || reason === 'PASSWORD_CHANGE_REQUIRED') {
+      errorMsg.value = error?.response?.data?.message || '临时密码已过期，请联系管理员重置'
+    } else {
+      errorMsg.value = error?.response?.data?.message || error?.message || '登录失败，请稍后重试'
+    }
   } finally {
     loading.value = false
   }
 }
+
+onBeforeUnmount(stopRetryCountdown)
 </script>
 
 <style scoped>
@@ -147,7 +183,6 @@ async function handleLogin() {
   border-right: var(--rule);
 }
 .brand-mark { display: flex; align-items: center; gap: var(--space-3); }
-/* 深色面板上 logo 裸放：用 BrandMark 的 on-dark 提亮版，不再垫色块 */
 .brand-logo {
   flex: none;
   display: inline-flex;

@@ -4,7 +4,7 @@ import { generateDocNo } from '../utils/doc-no-generator';
 import { getUserId, formatDate, withDocNoRetry } from '../utils/service-helpers';
 import {
   buildDataScope, buildOperationGate, canEditOwner, assertCanOperateOn,
-  GLOBAL_SCOPE_KEY, ScopeOperation, ScopeUser,
+  GLOBAL_SCOPE_KEY, ScopeExtraVisibility, ScopeOperation, ScopeUser,
 } from '../utils/data-scope';
 import { ColumnDef, dataToExcel, excelToData } from '../utils/excel-helper';
 import { dateRangeBounds } from '../utils/date-range';
@@ -43,7 +43,7 @@ export interface ListQuery {
   cols?: string[];
 }
 
-export interface CrudOptions {
+export interface CrudOptions<Entity extends ObjectLiteral = any> {
   /** 是否启用数据级隔离（owner_id 口径，默认 true；配置类如表单模板设 false） */
   dataScoped?: boolean;
   /** 单据号前缀（不传则主表无自动编号字段，如表单模板） */
@@ -81,6 +81,18 @@ export interface CrudOptions {
    * 0 行命中返回 409。未提交 version 的调用方保持原最后写入胜出行为。
    */
   optimisticLock?: boolean;
+  /**
+   * 额外可见分支（业务无关 seam）：返回的 SQL 与共同范围 OR 叠加，让范围外的记录进入
+   * 读取集合（如「记录参与者可见」），列表/单条/导出读取自动一致；返回 null 表示无叠加。
+   * SQL 中未注册进 QueryBuilder 的别名需手写数据库列名，参数名须与范围条件既有参数不同名。
+   */
+  extraVisibility?: (alias: string, user?: ScopeUser) => ScopeExtraVisibility | null;
+  /**
+   * 单条操作裁决的参与者判定：true 时按参与者口径放行（操作维度仍由端点权限码把守）。
+   * manager 为发起裁决的查询所在事务（findOneForWrite 传事务内 manager）：
+   * 参与者判定应复用同一事务，避免读到并发事务未提交/已回滚的参与者变更。
+   */
+  isParticipant?: (entity: Entity, user?: ScopeUser, manager?: EntityManager) => boolean | Promise<boolean>;
 
 }
 
@@ -114,7 +126,7 @@ export abstract class CrudBaseService<Entity extends ObjectLiteral> {
   constructor(
     protected readonly repo: Repository<Entity>,
     protected readonly children: Record<string, ChildSpec> = {},
-    protected readonly options: CrudOptions = {},
+    protected readonly options: CrudOptions<Entity> = {},
   ) {}
 
   private filterWhitelistCache: string[] | null = null;
@@ -275,7 +287,7 @@ export abstract class CrudBaseService<Entity extends ObjectLiteral> {
 
   protected applyScope(qb: SelectQueryBuilder<any>, alias: string, user?: ScopeUser): void {
     if (this.options.dataScoped === false) return;
-    buildDataScope(qb, alias, user, this.dataScopeKey ?? undefined);
+    buildDataScope(qb, alias, user, this.dataScopeKey ?? undefined, undefined, undefined, this.options.extraVisibility?.(alias, user) ?? null);
   }
 
   protected applyExtraListFilter?(qb: SelectQueryBuilder<any>, alias: string, user?: ScopeUser): void {
@@ -283,11 +295,12 @@ export abstract class CrudBaseService<Entity extends ObjectLiteral> {
   }
 
   /** 范围读取后的动作裁决：编辑附加查看资格，删除保持独立资格。部门范围的操作开关依赖前置 SQL 过滤，因此与范围读取不拆开开放。 */
-  private assertOperationAllowed(entity: Entity, user: ScopeUser | undefined, operation: ScopeOperation): void {
+  private async assertOperationAllowed(entity: Entity, user: ScopeUser | undefined, operation: ScopeOperation, manager?: EntityManager): Promise<void> {
     if (this.options.dataScoped !== false && this.repo.metadata?.hasColumnWithPropertyPath?.('ownerId')) {
       const scopeKey = this.dataScopeKey ?? GLOBAL_SCOPE_KEY;
-      assertCanOperateOn(entity, user, scopeKey, operation);
-      if (operation === 'edit') assertCanOperateOn(entity, user, scopeKey, 'view');
+      const isParticipant = (await this.options.isParticipant?.(entity, user, manager ?? this.repo.manager)) === true;
+      assertCanOperateOn(entity, user, scopeKey, operation, isParticipant);
+      if (operation === 'edit') assertCanOperateOn(entity, user, scopeKey, 'view', isParticipant);
     }
   }
 
@@ -305,7 +318,7 @@ export abstract class CrudBaseService<Entity extends ObjectLiteral> {
       entity = await qb.getOne();
     }
     if (!entity) throw new NotFoundException('记录不存在');
-    this.assertOperationAllowed(entity, user, operation);
+    await this.assertOperationAllowed(entity, user, operation);
     return entity;
   }
 
@@ -319,7 +332,7 @@ export abstract class CrudBaseService<Entity extends ObjectLiteral> {
     if (this.options.dataScoped !== false) this.applyScope(qb, 't', user);
     const entity = await qb.getOne();
     if (!entity) throw new NotFoundException('记录不存在');
-    this.assertOperationAllowed(entity, user, operation);
+    await this.assertOperationAllowed(entity, user, operation, manager);
     return entity;
   }
 
@@ -546,7 +559,7 @@ export abstract class CrudBaseService<Entity extends ObjectLiteral> {
     // 导出比列表更严是规格口径：查看详情开关控制详情、履历、附件读取和导出（docs/用户数据范围.md）。
     const qb = this.buildListQueryBuilder(query, user);
     if (this.options.dataScoped !== false) {
-      buildOperationGate(qb, 't', user, this.dataScopeKey ?? GLOBAL_SCOPE_KEY, 'view');
+      buildOperationGate(qb, 't', user, this.dataScopeKey ?? GLOBAL_SCOPE_KEY, 'view', this.options.extraVisibility?.('t', user) ?? null);
     }
     const rows = await qb.take(50001).getMany();
     if (rows.length > 50000) throw new BadRequestException('导出最多 50000 条，请缩小筛选范围');

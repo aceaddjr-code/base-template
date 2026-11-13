@@ -6,22 +6,30 @@
     :keyboard="!scopeSaving"
     :closable="!scopeSaving"
     :cancel-button-props="{ disabled: scopeSaving }"
-    :ok-button-props="{ disabled: scopeLoading || !loadedUserId || !!loadError }"
+    :ok-button-props="{ disabled: scopeLoading || copyLoading || !loadedUserId || !!loadError }"
     ok-text="保存"
     cancel-text="取消"
     @cancel="emit('update:open', false)"
     @ok="handleScopeSave"
-    width="min(1200px, 96vw)"
+    width="min(760px, 96vw)"
   >
     <template #title>
       <div class="scope-title flex items-center gap-2">
         <SafetyOutlined class="text-primary" />
-        <span>业务数据范围设置 - {{ target?.name ?? '' }}</span>
+        <span>可见范围 · {{ target?.name ?? '' }}</span>
       </div>
     </template>
-    <div class="scope-note">
-      每个表单单独设置；未配置时仅本人。部门包含下级部门，操作仍需对应权限码。
+    <div class="flex flex-wrap items-center gap-2 mb-3">
+      <a-select v-model:value="copyUserId" :options="copyUserOptions" show-search option-filter-prop="label" placeholder="选择复制来源" style="width: 260px" :disabled="scopeLoading || scopeSaving || copyLoading" />
+      <a-button class="copy-scope" :disabled="!copyUserId || scopeLoading || scopeSaving || copyLoading || !!loadError" :loading="copyLoading" @click="copyScope">复制范围配置</a-button>
     </div>
+    <a-alert
+      v-if="hasLegacyRestrictions"
+      type="warning"
+      show-icon
+      class="mb-2"
+      message="该用户仍有旧操作限制。保存后，范围内的操作按角色权限重新判断。"
+    />
     <a-alert
       v-if="staleCount"
       type="warning"
@@ -39,13 +47,13 @@
       :pagination="false"
       row-key="scopeKey"
       size="small"
-      :scroll="{ x: 1140, y: 430 }"
+      :scroll="{ x: 460, y: 430 }"
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'scopeType'">
           <div class="flex flex-col gap-1.5">
-            <a-radio-group :value="record.scopeType" size="small" :disabled="scopeSaving" @change="changeScopeType(record as ScopeRow, $event.target.value)">
-              <a-radio value="self">自己的</a-radio>
+            <a-radio-group :value="record.scopeType" size="small" :disabled="scopeSaving || copyLoading" @change="changeScopeType(record as ScopeRow, $event.target.value)">
+              <a-radio value="self">仅本人</a-radio>
               <a-radio value="all">全部</a-radio>
               <a-radio value="by_users">按用户</a-radio>
               <a-radio value="by_depts">按部门</a-radio>
@@ -53,7 +61,7 @@
             <a-select
               v-if="record.scopeType === 'by_users'"
               v-model:value="record.targets"
-              :disabled="scopeSaving"
+              :disabled="scopeSaving || copyLoading"
               mode="multiple"
               placeholder="选择用户"
               :options="scopeUserOptions"
@@ -66,7 +74,7 @@
             <a-select
               v-else-if="record.scopeType === 'by_depts'"
               v-model:value="record.targets"
-              :disabled="scopeSaving"
+              :disabled="scopeSaving || copyLoading"
               mode="multiple"
               placeholder="选择部门"
               :options="scopeDeptOptions"
@@ -77,14 +85,6 @@
               option-filter-prop="label"
             />
           </div>
-        </template>
-        <template v-else-if="flagKeys.includes(column.key as FlagKey)">
-          <a-checkbox
-            :checked="record[column.key as FlagKey]"
-            :aria-label="`${record.label}${column.title}`"
-            :disabled="scopeSaving"
-            @update:checked="record[column.key as FlagKey] = $event"
-          />
         </template>
       </template>
     </a-table>
@@ -107,13 +107,7 @@ interface ScopeRow {
   scopeKey: string
   label: string
   scopeType: ScopeType
-  viewOthers: boolean
-  editOthers: boolean
-  deleteOthers: boolean
   targets: number[]
-  viewSelf: boolean
-  editSelf: boolean
-  deleteSelf: boolean
 }
 
 const props = defineProps<{ open: boolean; target: { id: number; name: string } | null }>()
@@ -121,31 +115,47 @@ const emit = defineEmits<{ (e: 'update:open', v: boolean): void }>()
 
 const scopeLoading = ref(false)
 const scopeSaving = ref(false)
+const copyLoading = ref(false)
+const copyUserId = ref<number | undefined>()
 const loadedUserId = ref<number | null>(null)
 const loadError = ref('')
 /** 已下线表单仍存的配置行数：展示时忽略，保存后由全量替换清除 */
 const staleCount = ref(0)
+const hasLegacyRestrictions = ref(false)
 let loadSequence = 0
 const scopeRows = ref<ScopeRow[]>([])
 const scopeUsers = ref<UserSimple[]>([])
 const scopeDepts = ref<Department[]>([])
-const flagKeys = ['viewOthers', 'viewSelf', 'editOthers', 'editSelf', 'deleteOthers', 'deleteSelf'] as const
-type FlagKey = typeof flagKeys[number]
-
 const scopeColumns = withEmptyDash([
   { title: '表单', dataIndex: 'label', key: 'label', width: 130 },
-  { title: '数据范围', key: 'scopeType', width: 400 },
-  { title: '查看他人详情', key: 'viewOthers', width: 110, align: 'center' as const },
-  { title: '查看本人详情', key: 'viewSelf', width: 110, align: 'center' as const },
-  { title: '编辑他人', key: 'editOthers', width: 100, align: 'center' as const },
-  { title: '编辑本人', key: 'editSelf', width: 100, align: 'center' as const },
-  { title: '删除他人', key: 'deleteOthers', width: 100, align: 'center' as const },
-  { title: '删除本人', key: 'deleteSelf', width: 100, align: 'center' as const },
+  { title: '可见范围', key: 'scopeType' },
 ])
 
 const scopeUserOptions = computed(() =>
   scopeUsers.value.map((u) => ({ value: u.id, label: `${u.displayName || u.username}（${u.username}${u.deptName ? ` · ${u.deptName}` : ''}）` })),
 )
+const copyUserOptions = computed(() => scopeUserOptions.value.filter(user => user.value !== props.target?.id))
+
+async function copyScope() {
+  if (!copyUserId.value || !props.target || !loadedUserId.value || copyLoading.value) return
+  const sequence = loadSequence
+  const targetId = props.target.id
+  copyLoading.value = true
+  try {
+    const source = await getUserDataScopes(copyUserId.value)
+    if (sequence !== loadSequence || props.target?.id !== targetId) return
+    for (const row of scopeRows.value) {
+      const item = source.find(entry => entry.scopeKey === row.scopeKey)
+      row.scopeType = item?.scopeType ?? 'self'
+      row.targets = item?.targets ? [...item.targets] : []
+    }
+    message.success('已复制，请检查后保存')
+  } catch {
+    message.warning('复制失败，请重试')
+  } finally {
+    copyLoading.value = false
+  }
+}
 const scopeDeptOptions = computed(() => {
   const departments = new Map(scopeDepts.value.map(dept => [dept.id, dept]))
   return scopeDepts.value.map(dept => {
@@ -165,6 +175,8 @@ async function loadScope() {
   loadedUserId.value = null
   loadError.value = ''
   staleCount.value = 0
+  hasLegacyRestrictions.value = false
+  copyUserId.value = undefined
   scopeRows.value = []
   if (!props.open || !props.target) return
   const userId = props.target.id
@@ -175,7 +187,7 @@ async function loadScope() {
     ])
     if (sequence !== loadSequence) return
     scopeRows.value = [
-      ...forms.map((m): ScopeRow => ({ scopeKey: m.scopeKey, label: m.label, scopeType: 'self', viewOthers: false, editOthers: false, deleteOthers: false, viewSelf: true, editSelf: true, deleteSelf: true, targets: [] })),
+      ...forms.map((m): ScopeRow => ({ scopeKey: m.scopeKey, label: m.label, scopeType: 'self', targets: [] })),
     ]
     scopeUsers.value = users
     scopeDepts.value = depts
@@ -186,8 +198,7 @@ async function loadScope() {
       const row = scopeRows.value.find(r => r.scopeKey === item.scopeKey)
       if (!row) { stale += 1; continue }
       row.scopeType = item.scopeType
-      // 开关缺省值由后端归一化后下发，前端只按回显值渲染
-      for (const key of flagKeys) row[key] = item[key] === 1
+      if (item.legacyRestricted) hasLegacyRestrictions.value = true
       row.targets = Array.isArray(item.targets) ? [...item.targets] : []
     }
     staleCount.value = stale
@@ -212,7 +223,7 @@ function changeScopeType(row: ScopeRow, type: ScopeRow['scopeType']) {
 }
 
 function handleScopeSave() {
-  if (!props.target || scopeSaving.value || scopeLoading.value || loadError.value || loadedUserId.value !== props.target.id) return
+  if (!props.target || scopeSaving.value || scopeLoading.value || copyLoading.value || loadError.value || loadedUserId.value !== props.target.id) return
   const sequence = loadSequence
   const userId = loadedUserId.value
   if (scopeRows.value.some(row => (row.scopeType === 'by_users' || row.scopeType === 'by_depts') && !row.targets.length)) {
@@ -224,13 +235,7 @@ function handleScopeSave() {
     .map((r) => ({
       scopeKey: r.scopeKey,
       scopeType: r.scopeType,
-      viewOthers: r.viewOthers ? 1 : 0,
-      editOthers: r.editOthers ? 1 : 0,
-      deleteOthers: r.deleteOthers ? 1 : 0,
       targets: r.targets,
-      viewSelf: r.viewSelf ? 1 : 0,
-      editSelf: r.editSelf ? 1 : 0,
-      deleteSelf: r.deleteSelf ? 1 : 0,
     }))
   scopeSaving.value = true
   saveUserDataScopes(userId, rows)
@@ -244,6 +249,5 @@ function handleScopeSave() {
 </script>
 
 <style scoped>
-.scope-note { color: var(--color-text-tertiary); font-size: var(--text-aux); margin-bottom: var(--space-2); }
 .scope-title { padding-right: var(--space-4); }
 </style>

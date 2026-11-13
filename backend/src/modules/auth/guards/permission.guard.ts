@@ -5,6 +5,7 @@ import { CRUD_PERM_PREFIX_KEY, resolveCrudPermCode } from '../../../common/decor
 import { IS_PUBLIC_KEY } from '../../../common/decorators/public.decorator';
 import { hasAnyCode, isSystemAdmin } from '../../../common/utils/permission-check';
 import { AuthService } from '../auth.service';
+import type { ScopeUser } from '../../../common/utils/data-scope';
 
 @Injectable()
 export class PermissionGuard implements CanActivate {
@@ -38,11 +39,13 @@ export class PermissionGuard implements CanActivate {
       return true;
     }
 
-    const { user } = context.switchToHttp().getRequest<{ user?: { sub?: number; roleCode?: string; roles?: string[] } }>();
+    const { user } = context.switchToHttp().getRequest<{ user?: ScopeUser }>();
     if (!user) return false;
     if (isSystemAdmin(user)) return true;
 
     const userCodes = await this.authService.getUserAccessCodes(user);
-    return hasAnyCode(userCodes, codes);
+    if (!hasAnyCode(userCodes, codes)) return false;
+    user.accessCodes = userCodes;
+    return true;
   }
 }

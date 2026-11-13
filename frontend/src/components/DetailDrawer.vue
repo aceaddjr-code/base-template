@@ -62,7 +62,7 @@
                     <a-textarea v-else-if="editableFields.get(f.dataIndex)?.inputType === 'textarea'" v-model:value="editForm[f.dataIndex]" :aria-label="f.label" v-bind="feedback.attrs(f.dataIndex)" :maxlength="editableFields.get(f.dataIndex)?.maxLength" :disabled="saving" :rows="4" show-count />
                     <a-input-number v-else-if="editableFields.get(f.dataIndex)?.inputType === 'number'" v-model:value="editForm[f.dataIndex]" :aria-label="f.label" v-bind="feedback.attrs(f.dataIndex)" :disabled="saving" style="width: 100%" />
                     <a-date-picker v-else-if="editableFields.get(f.dataIndex)?.inputType === 'date'" v-model:value="editForm[f.dataIndex]" :aria-label="f.label" v-bind="feedback.attrs(f.dataIndex)" :disabled="saving" value-format="YYYY-MM-DD" style="width: 100%" />
-                    <a-select v-else-if="editableFields.get(f.dataIndex)?.inputType === 'select'" v-model:value="editForm[f.dataIndex]" :aria-label="f.label" v-bind="feedback.attrs(f.dataIndex)" :options="editableFields.get(f.dataIndex)?.options" :allow-clear="!editableFields.get(f.dataIndex)?.required" :disabled="saving" style="width: 100%" />
+                    <a-select v-else-if="editableFields.get(f.dataIndex)?.inputType === 'select'" v-model:value="editForm[f.dataIndex]" :aria-label="f.label" v-bind="feedback.attrs(f.dataIndex)" :options="editableFields.get(f.dataIndex)?.options" :mode="editableFields.get(f.dataIndex)?.multiple ? 'multiple' : undefined" :max-tag-count="editableFields.get(f.dataIndex)?.multiple ? 'responsive' : undefined" :allow-clear="!editableFields.get(f.dataIndex)?.required" :disabled="saving" style="width: 100%" />
                     <a-switch v-else v-model:checked="editForm[f.dataIndex]" :aria-label="f.label" v-bind="feedback.attrs(f.dataIndex)" :disabled="saving" />
                     <p v-if="fieldErrors[f.dataIndex]" :id="feedback.errorId(f.dataIndex)" class="field-error">{{ fieldErrors[f.dataIndex] }}</p>
                     </div>
@@ -133,6 +133,8 @@ export interface DetailField {
   inputType?: 'input' | 'textarea' | 'number' | 'date' | 'select' | 'switch'
   /** inputType='select' 时下拉选项 */
   options?: { label: string; value: string | number }[]
+  /** inputType='select' 时允许多选（值为编号数组，如团队成员） */
+  multiple?: boolean
   /** editable 时必填（保存时校验） */
   required?: boolean
   maxLength?: number
@@ -148,6 +150,7 @@ interface EditFieldView {
   dataIndex: string
   inputType?: DetailField['inputType']
   options?: DetailField['options']
+  multiple?: boolean
   required?: boolean
   maxLength?: number
 }
@@ -232,7 +235,7 @@ const fieldGroups = computed(() => {
 const editFieldList = computed<EditFieldView[]>(() => {
   return visibleFields.value
     .filter((f) => f.editable)
-    .map((f) => ({ label: f.label, dataIndex: f.dataIndex, inputType: f.inputType, options: f.options, required: f.required, maxLength: f.maxLength }))
+    .map((f) => ({ label: f.label, dataIndex: f.dataIndex, inputType: f.inputType, options: f.options, multiple: f.multiple, required: f.required, maxLength: f.maxLength }))
 })
 const editableFields = computed(() => new Map(editFieldList.value.map(field => [field.dataIndex, field])))
 
@@ -246,7 +249,7 @@ const editSession = useFormModal<Record<string, any>, number | string>({
     const errors: Record<string, string> = {}
     for (const f of editFieldList.value) {
       const v = form[f.dataIndex]
-      if (f.required && (v == null || (typeof v === 'string' && !v.trim()))) {
+      if (f.required && (v == null || (typeof v === 'string' && !v.trim()) || (Array.isArray(v) && !v.length))) {
         errors[f.dataIndex] = `请填写${f.label}`
       }
       if (typeof v === 'string' && f.maxLength && Array.from(v).length > f.maxLength) errors[f.dataIndex] = `${f.label}不能超过 ${f.maxLength} 字`

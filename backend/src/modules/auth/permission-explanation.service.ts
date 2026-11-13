@@ -4,11 +4,16 @@ import { In, Repository } from 'typeorm';
 import { User } from '../user/user.entity';
 import { Department } from '../department/department.entity';
 import { ExampleItem } from '../example/example-item.entity';
+import { ExampleItemMember } from '../example/example-member.entity';
+import { exampleMemberScopeVisibility } from '../example/example-member-visibility';
 import { SCOPE_FORM_REGISTRY } from '../user/scope-form.registry';
 import { IdentityService } from './identity.service';
 import { SystemLogService } from '../system/system-log.service';
+import { ATTACHMENTS_SCOPE_KEY } from '../attachment/attachment-access';
+import { findAttachmentTarget } from '../attachment/attachment-targets.registry';
+import { explainAttachment, fileLibraryActions } from './attachment-permission-explanation';
 import {
-  buildDataScope, evaluateOperationSwitch, findScopeEntry, normalizeScopeFlags, type ScopeUser, type UserScopeEntry,
+  buildDataScope, evaluateOperationSwitch, findScopeEntry, normalizeScopeFlags, otherRecordPermission, type ScopeUser, type UserScopeEntry,
 } from '../../common/utils/data-scope';
 import {
   ACTION_PERMISSION_CODES, EXPLAIN_ACTIONS, EXPLAIN_REASONS, RECORD_EXPLAINABLE_SCOPE_KEY,
@@ -60,27 +65,51 @@ export class PermissionExplanationService {
     // getUserAccessCodes 按目标当前版本解析（账号禁用时为空，与运行时一致）；
     // 携带 roleCode 与 JWT payload 同口径，使无角色用户获得与真实会话一致的缺省回退。
     const effectiveCodes = new Set(await this.identity.getUserAccessCodes({ id: targetId, roleCode: identity.roles[0] }));
-    const sources = await this.loadPermissionSources(targetId, target.roleId);
-
     const entry = identity.dataScopes.find((item: UserScopeEntry) => item.scopeKey === scopeKey) ?? null;
-    const flags = normalizeScopeFlags(entry);
-    const dataScope = await this.describeDataScope(entry, flags);
-
-    const operationPermissions: OperationPermissionExplanation[] = EXPLAIN_ACTIONS.map((action) => {
-      const code = ACTION_PERMISSION_CODES[action];
-      return {
-        action,
-        permissionCode: code,
-        effective: isAdmin || effectiveCodes.has(code),
-        sources: sources.get(code) ?? [],
-        adminException: isAdmin,
-      };
-    });
+    const files = scopeKey === ATTACHMENTS_SCOPE_KEY;
+    const scopeUser: ScopeUser = { id: targetId, roles: identity.roles, dataScopes: identity.dataScopes, accessCodes: [...effectiveCodes] };
+    const accountReason = Number(target.status) !== 1 ? EXPLAIN_REASONS.ACCOUNT_DISABLED
+      : Number(target.mustChangePassword) === 1 ? EXPLAIN_REASONS.ACCOUNT_MUST_CHANGE_PASSWORD : undefined;
+    if (files && recordRef && !recordRef.id) throw new BadRequestException('附件诊断需要数字文件 ID');
+    const file = files && recordRef?.id
+      ? await explainAttachment(this.exampleRepo.manager, recordRef.id, scopeUser, isAdmin, effectiveCodes, accountReason)
+      : null;
+    const boundTarget = file?.row?.origin === 'business' && file.row.status === 'bound'
+      ? findAttachmentTarget(file.row.entityType) : null;
+    const explainedEntry = boundTarget ? findScopeEntry(scopeUser, boundTarget.scopeKey) : entry;
+    const dataScope = await this.describeDataScope(explainedEntry, normalizeScopeFlags(explainedEntry));
+    // 示例事项的团队成员口径：成员身份在共同范围之外额外提供可见性（操作仍由角色权限码决定）
+    if (scopeKey === RECORD_EXPLAINABLE_SCOPE_KEY) {
+      dataScope.description += '；此外，作为单据团队成员的记录同样可见（操作由该用户角色权限码决定）';
+    }
+    const actions: Array<{ action: ExplainAction; codes: string[] }> = files ? file?.actions ?? fileLibraryActions
+      : EXPLAIN_ACTIONS.map(action => ({ action, codes: [ACTION_PERMISSION_CODES[action]] }));
+    const permissionCodes = [...new Set(actions.flatMap(item => item.codes))];
+    const sources = await this.loadPermissionSources(targetId, target.roleId, permissionCodes);
+    const operationPermissions: OperationPermissionExplanation[] = actions.map(({ action, codes }) => ({
+      action,
+      permissionCode: codes.join(' + ') || '无独立权限码',
+      effective: isAdmin || codes.every(code => effectiveCodes.has(code)),
+      sources: [...new Map(codes.flatMap(code => sources.get(code) ?? []).map(role => [role.roleId, role] as const)).values()],
+      adminException: isAdmin,
+    }));
 
     let recordEvaluation: RecordActionEvaluation[] | null = null;
     let record: PermissionExplanationResponse['record'] = null;
     if (recordRef != null) {
-      if (scopeKey !== RECORD_EXPLAINABLE_SCOPE_KEY) {
+      if (file) {
+        recordEvaluation = file.evaluations;
+        const row = file.row;
+        record = row ? {
+          id: row.id, docNo: null, title: row.originalName, ownerId: row.ownerId ?? null,
+          ownerLabel: row.ownerId == null ? null : await this.ownerLabel(row.ownerId), deleted: !!row.deletedAt,
+        } : null;
+        if (row?.origin === 'business') {
+          dataScope.description = row.status === 'bound'
+            ? '已挂接附件按所属单据裁决。' + (boundTarget ? dataScope.description : '当前附件来源未登记。')
+            : '未挂接暂存附件仅上传者或系统管理员可操作';
+        }
+      } else if (scopeKey !== RECORD_EXPLAINABLE_SCOPE_KEY) {
         recordEvaluation = EXPLAIN_ACTIONS.map((action) => unsupported(action));
       } else {
         const evaluation = await this.evaluateRecord(recordRef, targetId, identity, isAdmin, effectiveCodes, entry, target);
@@ -96,8 +125,8 @@ export class PermissionExplanationService {
       configSource: {
         scopeKey,
         scopeFormLabel: registry.label,
-        configured: !!entry,
-        fallback: entry ? null : 'self_only',
+        configured: !!explainedEntry,
+        fallback: explainedEntry ? null : 'self_only',
       },
       account: { status: Number(target.status) === 1 ? 1 : 0, mustChangePassword: Number(target.mustChangePassword) === 1 },
       operationPermissions,
@@ -119,7 +148,8 @@ export class PermissionExplanationService {
   }
 
   /** 授予各权限码的角色来源（含停用角色，透明展示启用状态；有效码由 getUserAccessCodes 裁决）。 */
-  private async loadPermissionSources(userId: number, mainRoleId: number | null): Promise<Map<string, PermissionSourceRole[]>> {
+  private async loadPermissionSources(userId: number, mainRoleId: number | null, codes: string[]): Promise<Map<string, PermissionSourceRole[]>> {
+    if (!codes.length) return new Map();
     const rows = await this.userRepo.manager.query(
       `SELECT DISTINCT r.id AS roleId, r.code AS roleCode, r.name AS roleName, r.status AS roleStatus, m.permission AS permission
        FROM (
@@ -129,8 +159,8 @@ export class PermissionExplanationService {
        JOIN roles r ON r.id = owned.role_id AND r.deleted_at IS NULL
        JOIN role_menus rm ON rm.role_id = r.id
        JOIN menus m ON m.id = rm.menu_id AND m.deleted_at IS NULL AND m.status = 1 AND m.type = 'button'
-       WHERE m.permission IN (?, ?, ?, ?, ?)`,
-      [userId, mainRoleId, ...Object.values(ACTION_PERMISSION_CODES)],
+       WHERE m.permission IN (${codes.map(() => '?').join(', ')})`,
+      [userId, mainRoleId, ...codes],
     ) as Array<{ roleId: number; roleCode: string; roleName: string; roleStatus: number; permission: string }>;
     const map = new Map<string, PermissionSourceRole[]>();
     for (const row of rows) {
@@ -212,20 +242,23 @@ export class PermissionExplanationService {
       };
     }
 
-    // 共同范围：与实际列表同源的 SQL 判定（含部门子树），不用 assertCanOperateOn 代替
-    const scopeUser: ScopeUser = { id: targetId, roles: identity.roles, dataScopes: identity.dataScopes };
+    // 共同范围：与实际列表同源的 SQL 判定（含部门子树与团队成员可见性），不用 assertCanOperateOn 代替
+    const scopeUser: ScopeUser = { id: targetId, roles: identity.roles, dataScopes: identity.dataScopes, accessCodes: [...effectiveCodes] };
     const qb = this.exampleRepo.createQueryBuilder('t')
       .select('t.id', 'id')
       .where('t.id = :recordId AND t.deleted_at IS NULL', { recordId: row.id });
-    buildDataScope(qb, 't', scopeUser, RECORD_EXPLAINABLE_SCOPE_KEY);
+    buildDataScope(qb, 't', scopeUser, RECORD_EXPLAINABLE_SCOPE_KEY, undefined, undefined, exampleMemberScopeVisibility('t', scopeUser));
     const inScope = !!(await qb.getRawOne());
+    // 团队成员判定与运行时 isParticipant 钩子同口径：目标用户在成员表中即参与者
+    const isParticipant = (await this.exampleRepo.manager.getRepository(ExampleItemMember).count({ where: { itemId: row.id, userId: targetId } })) > 0;
 
     // 本人/他人开关裁决：复用 data-scope 的 evaluateOperationSwitch（与运行时守卫同一核心）
     const switchVerdict = (operation: 'view' | 'edit' | 'delete') =>
-      evaluateOperationSwitch({ ownerId: row.ownerId ?? null }, scopeUser, RECORD_EXPLAINABLE_SCOPE_KEY, operation);
+      evaluateOperationSwitch({ ownerId: row.ownerId ?? null }, scopeUser, RECORD_EXPLAINABLE_SCOPE_KEY, operation, undefined, isParticipant);
     const mapVerdict = (verdict: ReturnType<typeof switchVerdict>): { ok: boolean; reason: ExplainReason } | 'no_owner' => {
-      if (verdict.allowed) return { ok: true, reason: EXPLAIN_REASONS.ADMIN_EXCEPTION };
+      if (verdict.allowed) return { ok: true, reason: verdict.reason === 'participant' ? EXPLAIN_REASONS.RECORD_PARTICIPANT : EXPLAIN_REASONS.ADMIN_EXCEPTION };
       if (verdict.reason === 'no_owner') return 'no_owner';
+      if (verdict.reason === 'others_permission_missing') return { ok: false, reason: EXPLAIN_REASONS.OPERATION_PERMISSION_MISSING };
       return { ok: false, reason: verdict.reason === 'self_switch_off' ? EXPLAIN_REASONS.SELF_SWITCH_OFF : EXPLAIN_REASONS.OTHERS_SWITCH_OFF };
     };
 
@@ -235,7 +268,7 @@ export class PermissionExplanationService {
         return denied(action, [EXPLAIN_REASONS.OPERATION_PERMISSION_MISSING], `缺少操作权限码 ${code}（按当前角色授权，重新登录后生效）`);
       }
       if (!inScope) {
-        return denied(action, [EXPLAIN_REASONS.RECORD_NOT_FOUND], '记录不在该用户的共同数据范围内（本人/指定用户/指定部门子树口径）');
+        return denied(action, [EXPLAIN_REASONS.RECORD_NOT_FOUND], '记录不在该用户的共同数据范围内（本人/指定用户/指定部门子树/团队成员口径）');
       }
       if (action === 'list') {
         return allowed(action, [], '记录落入列表共同范围，列表可见（列表可见不代表可查看详情）');
@@ -246,6 +279,9 @@ export class PermissionExplanationService {
       }
       if (action === 'detail' || action === 'export') {
         if (!view.ok) return denied(action, [view.reason], view.reason === EXPLAIN_REASONS.SELF_SWITCH_OFF ? '查看本人单据开关已关闭' : '查看他人单据开关已关闭');
+        if (view.reason === EXPLAIN_REASONS.RECORD_PARTICIPANT) {
+          return allowed(action, [view.reason], action === 'export' ? '该用户为此单据团队成员，且具备导出权限码（导出使用详情查看口径）' : '该用户为此单据团队成员：详情、履历与附件按查看口径可见');
+        }
         return allowed(action, [], action === 'export' ? '列表共同范围且查看详情开关开启（导出使用详情查看开关）' : '共同范围内且查看开关开启');
       }
       const op = mapVerdict(switchVerdict(action === 'update' ? 'edit' : 'delete'));
@@ -253,15 +289,23 @@ export class PermissionExplanationService {
         return denied(action, [EXPLAIN_REASONS.NO_OWNER_RECORD], '记录无归属人，仅系统管理员可操作');
       }
       if (!op.ok) {
+        if (op.reason === EXPLAIN_REASONS.OPERATION_PERMISSION_MISSING) {
+          return denied(action, [op.reason], `缺少操作他人记录的权限 ${otherRecordPermission(RECORD_EXPLAINABLE_SCOPE_KEY, action === 'update' ? 'edit' : 'delete')}`);
+        }
         return denied(action, [op.reason], op.reason === EXPLAIN_REASONS.SELF_SWITCH_OFF ? `编辑/删除本人单据的开关已关闭（${action}）` : `编辑/删除他人单据的开关已关闭（${action}）`);
       }
       if (action === 'update' && !view.ok) {
         return denied(action, [EXPLAIN_REASONS.EDIT_REQUIRES_VIEW], '编辑附加查看资格：编辑开关开启但查看开关不满足');
       }
-      const reasons: ExplainReason[] = action === 'update' ? [EXPLAIN_REASONS.OPTIMISTIC_LOCK] : [];
+      const memberOperate = op.reason === EXPLAIN_REASONS.RECORD_PARTICIPANT || view.reason === EXPLAIN_REASONS.RECORD_PARTICIPANT;
+      const reasons: ExplainReason[] = [ ...(memberOperate ? [EXPLAIN_REASONS.RECORD_PARTICIPANT] : []), ...(action === 'update' ? [EXPLAIN_REASONS.OPTIMISTIC_LOCK] : []) ];
       return allowed(action, reasons, action === 'update'
-        ? '允许编辑；并发修改以版本乐观锁裁决，内容过期需刷新后重试'
-        : '允许删除（删除进入两阶段回收站流程）');
+        ? memberOperate
+          ? '该用户为此单据团队成员：按角色权限码直接可编辑；并发修改以版本乐观锁裁决，内容过期需刷新后重试'
+          : '允许编辑；并发修改以版本乐观锁裁决，内容过期需刷新后重试'
+        : memberOperate
+          ? '该用户为此单据团队成员：按角色权限码可直接删除（删除进入两阶段回收站流程）'
+          : '允许删除（删除进入两阶段回收站流程）');
     });
     return { evaluations, record };
   }

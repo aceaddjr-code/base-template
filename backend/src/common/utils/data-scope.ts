@@ -22,6 +22,27 @@ export const OTHERS_FLAG_DEFAULT = 0;
 /** 六个操作开关（0/1）的归一化形状 */
 export type ScopeFlags = Record<`${ScopeOperation}Others` | `${ScopeOperation}Self`, number>;
 
+/**
+ * 额外可见分支（业务无关的通用扩展点）：调用方提供的 SQL 片段与共同范围 OR 叠加，
+ * 让共同范围之外的记录也进入读取集合（如「记录参与者可见」，由业务模块提供 EXISTS）。
+ * sql 中未注册进 QueryBuilder 的表别名需手写数据库列名；参数名须与范围条件既有参数不同名。
+ */
+export interface ScopeExtraVisibility {
+  sql: string;
+  params: Record<string, any>;
+}
+
+/** extra 存在且基础条件非空（all/管理员的无过滤与 1=0 防泄露不叠加）时，OR 拼接为一条原子条件。
+ *  整体再包一层括号是必须的：调用方以 andWhere 平铺拼接（如 `t.id = :id AND <scope>`），
+ *  非原子的顶层 OR 会因 AND 优先级高于 OR 逃逸外层约束（主键过滤、软删过滤）。 */
+function orExtra(
+  clause: { sql: string | null; params: Record<string, any> },
+  extra?: ScopeExtraVisibility | null,
+): { sql: string | null; params: Record<string, any> } {
+  if (!extra || clause.sql == null) return clause;
+  return { sql: `((${clause.sql}) OR (${extra.sql}))`, params: { ...clause.params, ...extra.params } };
+}
+
 /** 按缺省口径归一化开关：面板回显、写侧兜底与读侧裁决共用，前端不自行复刻缺省值 */
 export function normalizeScopeFlags(raw: Partial<ScopeFlags> | null | undefined): ScopeFlags {
   const flags = {} as ScopeFlags;
@@ -52,6 +73,8 @@ export interface ScopeUser {
   roleCode?: string;
   roles?: string[];
   deptId?: number | null;
+  /** 当前请求由权限守卫从角色授权解析，不从客户端或 JWT 读取。 */
+  accessCodes?: readonly string[];
 
   dataScopes?: UserScopeEntry[];
 }
@@ -81,6 +104,8 @@ export function scopeWhereClause(
   user: ScopeUser | null | undefined,
   scopeKey?: string,
   operation?: ScopeOperation,
+  othersPermission?: string,
+  extra?: ScopeExtraVisibility | null,
 ): { sql: string | null; params: Record<string, any> } {
   const uid = getUserId(user);
   if (uid == null) return { sql:'1 = 0', params:{} };
@@ -88,8 +113,9 @@ export function scopeWhereClause(
 
   if (operation) {
     // 列表按共同范围展示；导出还需满足查看详情开关，避免绕过详情限制（docs/用户数据范围.md）。
-    const base = scopeWhereClause(alias, user, scopeKey);
-    const gate = scopeOperationGate(alias, user, scopeKey ?? GLOBAL_SCOPE_KEY, operation);
+    // 额外可见分支与共同范围、操作开关分别 OR：成员身份既让记录进入范围，也让开关门放行同一批记录。
+    const base = orExtra(scopeWhereClause(alias, user, scopeKey), extra);
+    const gate = orExtra(scopeOperationGate(alias, user, scopeKey ?? GLOBAL_SCOPE_KEY, operation, othersPermission), extra);
     if (gate.sql == null) return base;
     return { sql: base.sql ? `(${base.sql}) AND (${gate.sql})` : gate.sql, params: { ...base.params, ...gate.params } };
   }
@@ -102,16 +128,16 @@ export function scopeWhereClause(
         const targetIds = Array.isArray(entry.targets) ? entry.targets.filter((x) => x != null) : [];
         const userIds = uid != null ? [...new Set([uid, ...targetIds])] : [...new Set(targetIds)];
         if (!userIds.length) break;
-        return {
+        return orExtra({
           sql: `${alias}.ownerId IN (:...scopeUserIds)`,
           params: { scopeUserIds: userIds },
-        };
+        }, extra);
       }
       case 'by_depts': {
         const deptIds = Array.isArray(entry.targets) ? entry.targets.filter((x) => x != null) : [];
         if (!deptIds.length) break;
         const selfSql = uid != null ? `${alias}.ownerId = :scopeSelfUid OR ` : '';
-        return {
+        return orExtra({
           sql: `(${selfSql}${alias}.ownerId IN (
             SELECT u.id FROM users u WHERE u.deleted_at IS NULL AND (
               u.dept_id IN (:...scopeDeptIds)
@@ -119,7 +145,7 @@ export function scopeWhereClause(
             )
           ))`,
           params: uid != null ? { scopeSelfUid: uid, scopeDeptIds: deptIds } : { scopeDeptIds: deptIds },
-        };
+        }, extra);
       }
       case 'self':
       default:
@@ -127,11 +153,11 @@ export function scopeWhereClause(
     }
     // 兜底：仅本人（含无权限信息极端情况强制查不到，不泄露）
     if (uid == null) return { sql: '1 = 0', params: {} };
-    return { sql: `${alias}.ownerId = :scopeUserId`, params: { scopeUserId: uid } };
+    return orExtra({ sql: `${alias}.ownerId = :scopeUserId`, params: { scopeUserId: uid } }, extra);
   }
 
   if (uid == null) return { sql: '1 = 0', params: {} };
-  return { sql: `${alias}.ownerId = :scopeUserId`, params: { scopeUserId: uid } };
+  return orExtra({ sql: `${alias}.ownerId = :scopeUserId`, params: { scopeUserId: uid } }, extra);
 }
 
 export function buildDataScope(
@@ -140,8 +166,10 @@ export function buildDataScope(
   user: ScopeUser | null | undefined,
   scopeKey?: string,
   operation?: ScopeOperation,
+  othersPermission?: string,
+  extra?: ScopeExtraVisibility | null,
 ): SelectQueryBuilder<any> {
-  const { sql, params } = scopeWhereClause(alias, user, scopeKey, operation);
+  const { sql, params } = scopeWhereClause(alias, user, scopeKey, operation, othersPermission, extra);
   if (sql) qb.andWhere(sql, params);
   return qb;
 }
@@ -156,15 +184,17 @@ export function scopeOperationGate(
   user: ScopeUser | null | undefined,
   scopeKey: string,
   operation: ScopeOperation,
+  othersPermission?: string,
+  extra?: ScopeExtraVisibility | null,
 ): { sql: string | null; params: Record<string, any> } {
   const uid = getUserId(user);
   if (uid == null) return { sql: '1 = 0', params: {} };
   if (isSystemAdmin(user)) return { sql: null, params: {} };
   const own = normalizeScopeFlags(findScopeEntry(user, scopeKey))[`${operation}Self`] === 1;
-  const others = canOperateOthers(user, scopeKey, operation);
-  if (!own && !others) return { sql: '1 = 0', params: {} };
-  if (own && others) return { sql: `${alias}.ownerId IS NOT NULL`, params: {} };
-  return { sql: `${alias}.ownerId ${own ? '=' : '<>'} :scopeOpUserId`, params: { scopeOpUserId: uid } };
+  const others = canOperateOthers(user, scopeKey, operation, othersPermission);
+  if (!own && !others) return orExtra({ sql: '1 = 0', params: {} }, extra);
+  if (own && others) return orExtra({ sql: `${alias}.ownerId IS NOT NULL`, params: {} }, extra);
+  return orExtra({ sql: `${alias}.ownerId ${own ? '=' : '<>'} :scopeOpUserId`, params: { scopeOpUserId: uid } }, extra);
 }
 
 /** scopeOperationGate 的 QueryBuilder 版本：有条件时 andWhere 拼接。 */
@@ -174,8 +204,9 @@ export function buildOperationGate(
   user: ScopeUser | null | undefined,
   scopeKey: string,
   operation: ScopeOperation,
+  extra?: ScopeExtraVisibility | null,
 ): SelectQueryBuilder<any> {
-  const { sql, params } = scopeOperationGate(alias, user, scopeKey, operation);
+  const { sql, params } = scopeOperationGate(alias, user, scopeKey, operation, undefined, extra);
   if (sql) qb.andWhere(sql, params);
   return qb;
 }
@@ -203,30 +234,42 @@ export function canOperateOthers(
   user: ScopeUser | null | undefined,
   scopeKey: string,
   op: ScopeOperation,
+  othersPermission?: string,
 ): boolean {
   if (isSystemAdmin(user)) return true;
   const entry = findScopeEntry(user, scopeKey);
   if (!entry) return false; // 无配置 → 不默认放行他人单据操作
-  return entry[`${op}Others`] === 1;
+  const code = othersPermission ?? otherRecordPermission(scopeKey, op);
+  return entry[`${op}Others`] === 1 && (!code || user?.accessCodes?.includes(code) === true);
+}
+
+export function otherRecordPermission(scopeKey: string, op: ScopeOperation): string | undefined {
+  if (op === 'view') return undefined;
+  return `${scopeKey}:${op === 'edit' ? 'update' : 'delete'}-others`;
 }
 
 /** 本人/他人操作开关裁决结果：不抛异常，由调用方决定是 throw（运行时守卫）还是 report（解释）。 */
 export type OperationSwitchVerdict =
-  | { allowed: true; reason: 'admin_exception' | 'self_switch_on' | 'others_switch_on' }
-  | { allowed: false; reason: 'self_switch_off' | 'others_switch_off' | 'no_owner' };
+  | { allowed: true; reason: 'admin_exception' | 'self_switch_on' | 'others_switch_on' | 'participant' }
+  | { allowed: false; reason: 'self_switch_off' | 'others_switch_off' | 'others_permission_missing' | 'no_owner' };
 
 /**
- * 裁决某用户对某条记录的指定操作开关（查看/编辑/删除的本人/他人维度）。
+ * 裁决某用户对某条记录的指定操作开关（查看/编辑删除的本人/他人维度）。
  * 这是运行时守卫（assertCanOperateOn）与权限解释服务共用的唯一裁决核心——
  * 修改开关语义只改此处，两个消费者自动跟随。
+ * isParticipant：调用方判定该用户属于此记录的参与者集合（业务自定义，如单据参与人）时为 true——
+ * 参与者直接放行（含无归属人记录），操作维度仍由端点权限码把守，不受本人/他人开关约束。
  */
 export function evaluateOperationSwitch(
   entity: { ownerId?: number | null },
   user: ScopeUser | null | undefined,
   scopeKey: string,
   op: ScopeOperation,
+  othersPermission?: string,
+  isParticipant?: boolean,
 ): OperationSwitchVerdict {
   if (isSystemAdmin(user)) return { allowed: true, reason: 'admin_exception' };
+  if (isParticipant) return { allowed: true, reason: 'participant' };
   const uid = getUserId(user);
   const flags = normalizeScopeFlags(findScopeEntry(user, scopeKey));
   if (entity.ownerId == null) return { allowed: false, reason: 'no_owner' };
@@ -235,9 +278,10 @@ export function evaluateOperationSwitch(
       ? { allowed: true, reason: 'self_switch_on' }
       : { allowed: false, reason: 'self_switch_off' };
   }
-  return flags[`${op}Others`] === 1
-    ? { allowed: true, reason: 'others_switch_on' }
-    : { allowed: false, reason: 'others_switch_off' };
+  if (flags[`${op}Others`] !== 1) return { allowed: false, reason: 'others_switch_off' };
+  const code = othersPermission ?? otherRecordPermission(scopeKey, op);
+  if (code && !user?.accessCodes?.includes(code)) return { allowed: false, reason: 'others_permission_missing' };
+  return { allowed: true, reason: 'others_switch_on' };
 }
 
 export function assertCanOperateOn(
@@ -245,6 +289,7 @@ export function assertCanOperateOn(
   user: ScopeUser | null | undefined,
   scopeKey: string,
   op: ScopeOperation,
+  isParticipant?: boolean,
 ): void {
   const opText = op === 'view' ? '查看' : op === 'edit' ? '编辑' : '删除';
   if (!entity) throw new NotFoundException('记录不存在');
@@ -253,7 +298,7 @@ export function assertCanOperateOn(
   if (uid == null) throw new UnauthorizedException('未登录');
 
   // 本人/他人开关裁决：与权限解释服务共用同一核心
-  const verdict = evaluateOperationSwitch(entity, user, scopeKey, op);
+  const verdict = evaluateOperationSwitch(entity, user, scopeKey, op, undefined, isParticipant);
   if (verdict.allowed) {
     // by_users 范围的归属人列表校验是运行时守卫专有（解释服务经 SQL 范围查询处理）
     if (verdict.reason === 'others_switch_on') {
@@ -273,6 +318,9 @@ export function assertCanOperateOn(
   }
   if (verdict.reason === 'self_switch_off') {
     throw new ForbiddenException(`没有${opText}本人单据的权限`);
+  }
+  if (verdict.reason === 'others_permission_missing') {
+    throw new ForbiddenException(`缺少${opText}他人记录的角色权限`);
   }
   throw new ForbiddenException(`没有${opText}他人单据的权限`);
 }

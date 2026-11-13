@@ -10,6 +10,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
 import { ExampleItem } from '../src/modules/example/example-item.entity';
+import { ExampleItemMember } from '../src/modules/example/example-member.entity';
 import { ExampleRecycle, ExampleReservedNumber } from '../src/modules/example/example-recycle.entity';
 import { ExampleEvent, ExampleChange } from '../src/modules/example/example-event.entity';
 import { ExampleService } from '../src/modules/example/example.service';
@@ -48,7 +49,7 @@ suite('回收站隔离 MySQL 生命周期', () => {
     const [existing] = await connection.query('SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=?', [database]);
     if ((existing as any[]).length) throw Error('测试库已存在，拒绝覆盖');
     await connection.query(`CREATE DATABASE \`${database}\` CHARACTER SET utf8mb4`); created = true;
-    db = await new DataSource({ type: 'mysql', ...config, username: config.user, database, synchronize: true, entities: [ExampleItem, ExampleRecycle, ExampleReservedNumber, ExampleEvent, ExampleChange, Attachment, AttachmentRecycle, User, Role, Menu, Department, SystemLog] }).initialize();
+    db = await new DataSource({ type: 'mysql', ...config, username: config.user, database, synchronize: true, entities: [ExampleItem, ExampleItemMember, ExampleRecycle, ExampleReservedNumber, ExampleEvent, ExampleChange, Attachment, AttachmentRecycle, User, Role, Menu, Department, SystemLog] }).initialize();
     await db.getRepository(Menu).save({ name: '工作协同', path: '/collaboration', type: 'menu', status: 1 });
     await connection.changeUser({ database });
     await connection.query('ALTER TABLE attachments DROP COLUMN recycle_held');
@@ -68,7 +69,7 @@ suite('回收站隔离 MySQL 生命周期', () => {
       providers: [
         { provide: ExampleRecycleService, useValue: recycle },
         { provide: AttachmentRecycleService, useValue: recycledFiles },
-        { provide: AuthService, useValue: { getUserAccessCodes: async () => [] } },
+        { provide: AuthService, useValue: { getUserAccessCodes: async () => user.accessCodes } },
         { provide: APP_GUARD, useClass: CsrfGuard },
         { provide: APP_GUARD, useClass: PermissionGuard },
       ],
@@ -84,13 +85,27 @@ suite('回收站隔离 MySQL 生命周期', () => {
     if (created) await connection.query(`DROP DATABASE \`${database}\``);
     await connection?.end();
   });
-  beforeEach(() => { scopes = [] });
+  beforeEach(() => {
+    scopes = [];
+    user.accessCodes = ['recycle-bin:restore', 'recycle-bin:purge', 'recycle-bin:restore-others', 'recycle-bin:purge-others'];
+  });
   async function fixture() {
     const item = await docs.create({ title: '回收站验收', status: 'done' }, 7, user);
     const path = `${item.id}.txt`; writeFileSync(join(root, path), '附件');
     const attachment = await db.getRepository(Attachment).save({ originalName: path, storagePath: path, size: 6, mimeType: 'text/plain', origin: 'business', entityType: 'example-items', entityId: item.id, status: 'bound', ownerId: 7 });
     return { item, attachment, path };
   }
+  it('只有查看权限不能恢复本人；只有恢复权限不能改用批量彻底删除', async () => {
+    const { item } = await fixture();
+    await docs.remove(item.id, user);
+    user.accessCodes = ['example-items:view'];
+    const endpoint = '/api/v1/recycle-bin/batch';
+    await request(httpApp.getHttpServer()).post(endpoint).send({ ids: [item.id], action: 'restore' }).expect(403);
+    user.accessCodes = ['recycle-bin:restore'];
+    await request(httpApp.getHttpServer()).post(endpoint).send({ ids: [item.id], action: 'purge' }).expect(403);
+    const restored = await request(httpApp.getHttpServer()).post(endpoint).send({ ids: [item.id], action: 'restore' }).expect(201);
+    expect(restored.body.data[0]).toMatchObject({ id: item.id, success: true });
+  });
   it('历史软删不纳入；新删除记录及附件永久保留并完整恢复，追加恢复履历', async () => {
     const legacy = await db.getRepository(ExampleItem).save({ title: '旧删除', ownerId: 7 });
     await db.getRepository(ExampleItem).softDelete(legacy.id);

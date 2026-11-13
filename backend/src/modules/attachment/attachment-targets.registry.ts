@@ -5,7 +5,7 @@
  * 并保持 sourceType 与业务模块 ChildSpec 的 sourceType、scopeKey 与业务模块 dataScopeKey 一致。
  */
 export const ATTACHMENT_TARGET_REGISTRY = [
-  { sourceType: 'example-items', table: 'example_items', scopeKey: 'example-items' },
+  { sourceType: 'example-items', table: 'example_items', scopeKey: 'example-items', viewPermission: 'example-items:view', editPermission: 'example-items:update' },
 ] as const;
 
 export type AttachmentTarget = (typeof ATTACHMENT_TARGET_REGISTRY)[number];

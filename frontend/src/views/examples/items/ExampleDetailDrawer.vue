@@ -1,7 +1,8 @@
 <template>
-  <DetailDrawer ref="drawer" :open="open" title="示例事项详情" :record="detail" :fields="fields" :column="2" :show-audit-time="false" :loading="loading" :close-blocked="filesBusy" :show-fields="activeTab === 'detail'" editable printable :prepare-print="preparePrint" :preserve-navigation="preserveNavigation" :system-name="appStore.siteName" :save-access="['example-items:update']" :save-handler="save" :reload-handler="reload" @update:open="closeDetail($event)" @edit-started="setTab('detail')" @view-mode="setTab('detail')" @saved="onSaved">
+  <DetailDrawer ref="drawer" :open="open" title="示例事项详情" :record="detail" :fields="fields" :column="2" :show-audit-time="false" :loading="loading" :close-blocked="filesBusy" :show-fields="activeTab === 'detail'" :editable="canEdit" printable :prepare-print="preparePrint" :preserve-navigation="preserveNavigation" :system-name="appStore.siteName" :save-access="['example-items:update']" :save-handler="save" :reload-handler="reload" @update:open="closeDetail($event)" @edit-started="setTab('detail')" @view-mode="setTab('detail')" @saved="onSaved">
     <template #actions>
-      <a-button v-access="['example-items:owner']" :disabled="loading || !detail" @click="openOwnerModal"><UserSwitchOutlined /> 变更负责人</a-button>
+      <!-- 变更负责人是独立动作（权限码 example-items:owner）；团队成员持有该权限码时同口径可见该入口 -->
+      <a-button v-if="detail && (hasRecordAction(detail.ownerId, 'example-items:owner', 'example-items:update-others') || (isMember && hasAccessByCodes(['example-items:owner'])))" :disabled="loading" @click="openOwnerModal"><UserSwitchOutlined /> 变更负责人</a-button>
     </template>
     <template #navigation>
       <div class="document-tabs" role="tablist" aria-label="单据详情与履历"><button v-for="tab in tabs" :key="tab.key" role="tab" :aria-selected="activeTab === tab.key" @click="setTab(tab.key)">{{ tab.label }}</button></div>
@@ -9,7 +10,7 @@
     <template #panel>
       <div v-if="loadError" role="alert">{{ loadError }} <a-button @click="openRecord()">重试</a-button></div>
       <template v-if="detail">
-        <ExampleAttachmentPanel v-if="visited.includes('attachments')" v-show="activeTab === 'attachments'" :key="detail.id" :record-id="detail.id" @changed="revision++" @state="setFileState" />
+        <ExampleAttachmentPanel v-if="visited.includes('attachments')" v-show="activeTab === 'attachments'" :key="detail.id" :record-id="detail.id" :editable="canEdit" @changed="revision++" @state="setFileState" />
         <ExampleHistoryPanel v-for="tab in historyTabs" v-show="activeTab === tab" :key="`${recordId}-${tab}`" v-bind="{ recordId: detail.id, tab, revision }" :event-id="tab === 'changes' ? focusedEvent : undefined" @locate="locate" @clear-focus="focusedEvent = undefined" />
       </template>
       <div v-if="printError" role="alert">{{ printError }} <a-button v-if="printConflict === 'version'" :disabled="loading" @click="reloadAndPrint">重新加载后打印</a-button> <a-button v-else-if="printConflict === 'intent'" @click="restartPrint">重新发起打印</a-button> <a-button v-else @click="prepareAndRetryPrint">重试同次打印</a-button></div>
@@ -31,7 +32,7 @@
     <p class="owner-hint">负责人即记录归属人：变更后数据范围的「本人 / 他人」按新负责人生效。</p>
     <a-form layout="vertical">
       <a-form-item label="单据负责人" required data-form-field="ownerId">
-        <a-select v-model:value="ownerForm.ownerId" :options="ownerSelectOptions" show-search option-filter-prop="label" allow-clear placeholder="请选择新的负责人" style="width:100%" />
+        <a-select v-model:value="ownerForm.ownerId" :options="selectOptions" show-search option-filter-prop="label" allow-clear placeholder="请选择新的负责人" style="width:100%" />
       </a-form-item>
     </a-form>
   </a-modal>
@@ -48,8 +49,9 @@ import { useUnsavedChanges } from '@/composables/useUnsavedChanges'
 import ExampleAttachmentPanel from './ExampleAttachmentPanel.vue'
 import { buildExampleFields } from './example-fields'
 import { useDict } from '@/composables/useDict'
-import { formatUserOptionLabel, useUserOptions } from '@/composables/useUserOptions'
+import { useUserOptions } from '@/composables/useUserOptions'
 import { useAppStore } from '@/stores/app'
+import { hasAccessByCodes, hasRecordAction } from '@/utils/access'
 import type { RouteLocationNormalized } from 'vue-router'
 
 const props = defineProps<{ open: boolean; recordId: number | null; startInEdit?: boolean; tab?: HistoryTab }>()
@@ -57,6 +59,9 @@ const emit = defineEmits<{ (event: 'update:open', open: boolean): void; (event: 
 const appStore = useAppStore()
 const drawer = ref<InstanceType<typeof DetailDrawer>>()
 const detail = ref<ExampleItem | null>(null)
+// 参与者直通：当前用户在团队成员中且持有对应权限码即可进入编辑（入口预校验；服务端仍按角色权限码兜底裁决）
+const isMember = computed(() => !!detail.value?.memberIds?.includes(appStore.userInfo?.id ?? -1))
+const canEdit = computed(() => !!detail.value && (hasRecordAction(detail.value.ownerId, 'example-items:update') || (isMember.value && hasAccessByCodes(['example-items:update']))))
 const loading = ref(false)
 const tabs: { key: HistoryTab; label: string }[] = [{ key: 'detail', label: '单据详情' }, { key: 'activity', label: '动态' }, { key: 'operations', label: '操作日志' }, { key: 'changes', label: '修改日志' }, { key: 'attachments', label: '附件/图片' }]
 const activeTab = ref<HistoryTab>('detail'), visited = ref<HistoryTab[]>(['detail']), revision = ref(0), focusedEvent = ref<number>()
@@ -84,7 +89,7 @@ async function openRecord() {
     const data = await accessExample(id, { action: 'view', interactionId: viewIntent })
     if (generation !== requestVersion || props.recordId !== id || !props.open) return
     detail.value = data.record; loading.value = false; await nextTick()
-    if (props.startInEdit) drawer.value?.startEdit()
+    if (props.startInEdit && canEdit.value) drawer.value?.startEdit()
   } catch (e) { if (generation === requestVersion) loadError.value = errorText(e, '详情加载失败，请重试') }
   finally { if (generation === requestVersion) loading.value = false }
 }
@@ -123,16 +128,17 @@ const { options: categoryOptions, labelOfAny: categoryLabelOfAny } = useDict('it
 
 // 类别为字典驱动字段（F40）：编辑候选仅启用项;存量停用值回显"名称（已停用）"
 // 单据编号/负责人/创建人/时间只读：编号系统生成不可改；负责人变更走右上角专用动作（权限码 example-items:owner）
-const { userOptions, loadUserOptions, labelOf } = useUserOptions()
+const { selectOptions, loadUserOptions, labelOf } = useUserOptions()
 const userLabel = (id: number | null | undefined) => labelOf(id) || '-'
+
 // 字段单一来源见 ./example-fields.ts（详情与列表列共用，新增字段只改注册表）；类别候选随字典刷新重建
-const fields = computed(() => buildExampleFields({ userLabel, categoryLabel: categoryLabelOfAny, categoryOptions: categoryOptions.value }))
+const fields = computed(() => buildExampleFields({ userLabel, categoryLabel: categoryLabelOfAny, categoryOptions: categoryOptions.value, memberOptions: selectOptions.value }))
 
 // ===== 变更负责人（独立动作，右上角按钮进入）=====
 const ownerModalOpen = ref(false)
 const ownerSaving = ref(false)
 const ownerForm = ref<{ ownerId: number | undefined }>({ ownerId: undefined })
-const ownerSelectOptions = computed(() => userOptions.value.map((o) => ({ label: formatUserOptionLabel(o), value: o.id })))
+
 function openOwnerModal() {
   if (!detail.value) return
   ownerForm.value = { ownerId: detail.value.ownerId ?? undefined }

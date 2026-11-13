@@ -5,7 +5,7 @@
     <div v-if="pending" class="file-error">文件已上传，尚未保存到单据。<a-button size="small" :disabled="busy" @click="bindPending">重试保存</a-button></div>
     <section v-for="image in [false, true]" :key="String(image)" class="file-section" :aria-label="image ? '图片区域' : '附件区域'">
       <header><h3>{{ image ? '图片' : '附件' }} <small>{{ files.filter(file => file.image === image).length }}</small></h3>
-        <label v-access="['example-items:update']" class="upload-control"><span>{{ busy ? '处理中…' : image ? '上传图片' : '上传附件' }}</span><input type="file" :accept="image ? imageAccept : documentAccept" :disabled="busy || loading || !!pending" @change="upload($event, image)" /></label>
+        <label v-if="editable" class="upload-control"><span>{{ busy ? '处理中…' : image ? '上传图片' : '上传附件' }}</span><input type="file" :accept="image ? imageAccept : documentAccept" :disabled="busy || loading || !!pending" @change="upload($event, image)" /></label>
       </header>
       <p v-if="!loading && !error && !files.some(file => file.image === image)" class="file-empty">暂无{{ image ? '图片' : '附件' }}</p>
       <div :class="image ? 'image-grid' : 'file-list'">
@@ -13,7 +13,7 @@
           <a-image v-if="image && file.previewable !== false" :src="exampleFileUrl(recordId, file.id, true)" :alt="file.name" width="100%"><template #placeholder>加载图片中…</template></a-image>
           <a v-if="image && file.previewable === false" class="image-download" :href="exampleFileUrl(recordId, file.id)" :download="file.name"><FileImageOutlined aria-hidden="true" />下载原图</a>
           <div class="file-info"><span class="file-name">{{ file.name }}</span><small>{{ formatSize(file.size) }}</small></div>
-          <div class="file-actions"><a :href="exampleFileUrl(recordId, file.id)" :download="file.name">下载</a><a-popconfirm title="确定删除这个文件？" @confirm="remove(file.id)"><a-button v-access="['example-items:update']" type="link" danger size="small" :disabled="busy">删除</a-button></a-popconfirm></div>
+          <div class="file-actions"><a :href="exampleFileUrl(recordId, file.id)" :download="file.name">下载</a><a-popconfirm v-if="editable" title="确定删除这个文件？" @confirm="remove(file.id)"><a-button type="link" danger size="small" :disabled="busy">删除</a-button></a-popconfirm></div>
         </article>
       </div>
     </section>
@@ -25,7 +25,7 @@ import { FileImageOutlined } from '@ant-design/icons-vue'
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { getExampleFiles, uploadExampleAttachment, addExampleFile, removeExampleFile, exampleFileUrl, type ExampleFile } from '@/api/example'
 import { formatSize, ATTACHMENT_MAX_SIZE } from '@/api/attachment'
-const props = defineProps<{ recordId: number }>()
+const props = defineProps<{ recordId: number; editable: boolean }>()
 const emit = defineEmits<{ (event: 'changed'): void; (event: 'state', state: { busy: boolean; pending: boolean }): void }>()
 const imageAccept = '.png,.jpg,.jpeg,.webp,.gif,.bmp,.avif,.ico,.tif,.tiff,.heic,.heif,.svg'
 const documentAccept = '.pdf,.doc,.docx,.dot,.dotx,.xls,.xlsx,.xlsm,.xlt,.xltx,.xltm,.ppt,.pptx,.pps,.ppsx,.odt,.ods,.odp,.rtf,.txt,.csv,.tsv,.md,.log,.json,.xml,.yaml,.yml,.zip,.rar,.7z,.tar,.gz,.bz2,.xz,.dwg,.dxf,.step,.stp,.igs,.iges,.stl,.3dm,.vsd,.vsdx,.psd,.ai,.eps,.mp3,.wav,.m4a,.flac,.mp4,.mov,.avi,.wmv,.mkv'

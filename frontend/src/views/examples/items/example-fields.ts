@@ -13,6 +13,8 @@ export interface ExampleFieldDeps {
   categoryLabel: (value: string | null | undefined) => string
   /** 类别编辑候选（字典启用项，仅详情抽屉编辑态需要；列表侧不传） */
   categoryOptions?: { label: string; value: string | number }[]
+  /** 团队成员编辑候选（users/simple 启用用户，仅编辑态需要；列表侧不传） */
+  memberOptions?: { label: string; value: number }[]
 }
 
 /**
@@ -28,6 +30,8 @@ export function buildExampleFields(deps: ExampleFieldDeps): ExampleField[] {
     { group: '基础信息', label: '类别', dataIndex: 'category', editable: true, inputType: 'select', options: deps.categoryOptions, formatter: (record: Record<string, any>) => deps.categoryLabel(record.category as string | null | undefined), list: true, width: 130 },
     { group: '基础信息', label: '说明', dataIndex: 'description', span: 2, editable: true, inputType: 'textarea', maxLength: 500, list: true },
     { group: '动态信息', label: '单据负责人', dataIndex: 'ownerId', formatter: (record: Record<string, any>) => deps.userLabel(record.ownerId), width: 150 },
+    // 团队成员：默认不勾选，勾选后才上列表；编辑候选由抽屉传 memberOptions
+    { group: '动态信息', label: '团队成员', dataIndex: 'memberIds', editable: true, inputType: 'select', multiple: true, options: deps.memberOptions, formatter: (record: Record<string, any>) => ((record.memberIds as number[] | undefined) ?? []).map(deps.userLabel).join('、') || '-', width: 160 },
     { group: '动态信息', label: '创建人', dataIndex: 'createdBy', formatter: (record: Record<string, any>) => deps.userLabel(record.createdBy), width: 140 },
     { group: '动态信息', label: '创建时间', dataIndex: 'createdAt', formatter: (record: Record<string, any>) => formatDateTime(record.createdAt), width: 180 },
     { group: '动态信息', label: '修改时间', dataIndex: 'updatedAt', formatter: (record: Record<string, any>) => formatDateTime(record.updatedAt), list: true, width: 180, sorter: true },

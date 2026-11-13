@@ -17,6 +17,8 @@ export interface JwtPayload {
   roleIds?: number[];
   deptId?: number | null; // 用户部门 ID
   dataScopes?: UserScopeEntry[];
+  /** 仅权限守卫在请求中填充，不属于 JWT 签发内容。 */
+  accessCodes?: readonly string[];
   tokenVersion: number; // Token 版本号（用户禁用/删除后递增，旧 Token 自动失效）
   /** 每次鉴权从数据库读回的待改密标志（不信任 Token 声明，受限会话门禁依据）。 */
   mustChangePassword?: boolean;

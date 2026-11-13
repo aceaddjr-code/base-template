@@ -8,6 +8,7 @@ import { JwtPayload } from '../auth/jwt.strategy';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { SkipRequestAudit } from '../../common/decorators/skip-request-audit.decorator';
 import { AttachmentRecycleService } from './attachment-recycle.service';
+import { RECYCLE_PERMISSIONS } from './recycle-permissions';
 
 class RecycleBatchDto {
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(100) @IsInt({ each: true }) @Min(1, { each: true }) ids: number[];
@@ -20,7 +21,7 @@ class RecycleQueryDto {
   @IsOptional() @IsIn(['example-items']) module?: string;
 }
 
-/** 空权限集合表示对全部已登录账号开放，数据范围在服务层逐次裁决。 */
+/** 回收站可按可见范围浏览。写操作另外检查角色权限。 */
 @Controller('recycle-bin')
 @RequirePermission()
 @SkipRequestAudit()
@@ -31,10 +32,12 @@ export class ExampleRecycleController {
     return this.service.list(req.user as JwtPayload, query.page, query.pageSize, query.keyword, query.module);
   }
   @Post('batch')
+  @RequirePermission(RECYCLE_PERMISSIONS.restore, RECYCLE_PERMISSIONS.purge)
   batch(@Body() dto: RecycleBatchDto, @Req() req: Request) { return this.service.batch(dto.ids, dto.action, req.user as JwtPayload); }
   @Get('files')
   fileList(@Req() req: Request, @Query() query: RecycleQueryDto) { return this.files.list(req.user as JwtPayload, query.page, query.pageSize, query.keyword); }
   @Post('files/batch')
+  @RequirePermission(RECYCLE_PERMISSIONS.restore, RECYCLE_PERMISSIONS.purge)
   fileBatch(@Body() dto: RecycleBatchDto, @Req() req: Request) { return this.files.batch(dto.ids, dto.action, req.user as JwtPayload); }
   @Get('files/:id')
   fileDetail(@Param('id', ParseIntPipe) id: number, @Req() req: Request) { return this.files.detail(id, req.user as JwtPayload); }

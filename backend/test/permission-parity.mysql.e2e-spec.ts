@@ -6,7 +6,7 @@ import * as bcrypt from 'bcryptjs';
  * 权限效果解释对照验收（第二批 04）：完整 AppModule＋隔离 MySQL＋真实 HTTP。
  * 逐场景比对「admin 调解释接口的结论」与「目标用户以全新登录请求实际接口的结果」，
  * 覆盖 action-map §6 对照矩阵：四档范围、六开关组合、部门子树、未配置回退、
- * 角色停用＋版本失效、admin 例外、无归属、软删除、账号层（待改密/禁用）与附件 unsupported。
+ * 角色停用＋版本失效、admin 例外、无归属、软删除、账号层（待改密/禁用）与附件诊断。
  * 写请求只作用于隔离库（整库随用例销毁）；IP 配额调高避免噪声，账号配额仍生效。
  */
 const suite = process.env.TEST_PARITY_DATABASE ? describe : describe.skip;
@@ -226,6 +226,17 @@ suite('权限效果解释：解释 vs 实际请求对照', () => {
 
   it('by_depts 子树：子部门内一致 allowed；子树外一致 404/RECORD_NOT_FOUND', async () => {
     const cookie = (ids as any).adminCookie as string;
+    const ownEditor = await explain(cookie, ids.uDept, recordIds.peerA1);
+    expect(verdictOf(ownEditor, 'detail').result).toBe('allowed');
+    expect(verdictOf(ownEditor, 'update').reasonCodes).toEqual(['OPERATION_PERMISSION_MISSING']);
+    const ownSession = await freshSession('parity-dept');
+    await request(server()).put(`/api/v1/examples/items/${recordIds.peerA1}`).set('Cookie', ownSession)
+      .send({ title: '普通编辑不能修改他人', version: 1 }).expect(403);
+
+    await q("INSERT INTO roles (id, name, code, status) VALUES (51, '他人记录维护', 'other-record-editor', 1)");
+    await q("INSERT INTO role_menus (role_id, menu_id) SELECT 51, id FROM menus WHERE permission IN ('example-items:update-others','example-items:delete-others')");
+    await q('INSERT INTO user_roles (user_id, role_id, owner_id, created_by) VALUES (?, 51, ?, ?)', [ids.uDept, ids.uDept, ids.uDept]);
+    await q('UPDATE users SET token_version = token_version + 1 WHERE id = ?', [ids.uDept]);
     const inside = await explain(cookie, ids.uDept, recordIds.peerA1);
     for (const action of ['list', 'detail', 'update', 'delete', 'export']) expect(verdictOf(inside, action).result).toBe('allowed');
     const outside = await explain(cookie, ids.uDept, recordIds.peerB);
@@ -234,7 +245,11 @@ suite('权限效果解释：解释 vs 实际请求对照', () => {
     }
     const session = await freshSession('parity-dept');
     await request(server()).get(`/api/v1/examples/items/${recordIds.peerA1}`).set('Cookie', session).expect(200);
+    await request(server()).put(`/api/v1/examples/items/${recordIds.peerA1}`).set('Cookie', session)
+      .send({ title: '明确授予编辑他人后可修改', version: 1 }).expect(200);
     await request(server()).get(`/api/v1/examples/items/${recordIds.peerB}`).set('Cookie', session).expect(404);
+    await request(server()).put(`/api/v1/examples/items/${recordIds.peerB}`).set('Cookie', session)
+      .send({ title: '越过部门范围仍拒绝', version: 1 }).expect(404);
     const list = await request(server()).get('/api/v1/examples/items').query({ keyword: '部门B同事的单据' }).set('Cookie', session);
     expect(list.body.data.list.length).toBe(0);
   });
@@ -328,7 +343,7 @@ suite('权限效果解释：解释 vs 实际请求对照', () => {
     await request(server()).get(`/api/v1/examples/items/${recordIds.peerB}`).set('Cookie', deptSession).expect(404);
   });
 
-  it('账号层与附件表单：待改密/禁用短路；附件记录级 unsupported；审计已记录', async () => {
+  it('账号层与附件表单：待改密/禁用短路；附件记录级诊断；审计已记录', async () => {
     const cookie = (ids as any).adminCookie as string;
     // 待改密：管理员重置 uView → 解释 ACCOUNT_MUST_CHANGE_PASSWORD；目标登录为受限会话
     const reset = await request(server()).post(`/api/v1/users/${ids.uView}/reset-password`).set('Cookie', cookie).send({});
@@ -348,12 +363,12 @@ suite('权限效果解释：解释 vs 实际请求对照', () => {
     const deniedLogin = await loginPost('parity-fallback', password);
     expect(deniedLogin.status).toBe(403);
 
-    // 附件表单：摘要可用，记录级 unsupported
+    // 附件表单：不存在的文件不产生可执行的动作
     const attachments = await request(server())
       .get(`/api/v1/users/${ids.uSelf}/permission-explanation`).query({ scopeKey: 'attachments', recordId: 1 }).set('Cookie', cookie);
     expect(attachments.status).toBe(200);
     for (const item of attachments.body.data.recordEvaluation) {
-      expect(item.result).toBe('unsupported');
+      expect(item.result).toBe('denied');
     }
 
     // 管理审计：诊断请求已落库且不含业务正文
@@ -363,5 +378,18 @@ suite('权限效果解释：解释 vs 实际请求对照', () => {
       expect(log.detail).not.toContain('本人的单据');
       expect(log.detail).not.toContain('标题');
     }
+  });
+
+  it('禁用权限按钮后，缓存已预热的旧会话失效，新会话不再拥有该权限', async () => {
+    const adminSession = (ids as any).adminCookie as string;
+    const oldSession = await freshSession('parity-self');
+    const endpoint = '/api/v1/examples/items';
+    await request(server()).get(endpoint).set('Cookie', oldSession).expect(200);
+    const [menus] = await q("SELECT id FROM menus WHERE permission = 'example-items:view' AND deleted_at IS NULL");
+    await request(server()).put(`/api/v1/menus/${menus[0].id}`)
+      .set('Cookie', adminSession).send({ status: 0 }).expect(200);
+    await request(server()).get(endpoint).set('Cookie', oldSession).expect(401);
+    const newSession = await freshSession('parity-self');
+    await request(server()).get(endpoint).set('Cookie', newSession).expect(403);
   });
 });

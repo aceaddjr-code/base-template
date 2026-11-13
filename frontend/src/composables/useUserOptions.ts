@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { getUsersSimple, type UserSimple } from '@/api/user'
 
 /** 用户候选标签「姓名（部门）」口径：用户表单与业务单据详情共用 */
@@ -9,6 +9,8 @@ export function formatUserOptionLabel(o: Pick<UserSimple, 'displayName' | 'usern
 /** 全量用户简表候选（/users/simple，登录即可访问）：加载失败静默，重开弹窗/抽屉时重试 */
 export function useUserOptions() {
   const userOptions = ref<UserSimple[]>([])
+  /** label/value 形式的下拉候选（负责人、团队成员等多处共用同一来源与格式） */
+  const selectOptions = computed(() => userOptions.value.map((o) => ({ label: formatUserOptionLabel(o), value: o.id })))
   function loadUserOptions() {
     getUsersSimple().then((rows) => { userOptions.value = rows }).catch(() => {})
   }
@@ -18,5 +20,5 @@ export function useUserOptions() {
     const row = userOptions.value.find((o) => o.id === userId)
     return row ? formatUserOptionLabel(row) : ''
   }
-  return { userOptions, loadUserOptions, labelOf }
+  return { userOptions, selectOptions, loadUserOptions, labelOf }
 }

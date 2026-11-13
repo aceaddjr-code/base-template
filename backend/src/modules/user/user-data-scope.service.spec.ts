@@ -41,11 +41,11 @@ describe('数据范围配置：读侧与写侧共用一个拥有者', () => {
     ]);
   });
 
-  it('getPanelRows：无配置返回空数组，有配置保留行 id 且开关已归一化', async () => {
+  it('getPanelRows：无配置返回空数组，旧配置返回迁移提示而非六个开关', async () => {
     await expect(service.getPanelRows(1)).resolves.toEqual([]);
     scopeRepo.find.mockResolvedValue([{ id: 11, scopeKey: 'example-items', scopeType: 'all', viewOthers: 1, editOthers: 0, deleteOthers: 0 }]);
     await expect(service.getPanelRows(1)).resolves.toEqual([
-      { ...selfFlags, id: 11, scopeKey: 'example-items', scopeType: 'all', viewOthers: 1, editOthers: 0, deleteOthers: 0, targets: [] },
+      { id: 11, scopeKey: 'example-items', scopeType: 'all', legacyRestricted: true, targets: [] },
     ]);
   });
 
@@ -80,20 +80,21 @@ describe('数据范围配置：读侧与写侧共用一个拥有者', () => {
     deptRepo.find.mockResolvedValue([{ id: 5 }]);
     const result = await service.saveRows(
       1,
-      [{ scopeKey: 'example-items', scopeType: 'by_depts', viewOthers: 1, targets: [5, 5] }],
+      [{ scopeKey: 'example-items', scopeType: 'by_depts', targets: [5, 5] }],
       2,
     );
     expect(manager.delete).toHaveBeenCalled();
     const savedRows = manager.save.mock.calls.map((call: any[]) => call[1]).filter((d: any) => !Array.isArray(d));
     expect(savedRows.map((r: any) => r.scopeKey)).toEqual(['example-items']);
+    expect(savedRows[0]).toMatchObject({ ...selfFlags, viewOthers: 1, editOthers: 1, deleteOthers: 1 });
     const targetBatches = manager.save.mock.calls.map((call: any[]) => call[1]).filter(Array.isArray);
     expect(targetBatches).toEqual([[{ userDataScopeId: 11, targetType: 'dept', targetId: 5, ownerId: 1, createdBy: 2 }]]);
     expect(manager.increment).toHaveBeenCalled();
     expect(result).toEqual([]);
   });
 
-  it.each(['viewSelf', 'editSelf', 'deleteSelf', 'viewOthers', 'editOthers', 'deleteOthers'])('%s 非 0/1 时不写入', async key => {
-    await expect(service.saveRows(1, [{ scopeKey: 'example-items', scopeType: 'self', [key]: 2 }], 2)).rejects.toThrow('操作开关必须为 0 或 1');
+  it.each(['viewSelf', 'editSelf', 'deleteSelf', 'viewOthers', 'editOthers', 'deleteOthers'])('旧载荷包含 %s 时拒绝，避免误切换规则', async key => {
+    await expect(service.saveRows(1, [{ scopeKey: 'example-items', scopeType: 'self', [key]: 0 }], 2)).rejects.toThrow('只配置可见范围');
     expect(manager.delete).not.toHaveBeenCalled();
   });
 });

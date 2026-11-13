@@ -29,7 +29,9 @@ suite('共同范围及六个操作开关：隔离 MySQL', () => {
   let migratedRow: Record<string, unknown>;
   const database = process.env.TEST_SCOPE_DATABASE!;
   const shared: UserScopeEntry = { scopeKey: 'example-items', scopeType: 'by_depts', targets: [10], viewOthers: 1, editOthers: 0, deleteOthers: 0, viewSelf: 1, editSelf: 1, deleteSelf: 0 };
-  const actor = (flags: Partial<UserScopeEntry> = {}): ScopeUser => ({ sub: 2, dataScopes: [{ ...shared, ...flags }] });
+  const actor = (flags: Partial<UserScopeEntry> = {}): ScopeUser => ({
+    sub: 2, accessCodes: ['example-items:update-others', 'example-items:delete-others'], dataScopes: [{ ...shared, ...flags }],
+  });
   beforeAll(async () => {
     const host = process.env.DB_HOST || '127.0.0.1';
     if (!['127.0.0.1', 'localhost', '::1'].includes(host) || !/^base_template_test_\d+$/.test(database) || database === process.env.DB_DATABASE) throw Error('只允许本地全新隔离库');
@@ -63,12 +65,31 @@ suite('共同范围及六个操作开关：隔离 MySQL', () => {
 
   it('保存回显、会话加载与 tokenVersion 一致；非法目标不修改配置', async () => {
     const before = await db.getRepository(User).findOneByOrFail({ id: 2 });
-    await scopes.saveRows(2, [shared], 2);
-    expect((await scopes.getPanelRows(2)).find(row => row.scopeKey === 'example-items')).toMatchObject(shared);
+    const range = { scopeKey: shared.scopeKey, scopeType: shared.scopeType, targets: shared.targets };
+    const { targets: _targets, ...oldFlags } = shared;
+    const legacy = await db.getRepository(UserDataScope).save({ userId: 2, ...oldFlags });
+    await db.getRepository(UserDataScopeTarget).save({ userDataScopeId: legacy.id, targetId: 10, targetType: 'dept' });
+    expect((await scopes.getPanelRows(2)).find(row => row.scopeKey === 'example-items')).toMatchObject({ ...range, legacyRestricted: true });
     expect((await scopes.loadForSession(2)).find(row => row.scopeKey === 'example-items')).toMatchObject(shared);
+    await scopes.saveRows(2, [range], 2);
+    expect((await scopes.getPanelRows(2)).find(row => row.scopeKey === 'example-items')).toMatchObject({ ...range, legacyRestricted: false });
+    const applied = { ...shared, editOthers: 1, deleteOthers: 1, deleteSelf: 1 };
+    expect((await scopes.loadForSession(2)).find(row => row.scopeKey === 'example-items')).toMatchObject(applied);
     expect((await db.getRepository(User).findOneByOrFail({ id: 2 })).tokenVersion).toBe(before.tokenVersion + 1);
-    await expect(scopes.saveRows(2, [{ ...shared, targets: [999] }], 2)).rejects.toThrow('不存在的目标');
-    expect((await scopes.loadForSession(2)).find(row => row.scopeKey === 'example-items')).toMatchObject(shared);
+    await expect(scopes.saveRows(2, [{ ...range, targets: [999] }], 2)).rejects.toThrow('不存在的目标');
+    expect((await scopes.loadForSession(2)).find(row => row.scopeKey === 'example-items')).toMatchObject(applied);
+  });
+
+  it('权限补丁可重复执行，新增节点仅授管理员', async () => {
+    const roleRepo = db.getRepository(Role);
+    await roleRepo.save([{ code: 'admin', name: '管理员' }, { code: 'user', name: '普通角色' }]);
+    const menuRepo = db.getRepository(Menu);
+    await menuRepo.save(['/examples/items', '/system/attachments', '/system/recycle-bin'].map(path => ({ path, name: path, type: 'menu' })));
+    const sql = readFileSync(resolve('..', 'docs/sql/20261109-visible-scope-role-actions.sql'), 'utf8');
+    await connection.query(sql);
+    await connection.query(sql);
+    expect((await roleRepo.findOne({ where: { code: 'admin' }, relations: { menus: true } }))?.menus).toHaveLength(7);
+    expect((await roleRepo.findOne({ where: { code: 'user' }, relations: { menus: true } }))?.menus).toEqual([]);
   });
   it('共同范围控制列表、筛选、详情及导出，含部门下级，拒绝范围外', async () => {
     expect((await service.list({}, actor())).list.map(row => row.id).sort()).toEqual([2, 7, 8]);

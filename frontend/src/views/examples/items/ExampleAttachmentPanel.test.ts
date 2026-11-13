@@ -4,7 +4,7 @@ import Panel from './ExampleAttachmentPanel.vue'
 import { getExampleFiles, addExampleFile, uploadExampleAttachment } from '@/api/example'
 vi.mock('@/api/example', () => ({ getExampleFiles: vi.fn(), uploadExampleAttachment: vi.fn(), addExampleFile: vi.fn(), removeExampleFile: vi.fn(), exampleFileUrl: (id: number, file: number) => `/files/${id}/${file}` }))
 vi.mock('@/api/attachment', () => ({ ATTACHMENT_MAX_SIZE: 500 * 1024 * 1024, formatSize: () => '1 KB' }))
-const setup = () => mount(Panel, { props: { recordId: 1 }, global: { directives: { access: {} }, stubs: { AImage: true, AButton: { template: '<button><slot /></button>' }, APopconfirm: { template: '<div><slot /></div>' } } } })
+const setup = () => mount(Panel, { props: { recordId: 1, editable: true }, global: { stubs: { AImage: true, AButton: { template: '<button><slot /></button>' }, APopconfirm: { template: '<div><slot /></div>' } } } })
 beforeEach(() => vi.resetAllMocks())
 it('附件与图片分区，列表失败可重试', async () => {
   vi.mocked(getExampleFiles).mockRejectedValueOnce(new Error('加载失败')).mockResolvedValue([{ id: 1, name: '文档.pdf', image: false, size: 1, mimeType: 'application/pdf', createdAt: '' }, { id: 2, name: '照片.png', image: true, size: 1, mimeType: 'image/png', createdAt: '' }])

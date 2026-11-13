@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AttachmentService } from '../src/modules/attachment/attachment.service';
 import { ExampleItem } from '../src/modules/example/example-item.entity';
+import { ExampleItemMember } from '../src/modules/example/example-member.entity';
 import { ExampleRecycle, ExampleReservedNumber } from '../src/modules/example/example-recycle.entity';
 import { ExampleEvent, ExampleChange } from '../src/modules/example/example-event.entity';
 import { User } from '../src/modules/user/user.entity';
@@ -25,6 +26,9 @@ import { Department } from '../src/modules/department/department.entity';
 import { Menu } from '../src/modules/menu/menu.entity';
 import { ExampleService } from '../src/modules/example/example.service';
 import { ExampleController } from '../src/modules/example/example.controller';
+import { ExampleImportService } from '../src/modules/example/example-import.service';
+import { ExampleImportSession } from '../src/modules/example/example-import-session.entity';
+import { ExampleImportRow } from '../src/modules/example/example-import-row.entity';
 import { AuthService } from '../src/modules/auth/auth.service';
 import { CsrfGuard } from '../src/common/guards/csrf.guard';
 import { PermissionGuard } from '../src/modules/auth/guards/permission.guard';
@@ -54,7 +58,7 @@ suite('单据履历：业务 HTTP 与隔离 MySQL', () => {
   const [old] = await connection.query('SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=?',[database]);
   if ((old as any[]).length) throw Error('测试库已存在，拒绝覆盖');
   await connection.query(`CREATE DATABASE \`${database}\` CHARACTER SET utf8mb4`); created=true;
-  const options = {type:'mysql' as const,...config,username:config.user,database,entities:[ExampleItem,ExampleRecycle,ExampleReservedNumber,SysDictType,SysDictItem,Attachment,AttachmentRecycle]};
+  const options = {type:'mysql' as const,...config,username:config.user,database,entities:[ExampleItem, ExampleItemMember,ExampleRecycle,ExampleReservedNumber,SysDictType,SysDictItem,Attachment,AttachmentRecycle,ExampleImportSession,ExampleImportRow]};
   db = await new DataSource({...options,synchronize:true}).initialize();
   const legacy = await db.getRepository(ExampleItem).save({title:'采集前旧记录',status:'pending',ownerId:7,version:1}); itemId=legacy.id;
   otherId=(await db.getRepository(ExampleItem).save({title:'范围外',status:'pending',ownerId:8,version:1})).id;
@@ -65,7 +69,7 @@ suite('单据履历：业务 HTTP 与隔离 MySQL', () => {
   const migration=readFileSync(resolve('..','docs/sql/20261026-example-document-history.sql'),'utf8');
   await connection.query(migration); await connection.query(migration);
   // User 的快照查询只选 id/displayName/username，但其关联元数据要求 Role/Department/Menu 一并注册。
-  db=await new DataSource({...options,entities:[ExampleItem,ExampleRecycle,ExampleReservedNumber,ExampleEvent,ExampleChange,Attachment,AttachmentRecycle,SysDictType,SysDictItem,User,Role,Department,Menu],synchronize:false}).initialize();
+  db=await new DataSource({...options,entities:[...options.entities,ExampleEvent,ExampleChange,User,Role,Department,Menu],synchronize:false}).initialize();
   const dictType=await db.getRepository(SysDictType).save({code:'item_category',name:'类别',status:1});
   await db.getRepository(SysDictItem).save({typeId:dictType.id,value:'a',label:'当时类别',status:1});
   const dict=new DictService(db.getRepository(SysDictType),db.getRepository(SysDictItem),audit as any);
@@ -73,7 +77,8 @@ suite('单据履历：业务 HTTP 与隔离 MySQL', () => {
   const configService=new ConfigService({ATTACHMENT_PRIVATE_DIR:privateDir});
   const attachmentService=new AttachmentService(db.getRepository(Attachment),configService,audit as any);
   const service=new ExampleService(db.getRepository(ExampleItem),dict,db.getRepository(Attachment),attachmentService);
-  const module=await Test.createTestingModule({controllers:[ExampleController,AttachmentController],providers:[{provide:ConfigService,useValue:configService},{provide:AttachmentService,useValue:attachmentService},{provide:ExampleService,useValue:service},{provide:AuthService,useValue:{getUserAccessCodes:async()=>codes}},{provide:SystemLogService,useValue:audit},{provide:APP_GUARD,useClass:CsrfGuard},{provide:APP_GUARD,useClass:PermissionGuard},{provide:APP_INTERCEPTOR,useClass:AuditInterceptor}]}).compile();
+  const importService = new ExampleImportService(db, db.getRepository(ExampleImportSession), db.getRepository(ExampleImportRow));
+  const module=await Test.createTestingModule({controllers:[ExampleController,AttachmentController],providers:[{provide:ConfigService,useValue:configService},{provide:AttachmentService,useValue:attachmentService},{provide:ExampleService,useValue:service},{provide:ExampleImportService,useValue:importService},{provide:AuthService,useValue:{getUserAccessCodes:async()=>codes}},{provide:SystemLogService,useValue:audit},{provide:APP_GUARD,useClass:CsrfGuard},{provide:APP_GUARD,useClass:PermissionGuard},{provide:APP_INTERCEPTOR,useClass:AuditInterceptor}]}).compile();
   app=module.createNestApplication<NestExpressApplication>({bodyParser:false});
   app.use((req:any,_res:any,next:()=>void)=>{req.user=user;next()}); configureApplication(app,new ConfigService()); await app.init();
  },30000);
@@ -91,9 +96,11 @@ suite('单据履历：业务 HTTP 与隔离 MySQL', () => {
   await api().get(`/api/v1/examples/items/${itemId}`).expect(403);
   await history('operations',itemId).expect(403);
   await api().delete(`/api/v1/examples/items/${itemId}`).expect(403);
-  scope.editOthers=1;codes=['example-items:view'];
+  scope.editOthers=1;codes=['example-items:view','example-items:update-others'];
   await api().put(`/api/v1/examples/items/${item.id}`).send({title:'没有权限码',version:1}).expect(403);
-  codes.push('example-items:update');
+  codes=['example-items:view','example-items:update'];
+  await api().put(`/api/v1/examples/items/${item.id}`).send({title:'仅有本人编辑权限',version:1}).expect(403);
+  codes.push('example-items:update-others');
   await api().put(`/api/v1/examples/items/${item.id}`).send({title:'有范围和权限码',version:1}).expect(200);
   scope.viewOthers=0;
   await history('operations',item.id).expect(403);
@@ -213,7 +220,7 @@ suite('单据履历：业务 HTTP 与隔离 MySQL', () => {
   const own=await repo.save({title:'批量本人',ownerId:7,status:'pending',version:1});
   const peer=await repo.save({title:'允许删除但不允许查看',ownerId:8,status:'pending',version:1});
   const outside=await repo.save({title:'不在范围',ownerId:9,status:'pending',version:1});
-  user={sub:7,roleCode:'user',dataScopes:[{scopeKey:'example-items',scopeType:'by_users',targets:[8],viewOthers:0,deleteOthers:1}]};codes=['example-items:delete'];
+  user={sub:7,roleCode:'user',dataScopes:[{scopeKey:'example-items',scopeType:'by_users',targets:[8],viewOthers:0,deleteOthers:1}]};codes=['example-items:delete','example-items:delete-others'];
   await access(peer.id).expect(403);
   const batch=(await api().post('/api/v1/examples/items/batch/remove').send({ids:[own.id,peer.id,outside.id,999999,own.id]}).expect(201)).body.data;
   expect(batch).toMatchObject({successCount:2,total:4,failures:[{id:outside.id,reason:'记录不存在'},{id:999999,reason:'记录不存在'}]});
@@ -234,13 +241,22 @@ suite('单据履历：业务 HTTP 与隔离 MySQL', () => {
   const upload=(route:string)=>api().post(`/api/v1/examples/items/${route}`).attach('file',buffer,{filename:'history.xlsx',contentType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
   const before=await events().count(), items=await db.getRepository(ExampleItem).count();
   codes=['example-items:import'];
-  for(let i=0;i<2;i++)expect((await upload('import/precheck').expect(201)).body.data).toMatchObject({total:4,valid:3});
+  const precheck=(await upload('import/precheck').expect(201)).body.data;
+  expect(precheck).toMatchObject({total:4,valid:3});
+  expect((await upload('import/precheck').expect(201)).body.data.importId).toBe(precheck.importId);
   expect(await events().count()).toBe(before);expect(await db.getRepository(ExampleItem).count()).toBe(items);
   await connection.query("CREATE TRIGGER fail_import BEFORE INSERT ON example_events FOR EACH ROW BEGIN IF NEW.object_label='导入写入失败' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='injected-import-failure'; END IF; END");
-  let result:any;try{result=(await upload('import').expect(201)).body.data}finally{await connection.query('DROP TRIGGER fail_import')}
-  expect(result).toMatchObject({imported:2,total:4,errors:[{row:3,message:expect.any(String)},{row:4,message:'导入失败，请稍后重试'}]});
-  const imported=await events().findBy({batchId:result.batchId});expect(imported).toHaveLength(2);expect(imported.map(e=>[e.source,e.action,e.rowNumber])).toEqual([['import','create',2],['import','create',5]]);
-  expect(await db.getRepository(ExampleItem).count()).toBe(items+2);
+  const confirm = () => api().post('/api/v1/examples/items/import/confirm').send({ importId: precheck.importId }).expect(201);
+  let failed:any;try{failed=(await confirm()).body.data}finally{await connection.query('DROP TRIGGER fail_import')}
+  expect(failed).toMatchObject({status:'failed',rows:[
+    {rowNumber:2,status:'success'}, {rowNumber:3,status:'invalid'},
+    {rowNumber:4,status:'infrastructure_error'}, {rowNumber:5,status:'pending'},
+  ]});
+  expect(await db.getRepository(ExampleItem).count()).toBe(items+1);
+  const result=(await confirm()).body.data;
+  expect(result).toMatchObject({status:'done',summary:{total:4,success:3,invalid:1,unprocessed:0}});
+  const imported=await events().findBy({batchId:precheck.importId});expect(imported).toHaveLength(3);expect(imported.map(e=>[e.source,e.action,e.rowNumber])).toEqual([['import','create',2],['import','create',4],['import','create',5]]);
+  expect(await db.getRepository(ExampleItem).count()).toBe(items+3);
   codes=['example-items:view'];const id=imported[0].itemId;await access(id).expect(201);
   expect((await history('activity',id)).body.data.list).toHaveLength(1);expect((await history('changes',id)).body.data.list).toHaveLength(0);expect((await history('operations',id)).body.data.list.map(e=>e.action)).toEqual(['view','create']);
   user={sub:8,roleCode:'user'};for(const tab of ['activity','operations','changes'])await history(tab,id,`?eventId=${imported[0].id}`).expect(404);
@@ -295,19 +311,17 @@ suite('单据履历：业务 HTTP 与隔离 MySQL', () => {
   await api().post(endpoint).send({attachmentId:upload.id}).expect(201);
   const preview=await api().get(`${endpoint}/${upload.id}/download?preview=1`).expect(200);expect(preview.headers['content-type']).toContain('image/png');expect(preview.headers['content-disposition']).toBe('inline');expect(preview.body).toEqual(imageBuffer);
   await api().get(`/api/v1/attachments/${upload.id}/download`).expect(403);
-  codes.push('attachments:download');
+  codes.push('attachments:view');
   // 已挂接业务附件从附件中心下载跟随单据数据范围：单据归属人（本人 view 默认开）可下
   const centerDownload=await api().get(`/api/v1/attachments/${upload.id}/download`).expect(200);
   expect(centerDownload.body).toEqual(imageBuffer);
-  // 范围外用户 403；配置该单据数据范围后放行
+  // 范围外文件按不存在处理；配置该单据数据范围后放行
   user={sub:8,roleCode:'user'};
-  await api().get(`/api/v1/attachments/${upload.id}/download`).expect(403);
+  await api().get(`/api/v1/attachments/${upload.id}/download`).expect(404);
   user={sub:8,roleCode:'user',dataScopes:[{scopeKey:'example-items',scopeType:'all',viewSelf:1,viewOthers:1}]};
   await api().get(`/api/v1/attachments/${upload.id}/download`).expect(200);
   user={sub:7,roleCode:'user'};
-  codes = codes.filter(code => code !== 'attachments:download');
   // 附件中心业务页签：跟随单据数据范围，返回模块/单据/上传人；未挂接暂存行仅上传者可见
-  codes.push('attachments:view');
   const biz7=(await api().get('/api/v1/attachments?origin=business').expect(200)).body.data;
   expect(biz7.list.find((r:any)=>r.id===upload.id)).toMatchObject({entityType:'example-items',entityId:item.id,entityTitle:'附件事项',uploaderName:'原操作人',status:'bound',origin:'business'});
   expect(biz7.list.some((r:any)=>r.id===foreign.id)).toBe(false);

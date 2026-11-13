@@ -42,6 +42,7 @@ describe('AttachmentService 生命周期（F08）', () => {
     chain.from = () => chain;
     chain.select = () => chain;
     chain.where = () => chain;
+    chain.andWhere = () => chain;
     chain.getRawOne = jest.fn(async () => (ownerId === undefined ? null : { ownerId }));
     repo.manager!.createQueryBuilder = jest.fn(() => chain);
   }
@@ -65,7 +66,15 @@ describe('AttachmentService 生命周期（F08）', () => {
       remove: jest.fn(async (row: any) => { rows.delete(row.id); return row; }),
       update: jest.fn(async (id: number, values: any) => Object.assign(rows.get(id), values)),
       softDelete: jest.fn(async (id: number) => { rows.get(id).deletedAt = new Date(); }),
-      createQueryBuilder: jest.fn(() => { const q: any = { where: () => q, andWhere: () => q, getOne: async () => ({ id: 1 }) }; return q; }),
+      createQueryBuilder: jest.fn(() => {
+        let id: number;
+        const q = {
+          where: (_sql: string, params: { id: number }) => { id = params.id; return q; },
+          andWhere: () => q,
+          getOne: async () => rows.get(id),
+        };
+        return q;
+      }),
     };
     repo.manager = { transaction: async (fn: any) => fn({ getRepository: () => repo }) };
     logWrite = jest.fn().mockResolvedValue(undefined);
@@ -113,14 +122,18 @@ describe('AttachmentService 生命周期（F08）', () => {
     await expect(service.resolveForDownload(row.id, scopedUser)).resolves.toBeDefined();
     await expect(service.resolveForDownload(row.id, admin)).resolves.toBeDefined();
     rows.get(row.id).storagePath = '2026/10/missing.pdf';
-    await expect(service.resolveForDownload(row.id, uploader)).rejects.toMatchObject({ status: 503 });
+    const missing = await service.resolveForDownload(row.id, uploader);
+    expect(() => service.openDownload(missing.row)).toThrow('附件文件已丢失');
   });
 
   it('跨月保存沿用实际落盘目录，下载仍能找到文件', async () => {
     const storagePath = '2026/01/cross-month.pdf'; writeStoreFile(storagePath);
     const view = await service.saveFile({ originalname: '跨月.pdf', filename: 'cross-month.pdf', path: join(tmpDir, storagePath), size: 4, mimetype: 'application/pdf' } as any, uploader);
     expect(rows.get(view.id).storagePath).toBe(storagePath);
-    await expect(service.resolveForDownload(view.id, uploader)).resolves.toMatchObject({ streamPath: join(tmpDir, storagePath) });
+    const resolved = await service.resolveForDownload(view.id, uploader);
+    expect(resolved.row.storagePath).toBe(storagePath);
+    const { stream } = service.openDownload(resolved.row);
+    stream.destroy();
   });
 
   it('数据库保存失败和空文件校验失败时清理已落盘文件', async () => {
@@ -156,11 +169,43 @@ describe('AttachmentService 生命周期（F08）', () => {
     await expect(service.resolveForDownload(bound.id, scopedUser)).rejects.toMatchObject({ status: 404 });
   });
 
-  it('未注册类型的已挂接附件保守仅上传者可下载', async () => {
+  it('下载时将部门范围用于文件库和所属单据查询', async () => {
+    const scope = { sub: 8, username: 'x', roleCode: 'user', dataScopes: [
+      { scopeKey: 'attachments', scopeType: 'by_depts', targets: [12], viewOthers: 1 },
+      { scopeKey: 'example-items', scopeType: 'by_depts', targets: [12], viewOthers: 1 },
+    ] } as any;
+    const center = await seedRow();
+    writeStoreFile(center.storagePath);
+    const andWhere = jest.fn();
+    const centerQuery: any = { where: () => centerQuery, andWhere, getOne: async () => null };
+    repo.createQueryBuilder.mockReturnValueOnce(centerQuery);
+    await expect(service.resolveForDownload(center.id, scope)).rejects.toMatchObject({ status: 404 });
+    expect(andWhere).toHaveBeenCalledWith(expect.stringContaining('scopeDeptIds'), expect.objectContaining({ scopeDeptIds: [12] }));
+
+    const bound = await seedRow({ status: 'bound', origin: 'business', entityType: 'example-items', entityId: 9 });
+    const docAndWhere = jest.fn();
+    const docQuery: any = { from: () => docQuery, select: () => docQuery, where: () => docQuery, andWhere: docAndWhere, getRawOne: async () => null };
+    repo.manager!.createQueryBuilder = jest.fn(() => docQuery);
+    await expect(service.resolveForDownload(bound.id, scope)).rejects.toMatchObject({ status: 404 });
+    expect(docAndWhere).toHaveBeenCalledWith(expect.stringContaining('scopeDeptIds'), expect.objectContaining({ scopeDeptIds: [12] }));
+  });
+
+  it('业务附件列表只包含有业务查看权限的已挂接类型', async () => {
+    const andWhere = jest.fn();
+    const q: any = { where: () => q, andWhere: (...args: any[]) => { andWhere(...args); return q; }, orderBy: () => q, skip: () => q, take: () => q, getManyAndCount: async () => [[], 0] };
+    repo.createQueryBuilder.mockReturnValue(q);
+    await service.findPage(1, 20, { origin: 'business' }, uploader, []);
+    expect(andWhere.mock.calls.some(call => String(call[0]).includes('example_items'))).toBe(false);
+    andWhere.mockClear();
+    await service.findPage(1, 20, { origin: 'business' }, uploader, ['example-items:view']);
+    expect(andWhere.mock.calls.some(call => String(call[0]).includes('example_items'))).toBe(true);
+  });
+
+  it('未注册类型的已挂接附件仅系统管理员可下载', async () => {
     const stranger = await seedRow({ status: 'bound', origin: 'business', entityType: 'other-type', entityId: 1, createdBy: 9, ownerId: 9 });
     writeStoreFile(stranger.storagePath);
     await expect(service.resolveForDownload(stranger.id, uploader)).rejects.toMatchObject({ status: 404 });
-    await expect(service.resolveForDownload(stranger.id, { sub: 9, username: 'owner9', roleCode: 'user' } as any)).resolves.toBeDefined();
+    await expect(service.resolveForDownload(stranger.id, { sub: 9, username: 'owner9', roleCode: 'user' } as any)).rejects.toMatchObject({ status: 404 });
     await expect(service.resolveForDownload(stranger.id, admin)).resolves.toBeDefined();
   });
 

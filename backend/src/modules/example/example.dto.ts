@@ -1,10 +1,22 @@
 import { Transform, plainToInstance } from 'class-transformer';
+import { applyDecorators } from '@nestjs/common';
 import { ArrayMaxSize, ArrayNotEmpty, IsArray, IsDefined, IsIn, IsInt, IsNotEmpty, IsString, MaxLength, Min, ValidateIf, validateSync } from 'class-validator';
 import { BadRequestException } from '@nestjs/common';
 import { validationException } from '../../common/utils/validation-errors';
 
 export const EXAMPLE_STATUSES = ['pending', 'doing', 'done'] as const;
 const trim = ({ value }: { value: unknown }) => typeof value === 'string' ? value.trim() : value;
+
+/** 团队成员（多选用户）：允许 [] / null（清空成员）；去重与存在性校验在服务层（需要数据库） */
+function MemberIds() {
+  return applyDecorators(
+    ValidateIf((_, value) => value !== undefined && value !== null),
+    IsArray({ message: '团队成员必须为用户编号数组' }),
+    ArrayMaxSize(50, { message: '团队成员一次最多 50 人' }),
+    IsInt({ each: true, message: '团队成员包含无效的用户编号' }),
+    Min(1, { each: true, message: '团队成员包含无效的用户编号' }),
+  );
+}
 
 export class BatchRemoveExampleDto {
   @IsArray()
@@ -42,6 +54,9 @@ export class CreateExampleDto {
   @IsString()
   @MaxLength(500, { message: '备注不能超过 500 字' })
   remark?: string | null;
+
+  @MemberIds()
+  memberIds?: number[] | null;
 }
 
 export class UpdateExampleDto {
@@ -72,6 +87,9 @@ export class UpdateExampleDto {
   @IsString()
   @MaxLength(500, { message: '备注不能超过 500 字' })
   remark?: string | null;
+
+  @MemberIds()
+  memberIds?: number[] | null;
 
   @IsDefined({ message: '缺少版本信息，请刷新后重试' })
   @IsInt({ message: '版本信息无效，请刷新后重试' })

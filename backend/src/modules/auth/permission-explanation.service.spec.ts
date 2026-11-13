@@ -1,6 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { PermissionExplanationService } from './permission-explanation.service';
 import { EXPLAIN_REASONS } from '../user/permission-explanation.contracts';
+import { ExampleItemMember } from '../example/example-member.entity';
 
 /**
  * 权限效果解释分层矩阵（单测层）：按 action-map §2 顺序逐层短路。
@@ -10,9 +11,12 @@ function setup(options: {
   entry?: Record<string, unknown> | null;
   record?: { id: number; ownerId: number | null; deletedAt?: Date | null } | null;
   inScope?: boolean;
+  /** 目标用户是否在单据团队成员表中（运行时 isParticipant 同口径） */
+  memberCount?: number;
   codes?: string[];
   roles?: string[];
   target?: Record<string, unknown>;
+  file?: Record<string, unknown>;
 }) {
   const userRepo: any = {
     findOne: jest.fn(async ({ where }: any) => {
@@ -28,6 +32,19 @@ function setup(options: {
   };
   const deptRepo: any = { find: jest.fn(async () => [{ id: 20, name: '部门甲' }]) };
   const exampleRepo: any = {
+    manager: {
+      getRepository: jest.fn((entity: any) => {
+        if (entity === ExampleItemMember) return { count: jest.fn(async () => options.memberCount ?? 0) };
+        return {
+          findOne: async () => options.file ?? null,
+          createQueryBuilder: () => ({
+            where: jest.fn().mockReturnThis(),
+            andWhere: jest.fn().mockReturnThis(),
+            getOne: async () => options.file,
+          }),
+        };
+      }),
+    },
     findOne: jest.fn(async () => options.record === undefined ? { id: 50, docNo: 'EX-20261104-001', title: '事项', ownerId: 1, deletedAt: null } : options.record),
     createQueryBuilder: jest.fn(() => {
       const qb: any = { select: jest.fn().mockReturnThis(), where: jest.fn().mockReturnThis(), andWhere: jest.fn().mockReturnThis() };
@@ -46,7 +63,7 @@ function setup(options: {
 
 const caller = { sub: 0, username: 'admin' };
 const resultsOf = async (service: PermissionExplanationService, recordId: number | null = 50) => {
-  const response = await service.explain(1, 'example-items', recordId, caller);
+  const response = await service.explain(1, 'example-items', recordId == null ? null : { id: recordId }, caller);
   return Object.fromEntries((response.recordEvaluation ?? []).map((item) => [item.action, item]));
 };
 
@@ -116,6 +133,23 @@ describe('权限效果解释：分层矩阵', () => {
     expect(results.detail.result).toBe('allowed');
   });
 
+  it('团队成员记录：他人开关全关仍 allowed，RECORD_PARTICIPANT 说明操作由权限码决定', async () => {
+    const { service } = setup({
+      record: { id: 50, ownerId: 77, deletedAt: null },
+      entry: { scopeKey: 'example-items', scopeType: 'self' },
+      memberCount: 1,
+      codes: ['example-items:view', 'example-items:update', 'example-items:delete', 'example-items:export'],
+    });
+    const response = await service.explain(1, 'example-items', { id: 50 }, caller);
+    expect(response.dataScope.description).toContain('团队成员');
+    const results = Object.fromEntries((response.recordEvaluation ?? []).map((item) => [item.action, item]));
+    for (const action of ['detail', 'update', 'delete'] as const) {
+      expect(results[action].result).toBe('allowed');
+      expect(results[action].reasonCodes).toContain(EXPLAIN_REASONS.RECORD_PARTICIPANT);
+    }
+    expect(results.update.reasonCodes).toContain(EXPLAIN_REASONS.OPTIMISTIC_LOCK);
+  });
+
   it('账号层短路：禁用与待改密分别 ACCOUNT_DISABLED / ACCOUNT_MUST_CHANGE_PASSWORD', async () => {
     const disabled = setup({ target: { id: 1, username: 'a', displayName: 'A', status: 0, mustChangePassword: 0, tokenVersion: 1, roleId: 2 } });
     const r1 = await resultsOf(disabled.service);
@@ -125,14 +159,19 @@ describe('权限效果解释：分层矩阵', () => {
     for (const key of Object.keys(r2)) expect(r2[key].reasonCodes).toEqual([EXPLAIN_REASONS.ACCOUNT_MUST_CHANGE_PASSWORD]);
   });
 
-  it('附件表单记录级一律 unsupported；摘要可用且 fallback 语义正确', async () => {
-    const { service } = setup({});
+  it('文件库诊断区分下载角色权限与删除数据范围开关', async () => {
+    const { service } = setup({
+      file: { id: 50, origin: 'center', status: 'temp', originalName: '文件.pdf', ownerId: 1 },
+      codes: ['attachments:view', 'attachments:delete'],
+      entry: { scopeKey: 'attachments', scopeType: 'self', deleteSelf: 0 },
+    });
     const response = await service.explain(1, 'attachments', { id: 50 }, caller);
     expect(response.configSource.scopeFormLabel).toBe('附件管理');
-    for (const item of response.recordEvaluation!) {
-      expect(item.result).toBe('unsupported');
-      expect(item.reasonCodes).toEqual([EXPLAIN_REASONS.UNSUPPORTED_ACTION]);
-    }
+    expect(response.recordEvaluation).toEqual([
+      expect.objectContaining({ action: 'list', result: 'allowed' }),
+      expect.objectContaining({ action: 'download', reasonCodes: [EXPLAIN_REASONS.OPERATION_PERMISSION_MISSING] }),
+      expect.objectContaining({ action: 'delete', reasonCodes: [EXPLAIN_REASONS.SELF_SWITCH_OFF] }),
+    ]);
     // 未配置表单：回退仅本人
     const fallback = setup({ entry: null });
     const summary = await fallback.service.explain(1, 'attachments', null, caller);

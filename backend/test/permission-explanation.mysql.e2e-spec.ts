@@ -10,6 +10,10 @@ import { Department } from '../src/modules/department/department.entity';
 import { UserDataScope } from '../src/modules/user/user-data-scope.entity';
 import { UserDataScopeTarget } from '../src/modules/user/user-data-scope-target.entity';
 import { ExampleItem } from '../src/modules/example/example-item.entity';
+import { ExampleItemMember } from '../src/modules/example/example-member.entity';
+import { ExampleRecycle } from '../src/modules/example/example-recycle.entity';
+import { Attachment } from '../src/modules/attachment/attachment.entity';
+import { AttachmentRecycle } from '../src/modules/attachment/attachment-recycle.entity';
 import { EXPLAIN_REASONS } from '../src/modules/user/permission-explanation.contracts';
 
 /**
@@ -30,6 +34,10 @@ suite('权限效果解释：隔离 MySQL 部门子树', () => {
   let outSubtreeRecord: number;
   let selfRecord: number;
   let deletedRecord: number;
+  let inSubtreeAttachment: number;
+  let outSubtreeAttachment: number;
+  let recycledAttachment: number;
+  let documentRecycleAttachment: number;
 
   beforeAll(async () => {
     const host = process.env.DB_HOST || 'localhost';
@@ -43,7 +51,7 @@ suite('权限效果解释：隔离 MySQL 部门子树', () => {
     source = new DataSource({
       type: 'mysql', host, port: Number(process.env.DB_PORT || 3306),
       username: process.env.DB_USERNAME, password: process.env.DB_PASSWORD, database,
-      entities: [User, UserRole, Role, Menu, Department, UserDataScope, UserDataScopeTarget, ExampleItem],
+      entities: [User, UserRole, Role, Menu, Department, UserDataScope, UserDataScopeTarget, ExampleItem, ExampleItemMember, Attachment, AttachmentRecycle, ExampleRecycle],
       synchronize: true,
     });
     await source.initialize();
@@ -80,6 +88,18 @@ suite('权限效果解释：隔离 MySQL 部门子树', () => {
     deletedRecord = (await items.save({ title: '已删除的单据', status: 'pending', version: 1, ownerId: peerA1.id, createdBy: peerA1.id })).id;
     await items.softDelete(deletedRecord);
 
+    const files = source.getRepository(Attachment);
+    const metadata = { originalName: '测试附件.pdf', storagePath: 'fixture.pdf', mimeType: 'application/pdf', size: 8 };
+    const attached = { ...metadata, origin: 'business' as const, status: 'bound' as const, entityType: 'example-items', ownerId: TARGET_ID };
+    inSubtreeAttachment = (await files.save({ ...attached, entityId: inSubtreeRecord })).id;
+    outSubtreeAttachment = (await files.save({ ...attached, entityId: outSubtreeRecord })).id;
+    recycledAttachment = (await files.save({ ...metadata, origin: 'center', ownerId: TARGET_ID, recycleHeld: 1 })).id;
+    await files.softDelete(recycledAttachment);
+    await source.getRepository(AttachmentRecycle).save({ attachmentId: recycledAttachment, deletedBy: TARGET_ID, actorName: '解释目标', state: 'purging' });
+    documentRecycleAttachment = (await files.save({ ...attached, entityId: deletedRecord, recycleHeld: 1 })).id;
+    await files.softDelete(documentRecycleAttachment);
+    await source.getRepository(ExampleRecycle).save({ itemId: deletedRecord, attachmentIds: [documentRecycleAttachment], deletedBy: TARGET_ID, actorName: '解释目标' });
+
     // 身份解析桩：角色/权限码口径与真实一致；dataScopes 来自真实配置表（loadForSession）
     const userDataScopes = new UserDataScopeService(
       source.getRepository(UserDataScope), source.getRepository(UserDataScopeTarget),
@@ -90,7 +110,7 @@ suite('权限效果解释：隔离 MySQL 部门子树', () => {
         roles: ['user'], roleIds: [2],
         dataScopes: await userDataScopes.loadForSession(userId),
       }),
-      getUserAccessCodes: async () => ['example-items:view', 'example-items:update', 'example-items:delete', 'example-items:export'],
+      getUserAccessCodes: async () => ['example-items:view', 'example-items:update', 'example-items:delete', 'example-items:export', 'example-items:update-others', 'example-items:delete-others', 'attachments:view', 'recycle-bin:restore', 'recycle-bin:purge'],
     };
     const logService: any = { write: async () => undefined };
     service = new PermissionExplanationService(
@@ -108,6 +128,29 @@ suite('权限效果解释：隔离 MySQL 部门子树', () => {
     const response = await service.explain(TARGET_ID, 'example-items', { id: recordId }, { sub: 1, username: 'admin' });
     return Object.fromEntries((response.recordEvaluation ?? []).map((item) => [item.action, item]));
   };
+
+  it('已挂接附件继承父单据部门范围，附件中心下载无需文件库下载码', async () => {
+    const inside = await service.explain(TARGET_ID, 'attachments', { id: inSubtreeAttachment }, { sub: 1, username: 'admin' });
+    expect(inside.recordEvaluation?.find(item => item.action === 'download')?.result).toBe('allowed');
+    const outside = await service.explain(TARGET_ID, 'attachments', { id: outSubtreeAttachment }, { sub: 1, username: 'admin' });
+    expect(outside.recordEvaluation?.find(item => item.action === 'download')?.reasonCodes).toEqual([EXPLAIN_REASONS.RECORD_NOT_FOUND]);
+  });
+
+  it('进入彻底删除流程的文件仍可查看和重试清理，不能恢复', async () => {
+    const result = await service.explain(TARGET_ID, 'attachments', { id: recycledAttachment }, { sub: 1, username: 'admin' });
+    expect(result.recordEvaluation).toEqual([
+      expect.objectContaining({ action: 'recycleDetail', result: 'allowed' }),
+      expect.objectContaining({ action: 'restore', reasonCodes: [EXPLAIN_REASONS.RECORD_STATE_BLOCKED] }),
+      expect.objectContaining({ action: 'purge', result: 'allowed' }),
+    ]);
+  });
+
+  it('随单据删除的文件按单据回收站规则诊断下载', async () => {
+    const result = await service.explain(TARGET_ID, 'attachments', { id: documentRecycleAttachment }, { sub: 1, username: 'admin' });
+    expect(result.recordEvaluation).toEqual([
+      expect.objectContaining({ action: 'recycleDownload', result: 'allowed' }),
+    ]);
+  });
 
   it('子树内他人记录：SQL 判定 allowed（assertCanOperateOn 同样会放行，两者一致）', async () => {
     const results = await evaluationsOf(inSubtreeRecord);

@@ -2,14 +2,27 @@ import { BadRequestException, HttpException, Injectable, NotFoundException } fro
 import { DataSource, EntityManager, In } from 'typeorm';
 import { ExampleItem } from './example-item.entity';
 import { ExampleRecycle, ExampleReservedNumber } from './example-recycle.entity';
+import { ExampleItemMember } from './example-member.entity';
 import { ExampleChange, ExampleEvent } from './example-event.entity';
 import { Attachment } from '../attachment/attachment.entity';
 import { AttachmentService } from '../attachment/attachment.service';
-import { buildDataScope, ScopeOperation } from '../../common/utils/data-scope';
+import { buildDataScope, type ScopeOperation, type ScopeUser } from '../../common/utils/data-scope';
+import { exampleMemberScopeVisibility } from './example-member-visibility';
 import { UserDataScopeService } from '../user/user-data-scope.service';
 import { JwtPayload } from '../auth/jwt.strategy';
 import { SystemLog } from '../system/entities/system-log.entity';
 import { AttachmentRecycle } from '../attachment/attachment-recycle.entity';
+import { assertRecyclePermission, RECYCLE_PERMISSIONS } from './recycle-permissions';
+
+/** 单据回收站读取与随删附件的权限解释使用同一范围查询。 */
+export function exampleRecycleQuery(manager: EntityManager, user: ScopeUser, operation?: ScopeOperation) {
+  const qb = manager.getRepository(ExampleItem).createQueryBuilder('e').withDeleted()
+    .innerJoin(ExampleRecycle, 'r', 'r.itemId = e.id').where('e.deletedAt IS NOT NULL');
+  const othersPermission = operation === 'edit' ? RECYCLE_PERMISSIONS.restoreOthers
+    : operation === 'delete' ? RECYCLE_PERMISSIONS.purgeOthers : undefined;
+  // 团队成员可见性随原模块范围同轨：成员可见自己参与单据的回收记录，恢复/彻底删除同口径
+  return buildDataScope(qb, 'e', user, 'example-items', operation, othersPermission, exampleMemberScopeVisibility('e', user));
+}
 
 /** 当前唯一接入方为示例事项，业务恢复规则留在本模块。 */
 @Injectable()
@@ -20,16 +33,10 @@ export class ExampleRecycleService {
     return { ...user, dataScopes: await this.scopes.loadForSession(user.sub) };
   }
 
-  private query(manager: EntityManager, user: JwtPayload, operation: ScopeOperation) {
-    const qb = manager.getRepository(ExampleItem).createQueryBuilder('e').withDeleted()
-      .innerJoin(ExampleRecycle, 'r', 'r.itemId = e.id').where('e.deletedAt IS NOT NULL');
-    return buildDataScope(qb, 'e', user, 'example-items', operation);
-  }
-
   async list(user: JwtPayload, page: number, size: number, keyword = '', module = '') {
     user = await this.currentUser(user);
     if (module && module !== 'example-items') return { list: [], total: 0 };
-    const qb = this.query(this.db.manager, user, 'view');
+    const qb = exampleRecycleQuery(this.db.manager, user, 'view');
     if (keyword.trim()) qb.andWhere('(e.docNo LIKE :keyword OR e.title LIKE :keyword)', { keyword: `%${keyword.trim().slice(0, 100)}%` });
     const [items, total] = await qb.addSelect('r.deletedAt').orderBy('r.deletedAt', 'DESC').addOrderBy('e.id', 'DESC').skip((page - 1) * size).take(size).getManyAndCount();
     const batches = items.length ? await this.db.getRepository(ExampleRecycle).findBy({ itemId: In(items.map(e => e.id)) }) : [];
@@ -37,7 +44,7 @@ export class ExampleRecycleService {
   }
 
   private async locked(manager: EntityManager, id: number, user: JwtPayload, operation: ScopeOperation) {
-    const item = await this.query(manager, user, operation).andWhere('e.id = :id', { id }).setLock('pessimistic_write').getOne();
+    const item = await exampleRecycleQuery(manager, user, operation).andWhere('e.id = :id', { id }).setLock('pessimistic_write').getOne();
     if (!item) throw new NotFoundException('单据不存在或不在当前操作范围内');
     const batch = await manager.getRepository(ExampleRecycle).findOneByOrFail({ itemId: id });
     return { item, batch };
@@ -66,6 +73,7 @@ export class ExampleRecycleService {
   }
 
   async restore(id: number, user: JwtPayload) {
+    assertRecyclePermission(user, 'restore');
     user = await this.currentUser(user);
     await this.db.transaction(async manager => {
       const { item, batch } = await this.locked(manager, id, user, 'edit');
@@ -90,6 +98,7 @@ export class ExampleRecycleService {
   }
 
   async purge(id: number, user: JwtPayload) {
+    assertRecyclePermission(user, 'purge');
     user = await this.currentUser(user);
     // 先持久标记不可恢复；磁盘失败后可重试，不会恢复出部分缺失的单据。
     await this.db.transaction(async manager => {
@@ -108,6 +117,8 @@ export class ExampleRecycleService {
       const events = await manager.getRepository(ExampleEvent).findBy({ itemId: id });
       if (events.length) await manager.getRepository(ExampleChange).delete({ eventId: In(events.map(e => e.id)) });
       await manager.getRepository(ExampleEvent).delete({ itemId: id });
+      // 成员行随单据彻底删除物理清理（软删期间成员行保留，恢复单据时成员原样可见）
+      await manager.getRepository(ExampleItemMember).delete({ itemId: id });
       if (rows.length) await manager.getRepository(Attachment).delete(rows.map(a => a.id));
       await manager.getRepository(ExampleItem).delete(id);
       await manager.getRepository(ExampleRecycle).delete(batch.itemId);
@@ -116,6 +127,7 @@ export class ExampleRecycleService {
   }
 
   async batch(ids: number[], action: 'restore' | 'purge', user: JwtPayload) {
+    assertRecyclePermission(user, action);
     const results: Array<{ id: number; success: boolean; reason?: string }> = [];
     for (const id of [...new Set(ids)]) {
       try { await this[action](id, user); results.push({ id, success: true }); }

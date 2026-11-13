@@ -6,6 +6,8 @@ import BasicLayout from './BasicLayout.vue'
 import { getNotifications, getUnreadCount } from '@/api/notifications'
 
 vi.mock('@/api/notifications', () => ({ getNotifications: vi.fn(), getUnreadCount: vi.fn(), markRead: vi.fn(), markAllRead: vi.fn(), NOTIFICATIONS_CHANGED: 'notifications-changed' }))
+vi.mock('@/components/BrandMark.vue', () => ({ default: { template: '<span />' } }))
+vi.mock('@/api/notification-stream', () => ({ connectNotificationStream: () => ({ close: () => {} }) }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ path: '/home', meta: { title: '首页' } }), useRouter: () => ({ push: vi.fn() }) }))
 const Pass = defineComponent({ setup(_, { slots }) { return () => h('div', [slots.default?.(), slots.overlay?.()]) } })
 const Dropdown = defineComponent({ emits: ['openChange'], setup(_, { slots, emit }) { return () => h('div', [h('button', { class: 'open-dropdown', onClick: () => emit('openChange', true) }, '打开'), slots.default?.(), slots.overlay?.()]) } })

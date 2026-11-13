@@ -5,6 +5,7 @@ import { CrudBaseService } from '../../common/services/crud-base.service';
 import { ExampleService } from './example.service';
 import { CreateExampleDto, UpdateExampleDto, validateExample } from './example.dto';
 import { ExampleItem } from './example-item.entity';
+import { ExampleItemMember } from './example-member.entity';
 import { ExampleReservedNumber } from './example-recycle.entity';
 import { User } from '../user/user.entity';
 
@@ -99,19 +100,22 @@ describe('示例导入预检与字典翻译',()=>{
 
 describe('导出行投影（与列表列设置勾选项同键对齐）',()=>{
  afterEach(()=>jest.restoreAllMocks());
- it('负责人/创建人投影为姓名（displayName 优先），时间转 Date，状态与类别翻译展示标签',async()=>{
+ it('负责人/创建人/团队成员投影为姓名（displayName 优先），时间转 Date，状态与类别翻译展示标签',async()=>{
   const rows=[
    {id:1,status:'pending',category:'cat-a',ownerId:1,createdBy:2,createdAt:'2026-01-02T03:04:05Z',updatedAt:'2026-01-03T00:00:00Z'},
    {id:2,status:'doing',category:null,ownerId:null,createdBy:2,createdAt:null,updatedAt:null},
   ];
   jest.spyOn(CrudBaseService.prototype as any,'getExportRows').mockResolvedValue(rows);
   const users=[{id:1,displayName:'张三',username:'zhang'},{id:2,displayName:'',username:'li'}];
-  const manager={getRepository:(entity:any)=>entity===User?{find:async()=>users}:{}};
+  const members=[{itemId:1,userId:2},{itemId:1,userId:1}];
+  const manager={getRepository:(entity:any)=>entity===User?{find:async()=>users}
+   :entity===ExampleItemMember?{find:async()=>members}
+   :{}};
   const dict={getLabelBook:async()=>({display:(value:string)=>value==='cat-a'?'类别甲':undefined})};
   const result=await (new ExampleService({manager} as any,dict as any) as any).getExportRows({sub:1},{});
-  expect(result[0]).toMatchObject({status:'待处理',category:'类别甲',ownerId:'张三',createdBy:'li'});
+  expect(result[0]).toMatchObject({status:'待处理',category:'类别甲',ownerId:'张三',memberIds:'li、张三',createdBy:'li'});
   expect(result[0].createdAt).toBeInstanceOf(Date);
   expect(result[0].updatedAt).toBeInstanceOf(Date);
-  expect(result[1]).toMatchObject({category:'',ownerId:'',createdBy:'li',createdAt:null});
+  expect(result[1]).toMatchObject({category:'',ownerId:'',memberIds:'',createdBy:'li',createdAt:null});
  });
 });

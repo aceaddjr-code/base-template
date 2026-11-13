@@ -20,26 +20,6 @@ export function imageFileFilter(
   cb(null, true);
 }
 
-const FILE_EXTS = [
-  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.xlsm', '.ppt', '.pptx',
-  '.zip', '.rar', '.7z', '.txt', '.csv',
-  '.dwg', '.dxf', '.step', '.stp', '.igs', '.iges', '.stl', '.3dm', '.vsd', '.vsdx',
-];
-
-/** multer 文件过滤器：通用文档（扩展名白名单；拒绝时 400 友好提示） */
-export function fileFileFilter(
-  _req: any,
-  file: Express.Multer.File,
-  cb: (error: Error | null, acceptFile: boolean) => void,
-) {
-  const ext = extname(file.originalname).toLowerCase();
-  if (!FILE_EXTS.includes(ext)) {
-    cb(new BadRequestException('仅支持 pdf/doc/docx/xls/xlsx/xlsm/ppt/pptx/zip/rar/7z/txt/csv/dwg/dxf/step/stp/igs/iges/stl/3dm/vsd/vsdx 文件'), false);
-    return;
-  }
-  cb(null, true);
-}
-
 /** 月份子目录（uploads/2026/08） */
 export function monthPath(now: Date = new Date()): string {
   return `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}`;

@@ -63,7 +63,7 @@
             </template>
             <template v-else-if="column.key === 'action'">
               <a-space :size="2" wrap>
-                <a-button v-if="!isSuperAdminUser(record)" type="link" size="small" @click="openDataScope(record)">数据范围</a-button>
+                <a-button v-if="!isSuperAdminUser(record)" type="link" size="small" @click="openDataScope(record)">可见范围</a-button>
                 <a-button type="link" size="small" @click="openDetail(record, true)">编辑</a-button>
                 <a-popconfirm title="确定要删除该用户吗？" ok-text="确定" cancel-text="取消" @confirm="handleDelete(record.id)">
                   <a-button type="link" danger size="small">删除</a-button>

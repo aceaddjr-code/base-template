@@ -28,11 +28,11 @@
         style="width: 200px"
         :disabled="querying"
         aria-label="业务表单"
-        @change="clearResult"
+        @change="changeForm"
       />
       <a-input
         v-model:value="recordRefText"
-        placeholder="单据编号（EX-20261104-001）或记录 ID"
+        :placeholder="scopeKey === 'attachments' ? '数字文件 ID' : '单据编号（EX-20261104-001）或记录 ID'"
         style="width: 260px"
         :disabled="querying"
         aria-label="单据编号或记录 ID"
@@ -70,11 +70,6 @@
 
       <div class="section-title">数据范围（{{ scopeTypeLabel }}）</div>
       <p class="section-text">{{ result.dataScope.description }}</p>
-      <p class="section-text switches">
-        <span>查看：本人 {{ flagText('viewSelf') }} / 他人 {{ flagText('viewOthers') }}</span>
-        <span>编辑：本人 {{ flagText('editSelf') }} / 他人 {{ flagText('editOthers') }}</span>
-        <span>删除：本人 {{ flagText('deleteSelf') }} / 他人 {{ flagText('deleteOthers') }}</span>
-      </p>
       <p v-if="result.dataScope.targetUsers?.length" class="section-text">指定用户：{{ result.dataScope.targetUsers.map((u) => u.label).join('、') }}</p>
       <p v-if="result.dataScope.targetDepts?.length" class="section-text">指定部门（含下级）：{{ result.dataScope.targetDepts.map((d) => d.label).join('、') }}</p>
 
@@ -118,7 +113,7 @@
           </tbody>
         </table>
       </template>
-      <p v-else class="section-note">如需逐条记录解释，请填写记录 ID（当前仅支持示例事项）。</p>
+      <p v-else class="section-note">{{ scopeKey === 'attachments' ? '输入文件 ID 可诊断文件库、业务附件或回收站操作。' : '输入单据编号或记录 ID 可诊断单据操作。' }}</p>
     </div>
   </a-modal>
 </template>
@@ -170,9 +165,16 @@ async function loadForms() {
 }
 
 function clearResult() {
+  sequence += 1
+  querying.value = false
   result.value = null
   failed.value = false
   failMessage.value = ''
+}
+
+function changeForm() {
+  recordRefText.value = ''
+  clearResult()
 }
 
 /** 解析记录引用：纯数字→记录 ID；EX-日期-序号→单据编号；空→不诊断具体记录。 */
@@ -183,7 +185,7 @@ function parseRecordRef(): { id?: number; docNo?: string } | null | 'invalid' {
     const id = Number(text);
     return Number.isSafeInteger(id) && id > 0 ? { id } : 'invalid';
   }
-  if (/^EX-\d{8}-\d{1,6}$/i.test(text)) return { docNo: text.toUpperCase() };
+  if (scopeKey.value !== 'attachments' && /^EX-\d{8}-\d{1,6}$/i.test(text)) return { docNo: text.toUpperCase() };
   return 'invalid';
 }
 
@@ -194,7 +196,7 @@ async function query() {
   const recordRef = parseRecordRef()
   if (recordRef === 'invalid') {
     failed.value = true
-    failMessage.value = '请输入单据编号（EX-日期-序号，如 EX-20261104-001）或数字记录 ID'
+    failMessage.value = scopeKey.value === 'attachments' ? '请输入数字文件 ID' : '请输入单据编号（EX-日期-序号，如 EX-20261104-001）或数字记录 ID'
     result.value = null
     return
   }
@@ -228,9 +230,11 @@ const scopeTypeLabels: Record<string, string> = {
   self: '仅本人', all: '全部数据', by_users: '指定用户', by_depts: '指定部门', fallback_self: '未配置回退',
 }
 const scopeTypeLabel = computed(() => (result.value ? scopeTypeLabels[result.value.dataScope.scopeType] ?? result.value.dataScope.scopeType : ''))
-const actionLabels: Record<string, string> = { list: '列表', detail: '详情', update: '编辑', delete: '删除', export: '导出' }
+const actionLabels: Record<string, string> = {
+  list: '列表', detail: '详情', update: '编辑', delete: '删除', export: '导出',
+  download: '附件中心下载', documentDownload: '单据内下载', recycleDetail: '回收站查看', recycleDownload: '单据回收站下载', restore: '恢复', purge: '彻底删除',
+}
 const actionLabel = (action: string) => actionLabels[action] ?? action
-const flagText = (flag: string) => (result.value?.dataScope.flags?.[flag] === 1 ? '开' : '关')
 const resultColor = (value: string) => (value === 'allowed' ? 'success' : value === 'unsupported' ? 'default' : 'error')
 const resultText = (value: string) => (value === 'allowed' ? '允许' : value === 'unsupported' ? '不支持' : '拒绝')
 </script>
@@ -244,7 +248,6 @@ const resultText = (value: string) => (value === 'allowed' ? '允许' : value ==
 .section-title { margin-top: var(--space-3); font-size: var(--text-aux); font-weight: 600; color: var(--color-text-secondary); letter-spacing: 0.08em; }
 .record-meta { font-weight: 400; color: var(--color-text-tertiary); margin-left: var(--space-2); }
 .section-text { margin: 0; font-size: var(--text-aux); color: var(--color-text-secondary); }
-.switches { display: flex; flex-wrap: wrap; gap: var(--space-4); }
 .section-note { margin: var(--space-1) 0 0; font-size: var(--text-aux); color: var(--color-text-tertiary); }
 .explain-table { width: 100%; border-collapse: collapse; font-size: var(--text-aux); }
 .explain-table th, .explain-table td { border: 1px solid var(--color-border); padding: var(--space-2); text-align: left; vertical-align: top; }

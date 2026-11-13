@@ -11,6 +11,8 @@ export interface ExampleItem {
   category?: string | null
   /** 单据负责人（记录归属人），创建时默认为创建人 */
   ownerId: number | null
+  /** 团队成员用户编号：成员身份提供记录可见性，操作仍按角色权限码裁决 */
+  memberIds?: number[]
   createdBy: number | null
   /** 乐观锁版本（F06）：编辑保存时回传，服务端按原值做条件更新 */
   version: number

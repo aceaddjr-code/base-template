@@ -6,12 +6,13 @@ import type { ScopeFlags, ScopeType } from '../../common/utils/data-scope';
  * 源自 CrudBaseController 的 CRUD_PERM_ACTION_MAP 与 @CrudPermPrefix 路由声明）。
  */
 
-/** 诊断动作全集（记录级仅 example-items；其余表单一律 unsupported）。 */
+/** 单据记录诊断动作。 */
 export const EXPLAIN_ACTIONS = ['list', 'detail', 'update', 'delete', 'export'] as const;
-export type ExplainAction = (typeof EXPLAIN_ACTIONS)[number];
+export type ExplainAction = (typeof EXPLAIN_ACTIONS)[number]
+  | 'download' | 'documentDownload' | 'recycleDetail' | 'recycleDownload' | 'restore' | 'purge';
 
 /** 动作 → 所需权限码（真实路由声明映射，见 action-map §1）。 */
-export const ACTION_PERMISSION_CODES: Record<ExplainAction, string> = {
+export const ACTION_PERMISSION_CODES: Record<(typeof EXPLAIN_ACTIONS)[number], string> = {
   list: 'example-items:view',
   detail: 'example-items:view',
   update: 'example-items:update',
@@ -19,7 +20,7 @@ export const ACTION_PERMISSION_CODES: Record<ExplainAction, string> = {
   export: 'example-items:export',
 };
 
-/** 记录级诊断支持的 scopeKey；其余已注册表单只提供摘要。 */
+/** 单据记录级诊断的表单。 */
 export const RECORD_EXPLAINABLE_SCOPE_KEY = 'example-items';
 
 export const EXPLAIN_REASONS = {
@@ -33,7 +34,11 @@ export const EXPLAIN_REASONS = {
   EDIT_REQUIRES_VIEW: 'EDIT_REQUIRES_VIEW',
   OPTIMISTIC_LOCK: 'OPTIMISTIC_LOCK',
   ADMIN_EXCEPTION: 'ADMIN_EXCEPTION',
+  /** 记录参与者（示例事项团队成员）口径：可见性由成员身份提供，操作由角色权限码决定 */
+  RECORD_PARTICIPANT: 'RECORD_PARTICIPANT',
   UNSUPPORTED_ACTION: 'UNSUPPORTED_ACTION',
+  RECORD_STATE_BLOCKED: 'RECORD_STATE_BLOCKED',
+  RECYCLE_SWITCH_OFF: 'RECYCLE_SWITCH_OFF',
 } as const;
 
 export type ExplainReason = (typeof EXPLAIN_REASONS)[keyof typeof EXPLAIN_REASONS];

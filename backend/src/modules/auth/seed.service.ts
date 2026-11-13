@@ -10,6 +10,7 @@ import { Department } from '../department/department.entity';
 import { SysDictType } from '../system/entities/sys-dict-type.entity';
 import { SysDictItem } from '../system/entities/sys-dict-item.entity';
 import { TEMPORARY_PASSWORD_TTL_HOURS } from './account-security.contracts';
+import { RECYCLE_PERMISSIONS } from '../example/recycle-permissions';
 
 /**
  * 管理页操作权限声明（docs/管理功能权限码.md）：新库种子、HTTP 边界测试与升级补丁
@@ -28,6 +29,17 @@ export const MANAGEMENT_ACTION_SPEC: Record<string, { prefix: string; actions: A
 /** 全部管理操作权限码（20 项）；测试用它交叉核对种子与补丁不漏项 */
 export const MANAGEMENT_PERMISSION_CODES: string[] = Object.values(MANAGEMENT_ACTION_SPEC)
   .flatMap(({ prefix, actions }) => actions.map(([action]) => `${prefix}:${action}`));
+
+/** 新增动作默认只授系统管理员，存量库见同日增量补丁。 */
+export const SCOPED_ACTION_NODES = [
+  ['/examples/items', 'example-items:update-others', '编辑他人记录'],
+  ['/examples/items', 'example-items:delete-others', '删除他人记录'],
+  ['/system/attachments', 'attachments:delete-others', '删除他人文件'],
+  ['/system/recycle-bin', RECYCLE_PERMISSIONS.restore, '恢复本人记录'],
+  ['/system/recycle-bin', RECYCLE_PERMISSIONS.purge, '彻底删除本人记录'],
+  ['/system/recycle-bin', RECYCLE_PERMISSIONS.restoreOthers, '恢复他人记录'],
+  ['/system/recycle-bin', RECYCLE_PERMISSIONS.purgeOthers, '彻底删除他人记录'],
+] as const;
 
 /** 仅初始化空库；已有账号、菜单、角色和授权由管理界面维护。 */
 @Injectable()
@@ -91,6 +103,10 @@ export class SeedService implements OnModuleInit {
     }
     for (const [action,name] of [['create','新增部门'],['update','编辑部门'],['delete','删除部门']]) {
       await add({ name, type:'button', permission:`departments:${action}`, parentId:system.id });
+    }
+    for (const [index, [path, permission, name]] of SCOPED_ACTION_NODES.entries()) {
+      const parent = menus.find(menu => menu.path === path)!;
+      await add({ parentId: parent.id, name, type: 'button', permission, sort: 20 + index });
     }
     adminRole.menus = menus;
     userRole.menus = [home, collaboration, recycleBin, examples, items, ...exampleButtons];

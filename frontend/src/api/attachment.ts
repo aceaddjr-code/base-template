@@ -20,6 +20,7 @@ export interface AttachmentItem {
   /** 上传人显示名（displayName 缺省回退用户名；用户被删为 null） */
   uploaderName: string | null
   mine: boolean
+  ownerId?: number | null
   createdAt: string
 }
 

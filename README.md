@@ -41,6 +41,7 @@ pnpm dev:frontend
 ```
 
 - 前端：[http://localhost:5174](http://localhost:5174)
+- 前端端口固定为 5174；如果端口被占用，启动会报错，不会自动切换到其他端口。
 - 后端：[http://localhost:3010/api/v1](http://localhost:3010/api/v1)
 - 管理员账号取 `ADMIN_USERNAME`，默认为 `admin`；密码取 `ADMIN_DEFAULT_PASSWORD`。
 

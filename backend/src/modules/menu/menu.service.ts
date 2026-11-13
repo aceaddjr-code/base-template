@@ -4,7 +4,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { Menu } from './menu.entity';
 
 @Injectable()
@@ -68,7 +68,12 @@ export class MenuService {
       if (dto[k] !== undefined) patch[k] = dto[k];
     }
     if (Object.keys(patch).length) {
-      await this.menuRepo.update(id, patch);
+      await this.menuRepo.manager.transaction(async manager => {
+        await manager.getRepository(Menu).update(id, patch);
+        if (['type', 'permission', 'status'].some(key => key in patch)) {
+          await this.invalidateMenuUsers(manager, id);
+        }
+      });
     }
     return this.findById(id);
   }
@@ -81,8 +86,30 @@ export class MenuService {
     if (children.length > 0) {
       throw new BadRequestException('请先删除子菜单');
     }
-    await this.menuRepo.delete(id);
+    await this.menuRepo.manager.transaction(async manager => {
+      await this.invalidateMenuUsers(manager, id);
+      await manager.getRepository(Menu).delete(id);
+    });
     return { message: '删除成功' };
+  }
+
+  private async invalidateMenuUsers(manager: EntityManager, menuId: number) {
+    await manager.query(
+      `UPDATE users SET token_version = token_version + 1
+       WHERE deleted_at IS NULL AND (
+         role_id IN (SELECT role_id FROM role_menus WHERE menu_id = ?)
+         OR id IN (
+           SELECT ur.user_id FROM user_roles ur JOIN role_menus rm ON rm.role_id = ur.role_id
+           WHERE rm.menu_id = ? AND ur.deleted_at IS NULL
+         )
+         OR role_id IN (SELECT id FROM roles WHERE code = 'admin' AND deleted_at IS NULL)
+         OR id IN (
+           SELECT ur.user_id FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+           WHERE r.code = 'admin' AND r.deleted_at IS NULL AND ur.deleted_at IS NULL
+         )
+       )`,
+      [menuId, menuId],
+    );
   }
 
   private buildTree(

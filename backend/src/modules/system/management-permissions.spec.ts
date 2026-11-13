@@ -100,7 +100,6 @@ describe('管理权限 HTTP 边界（真实控制器、角色守卫与权限守�
     ['get', '/system/logs', 'system-logs:view', logs.findAll],
     ['get', '/attachments', 'attachments:view', attachment.findPage],
     ['post', '/attachments', 'attachments:upload', attachment.saveFile],
-    ['get', '/attachments/1/download', 'attachments:download', attachment.resolveForDownload],
     ['delete', '/attachments/1', 'attachments:delete', attachment.remove],
     ['post', '/attachments/cleanup', 'attachments:cleanup', attachment.sweepDeletedFiles],
     ['post', '/examples/items/attachments/upload', 'example-items:update', example.uploadAttachment],
@@ -109,7 +108,7 @@ describe('管理权限 HTTP 边界（真实控制器、角色守卫与权限守�
 
   /** 账号安全第一批＋第二批：users 页动作保留 UserController 类级 admin 边界，
    *  不能按普通「精确授权即可用」形态进 cases，用专用用例验证。 */
-  const dedicatedAdminOnlyCodes = new Set(['users:reset-password', 'users:revoke-sessions', 'users:permission-explain', 'system-settings:update']);
+  const dedicatedAdminOnlyCodes = new Set(['users:reset-password', 'users:revoke-sessions', 'users:permission-explain', 'system-settings:update', 'attachments:download']);
   const pendingEndpointCodes = new Set<string>();
 
   it('用例覆盖种子声明的全部管理权限码，无遗漏也无拼写漂移', () => {
@@ -150,6 +149,18 @@ describe('管理权限 HTTP 边界（真实控制器、角色守卫与权限守�
       await send('post', path).expect(403);
     }
     await send('get', '/attachments/1/download').expect(403);
+  });
+
+  it('附件中心下载按文件来源分别要求文件库下载或所属单据查看权限', async () => {
+    attachment.resolveForDownload.mockResolvedValue({ row: { origin: 'center', mimeType: 'application/pdf', size: 2 } });
+    codes = ['attachments:view'];
+    await send('get', '/attachments/1/download').expect(403);
+    codes = ['attachments:view', 'attachments:download'];
+    await send('get', '/attachments/1/download').expect(200);
+    attachment.resolveForDownload.mockResolvedValue({ row: { origin: 'business', status: 'bound', entityType: 'example-items', mimeType: 'application/pdf', size: 2 } });
+    await send('get', '/attachments/1/download').expect(403);
+    codes = ['attachments:view', 'example-items:view'];
+    await send('get', '/attachments/1/download').expect(200);
   });
 
   it('单据编辑权限只允许单据上传入口，不能使用附件管理接口', async () => {

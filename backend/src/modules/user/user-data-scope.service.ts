@@ -63,28 +63,30 @@ export class UserDataScopeService {
     return (await this.loadRows(userId)).map(({ id: _id, ...entry }) => entry);
   }
 
-  /** 配置面板回显；无配置返回空数组（前端按表单渲染默认仅本人） */
-  async getPanelRows(userId: number): Promise<ScopeConfigRow[]> {
+  /** 配置面板只编辑可见范围。旧限制保留到管理员重新保存。 */
+  async getPanelRows(userId: number) {
     await this.assertUserExists(userId);
-    return this.loadRows(userId);
+    return (await this.loadRows(userId)).map(row => ({
+      id: row.id,
+      scopeKey: row.scopeKey,
+      scopeType: row.scopeType,
+      targets: row.targets,
+      legacyRestricted: SCOPE_OPERATIONS.some(op =>
+        row[`${op}Self`] !== 1 || (row.scopeType !== 'self' && row[`${op}Others`] !== 1),
+      ),
+    }));
   }
 
   /**
    * 保存用户数据范围（全量替换：物理删除 + 插入，事务）。
-   * 入参 rows: [{ scopeKey, scopeType, viewOthers, editOthers, deleteOthers, targets }]
+   * 入参只配置范围。旧列继续保留，存量用户重新保存后才取消旧开关的额外限制。
    */
   async saveRows(
     userId: number,
     rows: {
       scopeKey: string;
       scopeType: string;
-      viewOthers?: number;
-      editOthers?: number;
-      deleteOthers?: number;
       targets?: number[];
-      viewSelf?: number;
-      editSelf?: number;
-      deleteSelf?: number;
     }[],
     callerId: number,
   ) {
@@ -103,9 +105,8 @@ export class UserDataScopeService {
       }
       if (seen.has(r.scopeKey)) throw new BadRequestException('数据范围表单不能重复');
       seen.add(r.scopeKey);
-      const values = SCOPE_OPERATIONS.flatMap(op => [r[`${op}Others`], r[`${op}Self`]]);
-      if (values.some(value => value !== undefined && value !== 0 && value !== 1)) {
-        throw new BadRequestException('操作开关必须为 0 或 1');
+      if (SCOPE_OPERATIONS.some(op => `${op}Self` in r || `${op}Others` in r)) {
+        throw new BadRequestException('数据范围只配置可见范围，请刷新后重试');
       }
       if (r.targets !== undefined && (!Array.isArray(r.targets) || r.targets.some(id => !Number.isInteger(id) || id <= 0))) {
         throw new BadRequestException('数据范围目标必须为正整数 ID');
@@ -113,7 +114,7 @@ export class UserDataScopeService {
       const targeted = r.scopeType === 'by_users' || r.scopeType === 'by_depts';
       const targets = targeted ? [...new Set(r.targets ?? [])] : [];
       if (targeted && !targets.length) throw new BadRequestException('请指定数据范围目标');
-      return { scopeKey: r.scopeKey, scopeType: r.scopeType, targets, ...normalizeScopeFlags(r) };
+      return { scopeKey: r.scopeKey, scopeType: r.scopeType, targets };
     });
     for (const row of clean) {
       if (!row.targets.length) continue;
@@ -134,12 +135,12 @@ export class UserDataScopeService {
           userId,
           scopeKey: r.scopeKey,
           scopeType: r.scopeType,
-          viewOthers: r.viewOthers,
-          editOthers: r.editOthers,
-          deleteOthers: r.deleteOthers,
-          viewSelf: r.viewSelf,
-          editSelf: r.editSelf,
-          deleteSelf: r.deleteSelf,
+          viewOthers: 1,
+          editOthers: 1,
+          deleteOthers: 1,
+          viewSelf: 1,
+          editSelf: 1,
+          deleteSelf: 1,
           ownerId: userId,
           createdBy: callerId,
         });

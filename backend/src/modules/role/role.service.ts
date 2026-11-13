@@ -4,20 +4,17 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { Repository, In, EntityManager } from 'typeorm';
 import { Role } from './role.entity';
 import { Menu } from '../menu/menu.entity';
 import { UserRole } from '../user/user-role.entity';
 import { User } from '../user/user.entity';
-import type { JwtPayload } from '../auth/jwt.strategy';
 
 @Injectable()
 export class RoleService {
   constructor(
     @InjectRepository(Role)
     private roleRepo: Repository<Role>,
-    @InjectRepository(Menu)
-    private menuRepo: Repository<Menu>,
   ) {}
 
   /** 全量角色列表（分页） */
@@ -66,26 +63,22 @@ export class RoleService {
 
   /** 分配菜单权限 */
   async assignMenus(id: number, menuIds: number[]) {
-    const role = await this.roleRepo.findOne({
-      where: { id },
-      relations: { menus: true },
+    await this.roleRepo.manager.transaction(async manager => {
+      const roles = manager.getRepository(Role);
+      const role = await roles.findOne({ where: { id }, relations: { menus: true } });
+      if (!role) throw new NotFoundException('角色不存在');
+      role.menus = await manager.getRepository(Menu).findBy({ id: In(menuIds) });
+      await roles.save(role);
+      await this.bumpRoleUsersTokenVersion(id, manager);
     });
-    if (!role) throw new NotFoundException('角色不存在');
-
-    const menus = await this.menuRepo.findBy({ id: In(menuIds) });
-    role.menus = menus;
-    await this.roleRepo.save(role);
-    // 按钮权限查询按 userId:tokenVersion 缓存。角色菜单变化后必须使关联用户旧会话失效，
-    // 否则重新登录仍会命中授权前的缓存，前端和后端都看不到刚分配的按钮权限。
-    await this.bumpRoleUsersTokenVersion(id);
 
     return this.findById(id);
   }
 
   /** 角色权限或范围变化后，使主角色和附加角色用户重新登录并使用新的权限缓存键。 */
-  private async bumpRoleUsersTokenVersion(roleId: number): Promise<void> {
-    const userRoleRepo = this.roleRepo.manager.getRepository(UserRole);
-    const userRepo = this.roleRepo.manager.getRepository(User);
+  private async bumpRoleUsersTokenVersion(roleId: number, manager: EntityManager): Promise<void> {
+    const userRoleRepo = manager.getRepository(UserRole);
+    const userRepo = manager.getRepository(User);
     const [mainUsers, extraLinks] = await Promise.all([
       userRepo.find({ where: { roleId }, select: { id: true } }),
       userRoleRepo.find({ where: { roleId }, select: { userId: true } }),

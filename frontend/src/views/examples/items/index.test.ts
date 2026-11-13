@@ -96,7 +96,7 @@ describe('示例标准页导出和勾选联动', () => {
     const toolbar = wrapper.findComponent(Toolbar)
     // 列设置全集 = 注册表全部字段 + 操作列（锁尾）；默认隐藏字段（勾选后才上列表）也在全集内
     const allKeys = (toolbar.props('allColumns') as { key: string }[]).map(column => column.key)
-    expect(allKeys).toEqual(['docNo', 'title', 'status', 'category', 'description', 'ownerId', 'createdBy', 'createdAt', 'updatedAt', 'remark', 'actions'])
+    expect(allKeys).toEqual(['docNo', 'title', 'status', 'category', 'description', 'ownerId', 'memberIds', 'createdBy', 'createdAt', 'updatedAt', 'remark', 'actions'])
     // 默认可见列保持原有 6 列 + 操作列：新增字段经列设置勾选开启，不静默改变存量列表
     const visibleKeys = (toolbar.props('columns') as { key: string }[]).map(column => column.key)
     expect(visibleKeys).toEqual(['docNo', 'title', 'status', 'category', 'description', 'updatedAt', 'actions'])
@@ -118,7 +118,7 @@ describe('示例标准页导出和勾选联动', () => {
     await flushPromises()
     await wrapper.findComponent(Modal).find('button.modal-ok').trigger('click')
     await flushPromises()
-    expect(vi.mocked(createExample)).toHaveBeenCalledWith({ title: '事项', status: 'pending', description: '', remark: '加急处理', category: '' }, { errorFeedback: 'form' })
+    expect(vi.mocked(createExample)).toHaveBeenCalledWith({ title: '事项', status: 'pending', description: '', remark: '加急处理', category: '', memberIds: [] }, { errorFeedback: 'form' })
     expect(JSON.stringify(vi.mocked(createExample).mock.calls[0][0])).not.toContain('docNo')
     wrapper.unmount()
   })

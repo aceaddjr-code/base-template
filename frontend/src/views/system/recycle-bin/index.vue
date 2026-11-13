@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { Modal, message } from 'ant-design-vue'
 import request from '@/api/request'
 import Page from '@/components/Page.vue'
@@ -9,11 +9,19 @@ import DetailDrawer from '@/components/DetailDrawer.vue'
 import { useListPage } from '@/composables/useListPage'
 import { useResizableColumns } from '@/composables/useResizableColumns'
 import { useTableScrollY } from '@/composables/useTableScrollY'
+import { useUserOptions } from '@/composables/useUserOptions'
+import { hasAccessByCodes, hasAccessByRoles, hasRecordAction } from '@/utils/access'
 
-interface Row { id: number; docNo: string; title: string; moduleName: string; deletedAt: string; deletedBy: string; state: string }
+interface Row { id: number; docNo: string; title: string; moduleName: string; deletedAt: string; deletedBy: string; state: string; ownerId?: number | null }
 interface Detail { record: Record<string, unknown>; state: string; attachments: Array<{id: number; name: string}>; events: Array<{id: number; action: string; actorName: string; occurredAt: string; changes: Array<{id: number; fieldLabel: string; beforeValue: unknown; afterValue: unknown}>}> }
 const rows = ref<Row[]>([]), selected = ref<number[]>([]), keyword = ref(''), module = ref<string>(), loading = ref(false), failed = ref(false), busy = ref(false)
 const kind = ref<'documents' | 'files'>('documents')
+const canRestore = computed(() => hasAccessByRoles('admin') || hasAccessByCodes('recycle-bin:restore'))
+const canPurge = computed(() => hasAccessByRoles('admin') || hasAccessByCodes('recycle-bin:purge'))
+function canActOnRow(row: Row, action: 'restore' | 'purge') {
+  return kind.value === 'documents' ? hasRecordAction(row.ownerId, 'recycle-bin:' + action)
+    : action === 'restore' ? canRestore.value : canPurge.value
+}
 const container = ref<HTMLElement | null>(null), scrollY = useTableScrollY(container)
 const { pagination, setTableRef, stickySource, handlePageChange, handleSizeChange } = useListPage(() => { void load() })
 const columns = ref([{ title: '模块', key: 'moduleName', dataIndex: 'moduleName', width: 110 }, { title: '单据编号', key: 'docNo', dataIndex: 'docNo', width: 200 }, { title: '标题', key: 'title', dataIndex: 'title' }, { title: '删除人', key: 'deletedBy', dataIndex: 'deletedBy', width: 120 }, { title: '删除时间', key: 'deletedAt', dataIndex: 'deletedAt', width: 190 }, { title: '操作', key: 'action', width: 170 }])
@@ -23,6 +31,10 @@ const fields = [{ label: '单据编号', dataIndex: 'docNo' }, { label: '标题'
 const fileFields = [{ label: '文件名', dataIndex: 'title' }, { label: '来源', dataIndex: 'source' }, { label: '大小（字节）', dataIndex: 'size' }, { label: '删除人', dataIndex: 'deletedBy' }, { label: '删除时间', dataIndex: 'deletedAt', formatter: (record: Record<string, unknown>) => time(String(record.deletedAt)) }]
 const labels: Record<string, string> = { create: '创建', update: '修改', delete: '删除', restore: '恢复', view: '查看', print: '打印', no_change: '无变化保存', attachment_upload: '上传附件', attachment_delete: '删除附件' }
 const time = (value: string) => new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
+// 修改日志值渲染：用户编号数组转姓名顿号串（与业务模块修改日志同口径），其余原样展示
+const { labelOf, loadUserOptions } = useUserOptions()
+onMounted(() => { loadUserOptions() })
+const changeValue = (value: unknown) => Array.isArray(value) ? value.map(id => labelOf(Number(id)) || `用户#${id}`).join('、') || '空' : value ?? '空'
 let loadToken = 0, detailToken = 0
 async function load() {
   const token = ++loadToken
@@ -45,7 +57,7 @@ async function view(id: number) {
   finally { if (token === detailToken) detailLoading.value = false }
 }
 async function act(ids: number[], action: 'restore' | 'purge') {
-  if (busy.value) return
+  if (busy.value || !(action === 'restore' ? canRestore.value : canPurge.value)) return
   const run = async () => {
     busy.value = true
     try {
@@ -82,15 +94,15 @@ onMounted(load)
             <a-button :disabled="busy" @click="load">刷新</a-button>
           </template>
         </PageToolbar>
-        <div v-if="selected.length" class="batch-bar"><span>已选 {{ selected.length }} 条</span><a-button :disabled="busy" @click="act([...selected], 'restore')">恢复</a-button><a-button danger :disabled="busy" @click="act([...selected], 'purge')">彻底删除</a-button><a-button :disabled="busy" @click="selected = []">取消选择</a-button></div>
+        <div v-if="selected.length" class="batch-bar"><span>已选 {{ selected.length }} 条</span><a-button v-if="canRestore" :disabled="busy" @click="act([...selected], 'restore')">恢复</a-button><a-button v-if="canPurge" danger :disabled="busy" @click="act([...selected], 'purge')">彻底删除</a-button><a-button :disabled="busy" @click="selected = []">取消选择</a-button></div>
       </div>
       <a-alert v-if="failed" type="error" message="回收站加载失败"><template #action><a-button @click="load">重试</a-button></template></a-alert>
-      <a-table :ref="setTableRef" row-key="id" :columns="columns" :data-source="rows" :loading="loading || busy" :pagination="false" :scroll="{ x: 1000, y: scrollY }" :row-selection="{ selectedRowKeys: selected, columnWidth: 36, onChange: keys => selected = keys.map(Number), getCheckboxProps: () => ({ disabled: busy }) }">
+      <a-table :ref="setTableRef" row-key="id" :columns="columns" :data-source="rows" :loading="loading || busy" :pagination="false" :scroll="{ x: 1000, y: scrollY }" :row-selection="canRestore || canPurge ? { selectedRowKeys: selected, columnWidth: 36, onChange: keys => selected = keys.map(Number), getCheckboxProps: (record: Row) => ({ disabled: busy || (!canActOnRow(record, 'restore') && !canActOnRow(record, 'purge')) }) } : undefined">
         <template #headerCell="{ column }"><span>{{ kind === 'files' && column.key === 'docNo' ? '所属单据' : kind === 'files' && column.key === 'title' ? '文件名' : column.title }}</span><span v-if="column.key !== 'action' && !isFlexible(String(column.key))" class="resize-handle" @mousedown.stop.prevent="resizeStart(String(column.key), $event)" /></template>
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'title'"><button class="record-title table-long-text" @click="view(record.id)">{{ record.title }}</button><a-tag v-if="record.state === 'purging'">彻底删除待重试</a-tag></template>
           <template v-else-if="column.key === 'deletedAt'">{{ time(record.deletedAt) }}</template>
-          <template v-else-if="column.key === 'action'"><a-button type="link" size="small" :disabled="busy || record.state !== 'deleted'" @click="act([record.id], 'restore')">恢复</a-button><a-button type="link" size="small" danger :disabled="busy" @click="act([record.id], 'purge')">彻底删除</a-button></template>
+          <template v-else-if="column.key === 'action'"><a-button v-if="canActOnRow(record as Row, 'restore')" type="link" size="small" :disabled="busy || record.state !== 'deleted'" @click="act([record.id], 'restore')">恢复</a-button><a-button v-if="canActOnRow(record as Row, 'purge')" type="link" size="small" danger :disabled="busy" @click="act([record.id], 'purge')">彻底删除</a-button></template>
         </template>
         <template #emptyText>{{ failed ? '[ 加载失败 ]' : keyword || module ? '[ 没有匹配的记录 ]' : '[ 回收站为空 ]' }}</template>
       </a-table>
@@ -98,7 +110,7 @@ onMounted(load)
     <template #footer><ListFooter :source="stickySource" :pagination="pagination" @change="handlePageChange" @size-change="handleSizeChange" /></template>
     <DetailDrawer :open="open" :title="kind === 'files' ? '文件详情' : '回收站单据'" :record="detail?.record" :fields="kind === 'files' ? fileFields : fields" :loading="detailLoading" :show-audit-time="false" @close="open = false; detailToken++">
       <a-alert v-if="detailFailed" type="error" message="详情加载失败"><template #action><a-button @click="view(detailId)">重试</a-button></template></a-alert>
-      <template v-if="detail && kind === 'documents'"><h3>附件</h3><div v-if="!detail.attachments.length">[ 暂无附件 ]</div><div v-for="file in detail.attachments" :key="file.id"><a-button type="link" @click="download(file)">{{ file.name }}</a-button></div><h3>履历</h3><a-timeline><a-timeline-item v-for="event in detail.events" :key="event.id">{{ time(event.occurredAt) }} · {{ event.actorName }} · {{ labels[event.action] || event.action }}<div v-for="change in event.changes" :key="change.id">{{ change.fieldLabel }}：{{ change.beforeValue ?? '空' }} → {{ change.afterValue ?? '空' }}</div></a-timeline-item></a-timeline></template>
+      <template v-if="detail && kind === 'documents'"><h3>附件</h3><div v-if="!detail.attachments.length">[ 暂无附件 ]</div><div v-for="file in detail.attachments" :key="file.id"><a-button type="link" @click="download(file)">{{ file.name }}</a-button></div><h3>履历</h3><a-timeline><a-timeline-item v-for="event in detail.events" :key="event.id">{{ time(event.occurredAt) }} · {{ event.actorName }} · {{ labels[event.action] || event.action }}<div v-for="change in event.changes" :key="change.id">{{ change.fieldLabel }}：{{ changeValue(change.beforeValue) }} → {{ changeValue(change.afterValue) }}</div></a-timeline-item></a-timeline></template>
     </DetailDrawer>
   </Page>
 </template>

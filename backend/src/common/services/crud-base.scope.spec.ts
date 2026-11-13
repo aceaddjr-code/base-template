@@ -20,8 +20,9 @@ class ScopedRecords extends CrudBaseService<Row> {
 /**
  * 只执行本组用例用到的谓词，遇到其他 SQL 就失败，避免静默放行。
  * 这是 CRUD interface 的仓储替身，不验证 MySQL SQL、软删映射或部门递归。
+ * membersByItem：主表 id → 成员用户列表（模拟记录参与者子表，供额外可见分支谓词判定）。
  */
-function records(options: CrudOptions = {}, hasOwner = true) {
+function records(options: CrudOptions = {}, hasOwner = true, membersByItem: Map<number, number[]> = new Map()) {
   const rows: Row[] = [
     { id: 1, ownerId: 2, title: '本人', deletedAt: null },
     { id: 2, ownerId: 7, title: '目标用户', deletedAt: null },
@@ -37,26 +38,47 @@ function records(options: CrudOptions = {}, hasOwner = true) {
     metadata: { target: 'records', hasColumnWithPropertyPath: (field: string) => field === 'title' || (hasOwner && field === 'ownerId') },
     manager,
     createQueryBuilder: jest.fn(() => {
-      const predicates: Array<(row: Row) => boolean> = [];
+      const clauses: Array<{ sql: string; params: Record<string, any> }> = [];
       let selected = '';
+      /** 剥掉整体包裹的冗余外层括号（scope 组合层可叠加多层），落到原子谓词或顶层 AND/OR 拆解 */
+      const unwrap = (sql: string): string => {
+        let s = sql.trim();
+        while (s.startsWith('(') && s.endsWith(')')) {
+          let depth = 0;
+          for (let i = 0; i < s.length; i++) {
+            if (s[i] === '(') depth++;
+            else if (s[i] === ')') { depth--; if (depth === 0 && i < s.length - 1) return s; }
+          }
+          s = s.slice(1, -1).trim();
+        }
+        return s;
+      };
+      /** 子句树求值：AND/OR 组合拆解后再匹配原子谓词，保证括号内 OR 不被误作 AND */
+      const evaluate = (raw: string, params: Record<string, any>, row: Row): boolean => {
+        const sql = unwrap(raw);
+        const combined = /^\((.*)\) AND \((.*)\)$/s.exec(sql);
+        if (combined) return evaluate(combined[1], params, row) && evaluate(combined[2], params, row);
+        const orCombined = /^\((.*)\) OR \((.*)\)$/s.exec(sql);
+        if (orCombined) return evaluate(orCombined[1], params, row) || evaluate(orCombined[2], params, row);
+        if (sql === 't.deletedAt IS NULL') return row.deletedAt === null;
+        if (sql === 't.id = :id') return row.id === params.id;
+        if (sql === '1 = 0') return false;
+        if (sql === 't.ownerId = :scopeUserId') return row.ownerId === params.scopeUserId;
+        if (sql === 't.ownerId IN (:...scopeUserIds)') return params.scopeUserIds.includes(row.ownerId);
+        if (sql === 't.ownerId IS NOT NULL') return row.ownerId != null;
+        if (sql === 't.ownerId = :scopeOpUserId') return row.ownerId === params.scopeOpUserId;
+        if (sql === 't.ownerId <> :scopeOpUserId') return row.ownerId != null && row.ownerId !== params.scopeOpUserId;
+        if (sql.startsWith('EXISTS (SELECT 1 FROM record_participants p WHERE p.record_id = t.id')) return (membersByItem.get(row.id) ?? []).includes(params.scopeParticipantUid);
+        if (sql === 't.title IS NOT NULL' || sql === "t.title != ''") return !!row.title;
+        throw new Error(`仓储替身不支持该谓词: ${sql}`);
+      };
       const query = {
         where: (sql: string, params?: Record<string, any>) => {
-          predicates.length = 0;
+          clauses.length = 0;
           return query.andWhere(sql, params);
         },
         andWhere: (sql: string, params: Record<string, any> = {}) => {
-          const combined = /^\((.*)\) AND \((.*)\)$/s.exec(sql);
-          if (combined) { query.andWhere(combined[1], params); return query.andWhere(combined[2], params); }
-          if (sql === 't.deletedAt IS NULL') predicates.push(row => row.deletedAt === null);
-          else if (sql === 't.id = :id') predicates.push(row => row.id === params.id);
-          else if (sql === '1 = 0') predicates.push(() => false);
-          else if (sql === 't.ownerId = :scopeUserId') predicates.push(row => row.ownerId === params.scopeUserId);
-          else if (sql === 't.ownerId IN (:...scopeUserIds)') predicates.push(row => params.scopeUserIds.includes(row.ownerId));
-          else if (sql === 't.ownerId IS NOT NULL') predicates.push(row => row.ownerId != null);
-          else if (sql === 't.ownerId = :scopeOpUserId') predicates.push(row => row.ownerId === params.scopeOpUserId);
-          else if (sql === 't.ownerId <> :scopeOpUserId') predicates.push(row => row.ownerId != null && row.ownerId !== params.scopeOpUserId);
-          else if (sql === 't.title IS NOT NULL' || sql === "t.title != ''") predicates.push(row => !!row.title);
-          else throw new Error(`仓储替身不支持该谓词: ${sql}`);
+          clauses.push({ sql, params });
           return query;
         },
         select: (field: string) => { selected = field; return query; },
@@ -65,7 +87,7 @@ function records(options: CrudOptions = {}, hasOwner = true) {
         skip: () => query,
         take: () => query,
         limit: () => query,
-        getMany: async () => rows.filter(row => !row.deletedAt && predicates.every(predicate => predicate(row))),
+        getMany: async () => rows.filter(row => !row.deletedAt && clauses.every(clause => evaluate(clause.sql, clause.params, row))),
         getOne: async () => (await query.getMany())[0] ?? null,
         getManyAndCount: async () => { const result = await query.getMany(); return [result, result.length]; },
         getRawMany: async () => (await query.getMany()).map(row => ({ v: row[selected.slice(2)] })),
@@ -80,7 +102,7 @@ function records(options: CrudOptions = {}, hasOwner = true) {
 }
 
 function user(scope: Partial<UserScopeEntry> = {}, extra: UserScopeEntry[] = []): ScopeUser {
-  return { sub: 2, dataScopes: [{ scopeKey: 'example-items', scopeType: 'by_users', targets: [7], ...scope }, ...extra] };
+  return { sub: 2, accessCodes: ['example-items:update-others', 'example-items:delete-others'], dataScopes: [{ scopeKey: 'example-items', scopeType: 'by_users', targets: [7], ...scope }, ...extra] };
 }
 
 describe('CrudBaseService 受限读取与当前操作（公开 interface 回归）', () => {
@@ -190,5 +212,45 @@ describe('CrudBaseService 受限读取与当前操作（公开 interface 回归�
     await expect(service.findOne(2, actor)).resolves.toMatchObject({ id: 2 });
     await expect(service.update(2, { title: '已修改' }, 2, actor)).resolves.toMatchObject({ title: '已修改' });
     await expect(service.remove(2, actor)).resolves.toEqual({ success: true });
+  });
+});
+
+describe('额外可见分支与参与者裁决钩子（如记录参与者可见性）', () => {
+  /** 与 example-member-visibility 同形状的通用分支：参数用 :scopeParticipantUid（与范围参数不同名） */
+  const memberExtra = (alias: string, uid: number) => ({
+    sql: `EXISTS (SELECT 1 FROM record_participants p WHERE p.record_id = ${alias}.id AND p.participant_id = :scopeParticipantUid AND p.deleted_at IS NULL)`,
+    params: { scopeParticipantUid: uid },
+  });
+  /** 无任何 -others 码的普通成员：证明参与者裁决不依赖他人开关与权限码 */
+  const plainMember: ScopeUser = { sub: 5, accessCodes: [], dataScopes: [{ scopeKey: 'example-items', scopeType: 'self' }] };
+
+  function memberRecords(members: Map<number, number[]>) {
+    return records({
+      extraVisibility: (alias, user) => memberExtra(alias, user?.sub ?? -1),
+      isParticipant: (entity, user) => (members.get((entity as Row).id) ?? []).includes(user?.sub ?? -1),
+    }, true, members);
+  }
+
+  it('成员记录进入列表与导出，非成员仍不可见', async () => {
+    const { service } = memberRecords(new Map([[3, [5]]]));
+    // 替身数据无 ownerId=5 的行：用户 5 的列表只剩经成员分支进入的「范围外」行
+    expect((await service.list({}, plainMember)).list.map(row => row.title)).toEqual(['范围外']);
+    const exported = await service.exportExcel(plainMember);
+    expect((await excelToData(exported.buffer, { title: ['标题'] })).map(row => row.title)).toEqual(['范围外']);
+    await expect(records({}, true).service.findOne(3, plainMember)).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('参与者按权限码口径读写删除（无需 -others 码），移除成员后范围外 404', async () => {
+    const { service, repo } = memberRecords(new Map([[2, [5]], [3, [5]]]));
+    await expect(service.update(2, { title: '成员已改' }, 5, plainMember)).resolves.toMatchObject({ title: '成员已改' });
+    await expect(service.remove(3, plainMember)).resolves.toEqual({ success: true });
+    expect(repo.softDelete).toHaveBeenCalledWith(3);
+    await expect(memberRecords(new Map([[2, [5]]])).service.findOne(3, plainMember)).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('参与者可操作无归属人记录', async () => {
+    const { service } = memberRecords(new Map([[4, [5]]]));
+    await expect(service.findOne(4, plainMember)).resolves.toMatchObject({ id: 4 });
+    await expect(service.remove(4, plainMember)).resolves.toEqual({ success: true });
   });
 });

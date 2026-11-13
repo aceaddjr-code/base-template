@@ -48,6 +48,7 @@ export default defineConfig({
   },
   server: {
     port: 5174,
+    strictPort: true,
     // 2026-08-27 手机调试：允许局域网访问（手机连同一 WiFi 直接看移动端）
     host: true,
     watch: {

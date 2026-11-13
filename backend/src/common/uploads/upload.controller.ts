@@ -2,7 +2,6 @@ import { BadRequestException, Controller, Post, UploadedFile, UseInterceptors } 
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import {
-  fileFileFilter,
   imageFileFilter,
   monthPath,
   uploadDestinationFactory,
@@ -28,19 +27,4 @@ export class UploadController {
     return { url: `/uploads/${monthPath()}/${file.filename}` };
   }
 
-  @Post('file')
-  @UseInterceptors(
-    FileInterceptor('file', {
-      storage: diskStorage({
-        destination: uploadDestinationFactory(),
-        filename: uploadFilenameFactory,
-      }),
-      limits: { fileSize: 20 * 1024 * 1024 },
-      fileFilter: fileFileFilter,
-    }),
-  )
-  uploadFile(@UploadedFile() file?: Express.Multer.File) {
-    if (!file?.filename) throw new BadRequestException('请选择文件');
-    return { url: `/uploads/${monthPath()}/${file.filename}` };
-  }
 }

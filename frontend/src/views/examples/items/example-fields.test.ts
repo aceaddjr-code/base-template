@@ -16,14 +16,14 @@ describe('buildExampleFields（示例事项字段注册表：详情与列表单�
   it('覆盖详情全部字段，含动态信息与备注', () => {
     expect(fields.map((field) => field.dataIndex)).toEqual([
       'docNo', 'title', 'status', 'category', 'description',
-      'ownerId', 'createdBy', 'createdAt', 'updatedAt', 'remark',
+      'ownerId', 'memberIds', 'createdBy', 'createdAt', 'updatedAt', 'remark',
     ])
   })
 
   it('默认上列表的只有原有 6 列；新增字段仅进列设置（默认不勾选）', () => {
     const defaultVisible = fields.filter((field) => field.list).map((field) => field.dataIndex)
     expect(defaultVisible).toEqual(['docNo', 'title', 'status', 'category', 'description', 'updatedAt'])
-    for (const key of ['ownerId', 'createdBy', 'createdAt', 'remark']) {
+    for (const key of ['ownerId', 'memberIds', 'createdBy', 'createdAt', 'remark']) {
       expect(fields.find((field) => field.dataIndex === key)?.list).toBeFalsy()
     }
   })
@@ -43,11 +43,18 @@ describe('buildExampleFields（示例事项字段注册表：详情与列表单�
     expect(byKey.category.formatter!(record)).toBe('类别:normal')
     expect(byKey.docNo.formatter!(record)).toBe('-')
     expect(byKey.createdAt.formatter!(record)).toContain('2026')
+    // 团队成员：顿号拼接、空集合回退占位；编辑态为多选用户
+    expect(byKey.memberIds.formatter!({ memberIds: [7, 8] })).toBe('用户7、用户8')
+    expect(byKey.memberIds.formatter!({})).toBe('-')
+    expect(byKey.memberIds.multiple).toBe(true)
+    expect(byKey.memberIds.options).toBeUndefined()
+    expect(buildExampleFields({ userLabel: deps.userLabel, categoryLabel: deps.categoryLabel, memberOptions: [{ label: '用户7', value: 7 }] })
+      .find((field) => field.dataIndex === 'memberIds')?.options).toEqual([{ label: '用户7', value: 7 }])
   })
 
-  it('编辑字段与新增弹窗字段一致（title/status/category/description/remark）', () => {
+  it('编辑字段与新增弹窗字段一致（title/status/category/description/remark/memberIds）', () => {
     const editable = fields.filter((field) => field.editable).map((field) => field.dataIndex)
-    expect(editable.sort()).toEqual(['category', 'description', 'remark', 'status', 'title'])
+    expect(editable.sort()).toEqual(['category', 'description', 'memberIds', 'remark', 'status', 'title'])
   })
 
   it('类别编辑候选由 deps 注入（抽屉传启用项，列表侧可不传）', () => {

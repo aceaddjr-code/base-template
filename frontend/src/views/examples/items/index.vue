@@ -67,8 +67,8 @@
           <template v-else-if="column.key === 'updatedAt'"><span class="table-meta">{{ formatDateTime(record.updatedAt) }}</span></template>
           <template v-else-if="column.key === 'actions'">
             <a-space>
-              <a-button v-access="['example-items:update']" type="link" size="small" @click="openDetail(Number(record.id), true)">编辑</a-button>
-              <a-popconfirm title="确定删除这条示例数据？" @confirm="remove(Number(record.id))"><a-button v-access="['example-items:delete']" type="link" danger size="small">删除</a-button></a-popconfirm>
+              <a-button v-if="editAllowed(record)" type="link" size="small" @click="openDetail(Number(record.id), true)">编辑</a-button>
+              <a-popconfirm v-if="deleteAllowed(record)" title="确定删除这条示例数据？" @confirm="remove(Number(record.id))"><a-button type="link" danger size="small">删除</a-button></a-popconfirm>
             </a-space>
           </template>
         </template>
@@ -84,6 +84,7 @@
       <a-form-item label="标题" required data-form-field="title" :validate-status="createErrors.title ? 'error' : undefined"><a-input v-model:value="form.title" aria-label="标题" v-bind="createFeedback.attrs('title')" :disabled="modalLoading" :maxlength="100" /><p v-if="createErrors.title" :id="createFeedback.errorId('title')" class="field-error">{{ createErrors.title }}</p></a-form-item>
       <a-form-item label="状态" data-form-field="status" :validate-status="createErrors.status ? 'error' : undefined"><a-select v-model:value="form.status" aria-label="状态" v-bind="createFeedback.attrs('status')" :disabled="modalLoading" :options="statusOptions" /><p v-if="createErrors.status" :id="createFeedback.errorId('status')" class="field-error">{{ createErrors.status }}</p></a-form-item>
       <a-form-item label="类别" data-form-field="category" :validate-status="createErrors.category ? 'error' : undefined"><a-select v-model:value="form.category" aria-label="类别" v-bind="createFeedback.attrs('category')" :disabled="modalLoading" :options="categoryOptions" allow-clear placeholder="选填" /><p v-if="createErrors.category" :id="createFeedback.errorId('category')" class="field-error">{{ createErrors.category }}</p></a-form-item>
+      <a-form-item label="团队成员" data-form-field="memberIds" :validate-status="createErrors.memberIds ? 'error' : undefined"><a-select v-model:value="form.memberIds" aria-label="团队成员" v-bind="createFeedback.attrs('memberIds')" :disabled="modalLoading" :options="selectOptions" mode="multiple" :max-tag-count="'responsive'" show-search option-filter-prop="label" allow-clear placeholder="选填，成员可查看该单据（至多 50 人）" /><p v-if="createErrors.memberIds" :id="createFeedback.errorId('memberIds')" class="field-error">{{ createErrors.memberIds }}</p></a-form-item>
       <a-form-item label="说明" data-form-field="description" :validate-status="createErrors.description ? 'error' : undefined"><a-textarea v-model:value="form.description" aria-label="说明" v-bind="createFeedback.attrs('description')" :disabled="modalLoading" :rows="4" :maxlength="500" show-count /><p v-if="createErrors.description" :id="createFeedback.errorId('description')" class="field-error">{{ createErrors.description }}</p></a-form-item>
       <a-form-item label="备注" data-form-field="remark" :validate-status="createErrors.remark ? 'error' : undefined"><a-textarea v-model:value="form.remark" aria-label="备注" v-bind="createFeedback.attrs('remark')" :disabled="modalLoading" :rows="3" :maxlength="500" show-count /><p v-if="createErrors.remark" :id="createFeedback.errorId('remark')" class="field-error">{{ createErrors.remark }}</p></a-form-item>
     </a-form>
@@ -136,6 +137,7 @@ import { useTableScrollY } from '@/composables/useTableScrollY'
 import { useResizableColumns } from '@/composables/useResizableColumns'
 import { downloadCsv } from '@/utils/csv-download'
 import { batchDeleteExamples, confirmExamplesForToolbar, createExample, deleteExample, exampleImportTemplateUrl, getExampleExportUrl, importErrorFileUrl, importReportUrl, listExamples, precheckExamplesForToolbar, type ExampleBatchResult, type ExampleItem, type ExampleListQuery } from '@/api/example'
+import { hasAccessByCodes, hasRecordAction } from '@/utils/access'
 import type { DocumentTab as HistoryTab } from '@/api/example'
 
 // 表头固定 + body 内部滚动：高度由容器实测，工具栏换行时自动重算。
@@ -190,8 +192,12 @@ const rowSelection = computed(() => ({ selectedRowKeys: selectedIds.value, colum
 // 列表列由字段注册表派生（./example-fields.ts，与详情抽屉同一来源）：新增字段自动进列设置、
 // 默认不勾选，勾选后才上列表；导出列随可见列走，后端 excelColumns 需保持同键对齐。
 // 编号链接、状态标签、长文本等专属渲染仍由 #bodyCell 分支接管（槽位未命中的列回落 customRender）。
-const { labelOf, loadUserOptions } = useUserOptions()
+const { labelOf, selectOptions, loadUserOptions } = useUserOptions()
 const userLabel = (id: number | null | undefined) => labelOf(id) || '-'
+// 行内编辑/删除入口与后端参与者裁决同口径：本人/持 -others 码，或「团队成员 + 对应权限码」（入口预校验，保存仍由服务端兜底）
+const isMemberOf = (record: Record<string, any>) => ((record.memberIds as number[] | undefined) ?? []).includes(app.userInfo?.id ?? -1)
+const editAllowed = (record: Record<string, any>) => hasRecordAction(record.ownerId, 'example-items:update') || (isMemberOf(record) && hasAccessByCodes(['example-items:update']))
+const deleteAllowed = (record: Record<string, any>) => hasRecordAction(record.ownerId, 'example-items:delete') || (isMemberOf(record) && hasAccessByCodes(['example-items:delete']))
 onMounted(() => { loadUserOptions() })
 // 操作列按当前「编辑 / 删除」两个链接收紧；后续新增按钮时再加宽即可。
 const actionsColumn: Record<string, any> = { title: '操作', key: 'actions', width: 88, fixed: 'right' as const }
@@ -208,10 +214,11 @@ const exportColumns = computed(() => columns.value.map(column => column.key).fil
 const exportUrl = computed(() => exportColumns.value ? getExampleExportUrl({ ...activeQuery.value, cols: exportColumns.value }) : '')
 // 新增弹窗状态（本页只有"新增并继续录入"；编辑走详情抽屉原地编辑，不经过这里）
 // 单据编号由后端创建时生成，不进新增表单
-interface ExampleForm { title: string; status: ExampleItem['status']; description: string; remark: string; category: string }
-const exampleFormDefaults = (): ExampleForm => ({ title: '', status: 'pending', description: '', remark: '', category: '' })
+interface ExampleForm { title: string; status: ExampleItem['status']; description: string; remark: string; category: string; memberIds: number[] }
+const exampleFormDefaults = (): ExampleForm => ({ title: '', status: 'pending', description: '', remark: '', category: '', memberIds: [] })
+// 团队成员候选与负责人候选同源（users/simple 启用用户）
 const createModal = useFormModal<ExampleForm>({
-  fields: () => ({ title: '标题', status: '状态', description: '说明', remark: '备注', category: '类别' }),
+  fields: () => ({ title: '标题', status: '状态', description: '说明', remark: '备注', category: '类别', memberIds: '团队成员' }),
   defaults: exampleFormDefaults,
   validate: form => {
     const errors: Record<string, string> = {}

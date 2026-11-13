@@ -4,6 +4,8 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia } from 'pinia'
+import { useAppStore } from '@/stores/app'
+import { useAccessStore } from '@/stores/access'
 import ExampleDetailDrawer from './ExampleDetailDrawer.vue'
 import { message } from 'ant-design-vue'
 
@@ -36,7 +38,13 @@ const OkModal = defineComponent({ emits: ['ok', 'cancel'], setup(_, { emit, slot
 const PickSelect = defineComponent({ props: ['value', 'options'], emits: ['update:value'], render: () => h('select') })
 const drawerStubs = { DetailDrawer: Detail, AAlert: Alert, AButton: Btn, AModal: OkModal, ASelect: PickSelect, AForm: { template: '<div><slot /></div>' }, AFormItem: { template: '<div><slot /></div>' } }
 type DrawerProps = InstanceType<typeof ExampleDetailDrawer>['$props']
-const mountDrawer = (props: DrawerProps, stubs: Record<string, any> = drawerStubs) => mount(ExampleDetailDrawer, { props, global: { plugins: [createPinia()], directives: { access: {} }, stubs } })
+function editorPinia() {
+  const pinia = createPinia()
+  useAppStore(pinia).userInfo = { id: 1, username: 'editor', role: 'user', displayName: null, avatar: null, deptId: null, deptName: null }
+  useAccessStore(pinia).setAccessCodes(['example-items:view', 'example-items:update', 'example-items:owner'])
+  return pinia
+}
+const mountDrawer = (props: DrawerProps, stubs: Record<string, any> = drawerStubs) => mount(ExampleDetailDrawer, { props, global: { plugins: [editorPinia()], directives: { access: {} }, stubs } })
 describe('示例详情数据生命周期', () => {
   beforeEach(() => { vi.resetAllMocks(); vi.mocked(accessExample).mockResolvedValue({ record: row(1), eventId: 1 }) })
 
@@ -155,9 +163,9 @@ describe('示例详情数据生命周期', () => {
     const wrapper = mountDrawer({ open: true, recordId: 1 })
     await flushPromises()
     const fields = wrapper.findComponent(Detail).props('fields') as any[]
-    expect(fields.map((f) => f.group)).toEqual(['基础信息', '基础信息', '基础信息', '基础信息', '基础信息', '动态信息', '动态信息', '动态信息', '动态信息', '备注信息'])
-    expect(fields.map((f) => f.dataIndex)).toEqual(['docNo', 'title', 'status', 'category', 'description', 'ownerId', 'createdBy', 'createdAt', 'updatedAt', 'remark'])
-    expect(fields.filter((f) => f.editable).map((f) => f.dataIndex)).toEqual(['title', 'status', 'category', 'description', 'remark'])
+    expect(fields.map((f) => f.group)).toEqual(['基础信息', '基础信息', '基础信息', '基础信息', '基础信息', '动态信息', '动态信息', '动态信息', '动态信息', '动态信息', '备注信息'])
+    expect(fields.map((f) => f.dataIndex)).toEqual(['docNo', 'title', 'status', 'category', 'description', 'ownerId', 'memberIds', 'createdBy', 'createdAt', 'updatedAt', 'remark'])
+    expect(fields.filter((f) => f.editable).map((f) => f.dataIndex)).toEqual(['title', 'status', 'category', 'description', 'memberIds', 'remark'])
     // 归属人姓名按用户简表解析；解析不到回退「-」
     const owner = fields.find((f) => f.dataIndex === 'ownerId')!
     expect(owner.formatter({ ownerId: 2 })).toBe('李四（默认部门）')
@@ -211,7 +219,7 @@ it('上传期间切换页签保留实例并阻止关闭，完成后仍保存到�
   let finish!: (value: any) => void
   vi.mocked(uploadExampleAttachment).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
   vi.mocked(addExampleFile).mockResolvedValue({ id: 9 })
-  const wrapper = mount(ExampleDetailDrawer, { props: { open: true, recordId: 1, tab: 'attachments' }, global: { plugins: [createPinia()], directives: { access: {} }, stubs: { DetailDrawer: Detail, AButton: Btn, AAlert: Alert, AImage: true, APopconfirm: true } } })
+  const wrapper = mount(ExampleDetailDrawer, { props: { open: true, recordId: 1, tab: 'attachments' }, global: { plugins: [editorPinia()], directives: { access: {} }, stubs: { DetailDrawer: Detail, AButton: Btn, AAlert: Alert, AImage: true, APopconfirm: true } } })
   await flushPromises()
   const panel = wrapper.getComponent({ name: 'ExampleAttachmentPanel' })
   const input = panel.get('input[type="file"]')
@@ -238,7 +246,7 @@ it('待保存文件切页仍可重试，切换记录或关闭时可选择继续�
   let guard!: (to: any, from: any) => any
   const router = { beforeEach: (fn: typeof guard) => { guard = fn; return () => {} } }
   const confirm = vi.spyOn(Modal, 'confirm').mockImplementation((config: any) => { config.onCancel(); return { destroy: vi.fn(), update: vi.fn() } })
-  const wrapper = mount(ExampleDetailDrawer, { props: { open: true, recordId: 1, tab: 'attachments' }, global: { plugins: [createPinia()], provide: { [routerKey as symbol]: router }, directives: { access: {} }, stubs: { DetailDrawer: Detail, AButton: Btn, AAlert: Alert, AImage: true, APopconfirm: true } } })
+  const wrapper = mount(ExampleDetailDrawer, { props: { open: true, recordId: 1, tab: 'attachments' }, global: { plugins: [editorPinia()], provide: { [routerKey as symbol]: router }, directives: { access: {} }, stubs: { DetailDrawer: Detail, AButton: Btn, AAlert: Alert, AImage: true, APopconfirm: true } } })
   await flushPromises()
   const input = wrapper.get('input[type="file"]')
   Object.defineProperty(input.element, 'files', { value: [new File(['data'], '测试.pdf')] })

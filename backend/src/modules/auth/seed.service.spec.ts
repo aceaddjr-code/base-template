@@ -1,5 +1,5 @@
 import { ConfigService } from '@nestjs/config';
-import { SeedService } from './seed.service';
+import { SCOPED_ACTION_NODES, SeedService } from './seed.service';
 import { User } from '../user/user.entity';
 import { Role } from '../role/role.entity';
 import { Menu } from '../menu/menu.entity';
@@ -71,7 +71,7 @@ describe('空库初始化', () => {
       announcements: ['announcements:view', 'announcements:create', 'announcements:update', 'announcements:publish', 'announcements:withdraw', 'announcements:delete'],
       dict: ['dicts:view', 'dicts:create', 'dicts:update', 'dicts:delete'],
       logs: ['system-logs:view'],
-      attachments: ['attachments:view', 'attachments:upload', 'attachments:download', 'attachments:delete', 'attachments:cleanup'],
+      attachments: ['attachments:view', 'attachments:upload', 'attachments:download', 'attachments:delete', 'attachments:cleanup', 'attachments:delete-others'],
     };
     for (const [path, codes] of Object.entries(expected)) {
       const page = savedMenus.find(menu => menu.path === `/system/${path}`);
@@ -80,6 +80,12 @@ describe('空库初始化', () => {
     const roles = manager.save.mock.calls.find(([entity, data]: any[]) => entity === Role && Array.isArray(data))[1];
     const normal = roles.find((role: Role) => role.code === 'user');
     expect(normal.menus.some((menu: Menu) => Object.values(expected).flat().includes(menu.permission!))).toBe(false);
+    const admin = roles.find((role: Role) => role.code === 'admin');
+    for (const [path, permission] of SCOPED_ACTION_NODES) {
+      const page = savedMenus.find(menu => menu.path === path);
+      expect(admin.menus).toContainEqual(expect.objectContaining({ parentId: page.id, permission }));
+      expect(normal.menus).not.toContainEqual(expect.objectContaining({ permission }));
+    }
   });
 
   it('公告、通知与附件入口挂在「工作协同」下，系统管理不再包含', async () => {

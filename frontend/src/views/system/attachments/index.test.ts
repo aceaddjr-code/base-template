@@ -14,7 +14,7 @@ vi.mock('@/api/attachment', () => ({
   getAttachments: vi.fn(), uploadAttachment: vi.fn(), deleteAttachment: vi.fn(), cleanupAttachments: vi.fn(),
   attachmentDownloadUrl: vi.fn(), formatSize: vi.fn(() => '1 KB'), ATTACHMENT_MAX_SIZE: 500 * 1024 * 1024,
 }))
-vi.mock('@/utils/access', () => ({ hasAccessByCodes: vi.fn() }))
+vi.mock('@/utils/access', () => ({ hasAccessByCodes: vi.fn(), hasRecordAction: vi.fn() }))
 
 const Pass = defineComponent({ setup(_, { slots }) { return () => h('div', [slots.default?.(), slots.left?.(), slots.actions?.(), slots.footer?.(), slots.action?.()]) } })
 const Alert = defineComponent({ props: ['message', 'description'], setup(props, { slots }) { return () => h('div', [props.message, slots.action?.()]) } })

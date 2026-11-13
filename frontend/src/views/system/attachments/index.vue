@@ -54,8 +54,8 @@
               <template v-else-if="column.key === 'action'">
                 <a-space :size="0">
                   <a-button v-access="['attachments:download']" type="link" size="small" :aria-label="`下载${record.name}`" @click="handleDownload(record as AttachmentItem)">下载</a-button>
-                  <a-popconfirm title="确定删除该附件？删除后可在回收站恢复。" ok-text="确定" cancel-text="取消" @confirm="handleDelete(record as AttachmentItem)">
-                    <a-button v-access="['attachments:delete']" type="link" size="small" danger>删除</a-button>
+                  <a-popconfirm v-if="hasRecordAction(record.ownerId, 'attachments:delete')" title="确定删除该附件？删除后可在回收站恢复。" ok-text="确定" cancel-text="取消" @confirm="handleDelete(record as AttachmentItem)">
+                    <a-button type="link" size="small" danger>删除</a-button>
                   </a-popconfirm>
                 </a-space>
               </template>
@@ -134,7 +134,7 @@
               </template>
               <template v-else-if="column.key === 'action'">
                 <a-space :size="0">
-                  <a-button v-access="['attachments:download']" type="link" size="small" :aria-label="`下载${record.name}`" @click="handleDownload(record as AttachmentItem)">下载</a-button>
+                  <a-button v-if="canDownloadBusiness(record as AttachmentItem)" type="link" size="small" :aria-label="`下载${record.name}`" @click="handleDownload(record as AttachmentItem)">下载</a-button>
                   <!-- 已挂接文件由单据详情管理；这里只允许清理自己上传的未挂接暂存文件。 -->
                   <a-popconfirm
                     v-if="record.status === 'temp' && record.mine"
@@ -174,7 +174,7 @@ import { useListQuery } from '@/composables/useListQuery'
 import { useResizableColumns } from '@/composables/useResizableColumns'
 import { useAppStore } from '@/stores/app'
 import { formatDateTime } from '@/utils/format'
-import { hasAccessByCodes } from '@/utils/access'
+import { hasAccessByCodes, hasRecordAction } from '@/utils/access'
 
 const router = useRouter()
 const activeKey = ref<'library' | 'business'>('library')
@@ -183,6 +183,12 @@ const uploading = ref(false)
 const lib = useListPage()
 const biz = useListPage()
 const app = useAppStore()
+
+function canDownloadBusiness(record: AttachmentItem) {
+  if (record.status !== 'bound') return hasAccessByCodes('attachments:download')
+  const code = record.entityType ? ATTACHMENT_TARGET_META[record.entityType]?.accessCode : undefined
+  return !!code && hasAccessByCodes(code)
+}
 
 const { draft: libDraft, applied: libApplied, loading: libLoading, failed: libFailed, rows: libRows, page: libPage, pageSize: libPageSize, total: libTotal, refresh: libRefresh, apply: libApply, changePage: changeLibPage, totalText: libTotalText } = useListQuery<{ keyword: string }, AttachmentItem>({
   key: 'system-attachments-library', account: () => app.userInfo?.id, pageSize: 20,

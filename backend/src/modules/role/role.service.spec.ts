@@ -28,6 +28,10 @@ describe('RoleService 按钮权限缓存失效', () => {
       },
     };
     const menuRepo = { findBy: jest.fn().mockResolvedValue([{ id: 534 }]) };
+    const manager = {
+      getRepository: jest.fn((entity) => entity === Role ? roleRepo : entity === Menu ? menuRepo : entity === User ? userRepo : userRoleRepo),
+    };
+    (roleRepo.manager as any).transaction = jest.fn(async (fn) => fn(manager));
     const module = await Test.createTestingModule({
       providers: [
         RoleService,

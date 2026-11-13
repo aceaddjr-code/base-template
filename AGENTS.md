@@ -21,6 +21,7 @@
 ## UI
 
 - 页面布局遵循 `docs/页面布局规范.md`；主题以 `frontend/src/style.css` 和 `frontend/src/App.vue` 为准。
+- 优先用布局、分组和视觉层级传达页面结构与操作关系。辅助标签和说明文字只用于补充布局无法清楚传达的信息。
 - 新列表页使用 `Page`、`PageToolbar`、`ListFooter` 和 `useResizableColumns`。
 - 新增使用纵向表单弹窗；普通查看与编辑共用 `DetailDrawer`，字段原地切换，保存和取消后留在查看态。审批、指派等流程动作保留专用交互。
 - 公共交互缺陷在共享层修复，并检查所有使用方。
