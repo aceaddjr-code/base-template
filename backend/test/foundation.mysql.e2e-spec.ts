@@ -14,6 +14,9 @@ import { BackupService } from '../src/modules/system/backup.service';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { AuthService } from '../src/modules/auth/auth.service';
+import { LoginRateLimitService } from '../src/modules/auth/login-rate-limit.service';
+import { LoginAttemptCounter } from '../src/modules/auth/login-attempt-counter.entity';
+import { IdentityService } from '../src/modules/auth/identity.service';
 import { JwtStrategy, JwtPayload } from '../src/modules/auth/jwt.strategy';
 import { User } from '../src/modules/user/user.entity';
 import { Role } from '../src/modules/role/role.entity';
@@ -61,7 +64,7 @@ suite('独立 MySQL：删除回滚、通知分页和原生备份', () => {
     if ((existing as unknown[]).length) throw new Error('测试库已经存在，拒绝覆盖');
     await admin.query(`CREATE DATABASE \`${database}\` CHARACTER SET utf8mb4`);
     created = true;
-    data = new DataSource({ type: 'mysql', ...connection, username: connection.user, database, entities: [Parent, Child, Notification, User, Role, Menu, Department, UserRole, UserDataScope, UserDataScopeTarget, ExampleItem, ExampleItemMember, ExampleEvent, ExampleChange, SystemLog], synchronize: true });
+    data = new DataSource({ type: 'mysql', ...connection, username: connection.user, database, entities: [Parent, Child, Notification, User, Role, Menu, Department, UserRole, UserDataScope, UserDataScopeTarget, ExampleItem, ExampleItemMember, ExampleEvent, ExampleChange, SystemLog, LoginAttemptCounter], synchronize: true });
     await data.initialize();
     process.env.DB_DATABASE = database;
     backupDir = await mkdtemp(join(tmpdir(), 'base-foundation-mysql-'));
@@ -125,7 +128,11 @@ suite('独立 MySQL：删除回滚、通知分页和原生备份', () => {
     const secret = 'test-only-secret-'.repeat(4);
     const jwt = new JwtService({ secret });
     const auth = new AuthService(jwt, users, data.getRepository(Role), data.getRepository(Menu), data.getRepository(UserRole),
-      new UserDataScopeService(data.getRepository(UserDataScope), data.getRepository(UserDataScopeTarget), users, data.getRepository(Department)));
+      new UserDataScopeService(data.getRepository(UserDataScope), data.getRepository(UserDataScopeTarget), users, data.getRepository(Department)),
+      new LoginRateLimitService(data.getRepository(LoginAttemptCounter), new ConfigService(), new SystemLogService(data.getRepository(SystemLog), new ConfigService())),
+      new SystemLogService(data.getRepository(SystemLog), new ConfigService()),
+      new IdentityService(users, data.getRepository(Role), data.getRepository(Menu), data.getRepository(UserRole),
+        new UserDataScopeService(data.getRepository(UserDataScope), data.getRepository(UserDataScopeTarget), users, data.getRepository(Department))));
     const strategy = new JwtStrategy(new ConfigService({ JWT_SECRET: secret }), users);
     const signed = await auth.login(user.username, 'abc');
     const oldPayload = jwt.verify<JwtPayload>(signed.token);
@@ -196,7 +203,7 @@ suite('独立 MySQL：删除回滚、通知分页和原生备份', () => {
     // 会话装载走收敛后的唯一读侧
     const userDataScopes = new UserDataScopeService(scopeRows, scopeTargets, users, depts);
     const dataScopes = await userDataScopes.loadForSession(viewer.id);
-    expect(dataScopes).toEqual([{ scopeKey: 'example-items', scopeType: 'by_depts', viewOthers: 1, editOthers: 0, deleteOthers: 0, targets: [rd.id] }]);
+    expect(dataScopes).toEqual([{ scopeKey: 'example-items', scopeType: 'by_depts', viewSelf: 1, editSelf: 1, deleteSelf: 1, viewOthers: 1, editOthers: 0, deleteOthers: 0, targets: [rd.id] }]);
 
     const session = { sub: viewer.id, roles: ['user'], deptId: hq.id, dataScopes };
     const service = new ExampleService(items);
