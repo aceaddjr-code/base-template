@@ -6,6 +6,7 @@ import request from 'supertest';
 import { configureApplication } from '../src/app.setup';
 import { ExampleController } from '../src/modules/example/example.controller';
 import { ExampleService } from '../src/modules/example/example.service';
+import { ExampleImportService } from '../src/modules/example/example-import.service';
 import { PermissionGuard } from '../src/modules/auth/guards/permission.guard';
 import { AuthService } from '../src/modules/auth/auth.service';
 
@@ -20,6 +21,7 @@ describe('示例事项 HTTP 权限与验证', () => {
       controllers:[ExampleController],
       providers:[
         {provide:ExampleService,useValue:service},
+        {provide:ExampleImportService,useValue:{}},
         {provide:AuthService,useValue:{getUserAccessCodes:async () => codes}},
         {provide:APP_GUARD,useClass:PermissionGuard},
       ],
