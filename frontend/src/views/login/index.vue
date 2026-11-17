@@ -61,8 +61,8 @@
             />
           </a-form-item>
           <div class="form-options">
-            <a-checkbox v-model:checked="remember">记住密码</a-checkbox>
-            <span class="options-hint">只在这台电脑上保存，公共电脑请勿勾选</span>
+            <a-checkbox v-model:checked="remember" :disabled="loading">记住用户名</a-checkbox>
+            <span class="options-hint">密码可由浏览器保存</span>
           </div>
           <a-form-item class="form-submit">
             <a-button type="primary" html-type="submit" block size="large" :loading="loading" class="login-submit">
@@ -85,7 +85,7 @@ import { WarningOutlined } from '@ant-design/icons-vue'
 import { useAppStore } from '@/stores/app'
 import BrandMark from '@/components/BrandMark.vue'
 import { APP_VERSION } from '@/version'
-import { forgetPassword, readRemembered, rememberCredentials } from './remember-credential'
+import { forgetUsername, readRememberedUsername, rememberUsername } from './remember-username'
 
 const router = useRouter()
 const route = useRoute()
@@ -96,31 +96,17 @@ const appName = import.meta.env.VITE_APP_NAME || 'BaseSuite平台'
 const appSubtitle = import.meta.env.VITE_APP_SUBTITLE || 'Enterprise Management System'
 const appVersion = APP_VERSION
 
-// 「记住密码」的回填：本机存过就把用户名和密码填好，用户直接登录即可
-const remembered = readRemembered()
+const remembered = readRememberedUsername()
 const form = ref({
-  username: remembered.username,
-  password: remembered.password,
+  username: remembered,
+  password: '',
 })
-const remember = ref(Boolean(remembered.password))
+const remember = ref(Boolean(remembered))
 
-// 刚改过密码：本机记住的旧密码已失效，回填只会反复撞失败限流，直接作废
-if (route.query.reason === 'password-changed') {
-  forgetPassword()
-  form.value.password = ''
-  remember.value = false
-}
-
-// 取消勾选即刻删除，不让「已经不再记住」的密码继续留在本机
+// 取消勾选立即清理；勾选后只在登录成功时保存用户名。
 watch(remember, (checked) => {
-  if (!checked) forgetPassword(form.value.username)
+  if (!checked) forgetUsername()
 })
-
-/** 登录成功后才落盘：密码输错一次不该被记成「上次的密码」 */
-function syncRemembered() {
-  if (remember.value) rememberCredentials(form.value.username, form.value.password)
-  else forgetPassword(form.value.username)
-}
 
 // 用户一旦开始修改，上一条失败原因就已过期，立即撤掉，避免旧提示误导
 watch(
@@ -156,15 +142,14 @@ async function handleLogin() {
       loginid: form.value.username,
       password: form.value.password,
     })
+    if (remember.value) rememberUsername(form.value.username)
+    else forgetUsername()
     // 待改密受限会话：不进入业务页面，直接送改密页（不再提示“登录成功”）
     if (appStore.mustChangePassword) {
-      // 临时密码改完即失效，不作为「记住密码」保存，本机旧记录一并清掉
-      forgetPassword(form.value.username)
       form.value.password = ''
       router.push('/change-password')
       return
     }
-    syncRemembered()
     form.value.password = ''
     message.success('登录成功')
     const redirect = (route.query.redirect as string) || ''
