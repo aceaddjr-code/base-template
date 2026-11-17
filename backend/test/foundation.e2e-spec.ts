@@ -6,6 +6,8 @@ import request from 'supertest';
 import { configureApplication } from '../src/app.setup';
 import { NotificationController } from '../src/modules/system/notification.controller';
 import { NotificationService } from '../src/modules/system/notification.service';
+import { NotificationOutboxService } from '../src/modules/system/notification-outbox.service';
+import { SseSessionService } from '../src/modules/system/sse-session.service';
 import { FrontendErrorController } from '../src/modules/monitor/frontend-error.controller';
 import { requestContext } from '../src/common/utils/request-context';
 
@@ -24,7 +26,11 @@ describe('通知查询、请求追踪和错误上报 HTTP 协议', () => {
   beforeAll(async () => {
     const module = await Test.createTestingModule({
       controllers: [NotificationController, FrontendErrorController, ErrorController],
-      providers: [{ provide: NotificationService, useValue: service }],
+      providers: [
+        { provide: NotificationService, useValue: service },
+        { provide: NotificationOutboxService, useValue: {} },
+        { provide: SseSessionService, useValue: {} },
+      ],
     }).compile();
     app = module.createNestApplication<NestExpressApplication>({ bodyParser: false, logger: false });
     app.use((req, _res, next) => { req.user = { sub: 7 }; next(); });

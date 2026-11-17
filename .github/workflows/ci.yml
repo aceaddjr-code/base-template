@@ -73,8 +73,18 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: backend/pnpm-lock.yaml
-      - name: 安装 MySQL 客户端（mysqldump）
-        run: sudo apt-get update && sudo apt-get install -y mysql-client
+      - name: 准备 mysqldump
+        run: |
+          # 避免 apt 升级 runner 上的 MySQL 服务，与已启动的测试容器冲突。
+          if command -v mysqldump >/dev/null 2>&1; then
+            mysqldump --version
+          else
+            # mysql:8.4 已由 service container 拉取；客户端通过宿主机端口连接测试库。
+            printf '%s\n' '#!/bin/sh' 'exec docker run --rm -i --network host -e MYSQL_PWD mysql:8.4 mysqldump "$@"' > "$RUNNER_TEMP/mysqldump"
+            chmod +x "$RUNNER_TEMP/mysqldump"
+            echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+            "$RUNNER_TEMP/mysqldump" --version
+          fi
       - name: 安装依赖
         run: pnpm -C backend install --frozen-lockfile
       - name: 隔离 MySQL e2e（删除回滚/通知分页/备份/会话失效/筛选导出/字段错误）

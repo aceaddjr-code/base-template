@@ -10,6 +10,7 @@ import { UserDataScopeService } from '../src/modules/user/user-data-scope.servic
 import { AuthService } from '../src/modules/auth/auth.service';
 import { RolesGuard } from '../src/common/guards/roles.guard';
 import { PermissionGuard } from '../src/modules/auth/guards/permission.guard';
+import { PermissionExplanationService } from '../src/modules/auth/permission-explanation.service';
 
 /** 只验证真实守卫元数据：类级 @Roles('admin') 下，simple 简表对普通登录用户放开、完整列表仍限管理员。 */
 describe('用户简表登录即可访问（RolesGuard 覆盖）', () => {
@@ -22,6 +23,7 @@ describe('用户简表登录即可访问（RolesGuard 覆盖）', () => {
       providers: [
         { provide: UserService, useValue: userService },
         { provide: UserDataScopeService, useValue: {} },
+        { provide: PermissionExplanationService, useValue: {} },
         { provide: AuthService, useValue: { getUserAccessCodes: async () => [] } },
         { provide: APP_GUARD, useClass: RolesGuard },
         { provide: APP_GUARD, useClass: PermissionGuard },
