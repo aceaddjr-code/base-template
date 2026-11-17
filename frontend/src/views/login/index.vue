@@ -249,7 +249,7 @@ onBeforeUnmount(stopRetryCountdown)
 .login-form :deep(.ant-input-lg:not(.ant-input-affix-wrapper .ant-input)), .login-form :deep(.ant-input-affix-wrapper-lg) { border-color: var(--color-border-strong); }
 .login-form :deep(input:focus-visible) { outline: var(--focus-width) solid var(--color-primary); outline-offset: var(--focus-offset); }
 .login-form :deep(.ant-input-affix-wrapper-lg > .ant-input) { min-height: 0; }
-/* 「记住密码」行：贴着密码框，说明文字退到次级颜色，与提交按钮仍留出成组间距 */
+/* 「记住用户名」行：贴着密码框，说明文字退到次级颜色，与提交按钮仍留出成组间距 */
 .form-options {
   display: flex;
   align-items: center;

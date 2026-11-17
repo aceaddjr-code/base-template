@@ -31,7 +31,7 @@ const Form = defineComponent({ emits: ['finish'], setup(_, { slots }) { return (
 const stubs = { AForm: Form, AFormItem: Pass, AInput: Field, AInputPassword: Field, ACheckbox: Check, AButton: Pass, BrandMark: Pass, WarningOutlined: Pass }
 
 async function setup(query = '') {
-  // 页面 setup 会读「记住密码」记录并调用 store.signIn，挂载前需激活 Pinia
+  // 页面 setup 会读「记住用户名」记录并调用 store.signIn，挂载前需激活 Pinia
   const pinia = createPinia()
   setActivePinia(pinia)
   const store = useAppStore()
@@ -51,7 +51,7 @@ async function setup(query = '') {
   return { wrapper, store, router }
 }
 type Wrapper = Awaited<ReturnType<typeof setup>>['wrapper']
-/** 页面上的输入框依次为用户名、密码、记住密码勾选框 */
+/** 页面上的输入框依次为用户名、密码、记住用户名勾选框 */
 const boxes = (wrapper: Wrapper) => wrapper.findAll('input')
 const values = (wrapper: Wrapper) => boxes(wrapper).slice(0, 2).map((box) => (box.element as HTMLInputElement).value)
 const typeInto = async (wrapper: Wrapper, index: number, text: string) => boxes(wrapper)[index].setValue(text)
